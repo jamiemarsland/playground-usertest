@@ -31,12 +31,19 @@ No account. Nothing to host. No JSON to edit.
 ## What is in here
 
 ```
-worker/worker.js        the service: form, intro page, blueprint, events, results
-worker/wrangler.jsonc   config — no build step, worker.js deploys as it stands
-worker/test-worker.mjs  the whole thing against a KV mock: node test-worker.mjs
+worker/worker.js               the service: form, intro page, blueprint, events, results
+worker/wrangler.jsonc          config — no build step, worker.js deploys as it stands
+worker/test-worker.mjs         the whole thing against a KV mock
+
+plugin/playground-usertest.php the card plugin — inert unless the site is a test
+plugin/card.js                 the card itself: tasks, notes, the wrap-up, the queue
+plugin/build-zip.sh            builds the zip the blueprint route installs
+plugin/test-plugin.php         the plugin against WordPress stubs
 ```
 
-The card plugin lives beside this and is pointed at by `PLUGIN_ZIP_URL`.
+The two halves meet at one URL: `PLUGIN_ZIP_URL` in `worker/wrangler.jsonc`.
+Every test's blueprint installs whatever is at that URL, so a fix to the card
+reaches everybody's next tester without redeploying the Worker.
 
 ## Routes
 
@@ -71,14 +78,43 @@ they opened the hint, which page they were on, and anything they type into the
 card. Nothing else: not what they write on the site, and not their name unless
 they choose to type it. The intro page says so.
 
+## The card
+
+It shows one task at a time, with a note box, a hint the tester has to ask for,
+and Done / Couldn't do it. Then the wrap-up: happy 1–5, could you finish, how it
+felt, what confused you, and a name if they want to give one.
+
+Two things it does that are worth knowing:
+
+- **It measures rather than guesses where to sit.** A fixed offset lands on the
+  site's own menu for some themes and floats in space for others, so it takes
+  the lowest edge of whatever is stacked at the top of the page — admin bar,
+  header, editor chrome — and starts below that. If the measurement is still
+  wrong, the tester can drag it by its top bar, and where they put it is
+  remembered.
+- **It keeps its place.** The session id is a site option, not something the
+  browser makes, so a reload does not turn one tester into two rows, and the
+  list follows them between the editor and the published site.
+
+Events queue in `localStorage` and retry, so a flaky minute loses nothing.
+
 ## Running it
 
 ```bash
 cd worker
-npm test          # the suite, against a KV mock — no network, no account
-npm run dev       # wrangler dev on localhost:8787, local KV
-npm run deploy    # wrangler deploy; Cloudflare makes the KV namespace
+npm test                    # the service against a KV mock — no network, no account
+npm run dev                 # wrangler dev on localhost:8787, local KV
+npm run deploy              # wrangler deploy; Cloudflare makes the KV namespace
+
+cd ../plugin
+php test-plugin.php         # the plugin against WordPress stubs
+./build-zip.sh              # dist/playground-usertest-card.zip
 ```
+
+Before the first real tester, the zip has to be somewhere Playground can fetch
+it, at the URL `PLUGIN_ZIP_URL` names — a GitHub release asset is the easiest.
+Until then the blueprint route answers 503 rather than serving a blueprint that
+would build a site with no card on it.
 
 ## Cost
 
