@@ -1,0 +1,10 @@
+{
+  "name": "playground-usertest-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test-worker.mjs",
+    "dev": "npx --yes wrangler@latest dev",
+    "deploy": "npx --yes wrangler@latest deploy"
+  }
+}
