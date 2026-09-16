@@ -111,10 +111,12 @@ php test-plugin.php         # the plugin against WordPress stubs
 ./build-zip.sh              # dist/playground-usertest-card.zip
 ```
 
-Before the first real tester, the zip has to be somewhere Playground can fetch
-it, at the URL `PLUGIN_ZIP_URL` names — a GitHub release asset is the easiest.
-Until then the blueprint route answers 503 rather than serving a blueprint that
-would build a site with no card on it.
+The zip has to stay somewhere Playground can fetch it, at the URL
+`PLUGIN_ZIP_URL` names — a GitHub release asset, which is what the default
+points at. If it ever goes missing the blueprint route answers 503 rather than
+serving a blueprint that would build a site with no card on it: Playground
+shrugs off a failed `installPlugin` step, so the tester would get a perfectly
+good site, do the whole test, and have none of it recorded.
 
 ## Cost
 

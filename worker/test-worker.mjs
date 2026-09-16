@@ -130,6 +130,13 @@ check(opt.tasks[0].hint === 'Look in Settings', 'hints travel with the tasks');
 r = await call(e1, '/t/aaaaaaaaaa/blueprint.json');
 check(r.status === 404, 'a blueprint for a test that is not there is a 404');
 
+// The one failure a tester would never notice: Playground shrugs off a failed
+// installPlugin, so a missing zip means a working site with no card on it and a
+// whole test recorded nowhere. It has to be refused before it is served.
+const eGone = Object.assign(env(), { TESTS: e1.TESTS, PLUGIN_ZIP_URL: 'https://example.com/gone.zip' });
+r = await call(eGone, '/t/' + ID + '/blueprint.json');
+check(r.status === 503 && (await r.json()).error.includes('not where the service expects'), 'a card zip that is not there stops the blueprint being served at all');
+
 // a tester reports in
 const SID = 'ab12cd34ef56';
 const post = (events, session = SID, test = ID) => call(e1, '/api/events', { method: 'POST', body: { test, session, events } });

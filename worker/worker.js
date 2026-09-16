@@ -389,6 +389,19 @@ function wrapBlueprint(base, test, origin, pluginZipUrl) {
   return out;
 }
 
+async function zipIsThere(url) {
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+      cf: { cacheTtl: 3600, cacheEverything: true },
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function serveBlueprint(env, req, id) {
   const test = await getTest(env, id);
   if (!test) return json({ error: 'No such test.' }, 404, CORS);
@@ -403,6 +416,15 @@ async function serveBlueprint(env, req, id) {
   const origin = new URL(req.url).origin;
   const zip = env.PLUGIN_ZIP_URL || '';
   if (!zip) return json({ error: 'The card plugin is not configured.' }, 503, CORS);
+
+  // Serving a blueprint that installs a zip which is not there is the worst
+  // thing this service can do: Playground shrugs off the failed step, the
+  // tester gets a perfectly good site with no card on it, does the whole test,
+  // and nothing is recorded. One HEAD — cached for an hour, so it costs almost
+  // nothing — turns that into a refusal the owner can see.
+  if (!(await zipIsThere(zip))) {
+    return json({ error: 'The card plugin zip is not where the service expects it. Nothing can be recorded until it is, so no blueprint is served.' }, 503, CORS);
+  }
 
   const wrapped = wrapBlueprint(base, test, origin, zip);
   return json(wrapped, 200, Object.assign({ 'cache-control': 'public, max-age=60' }, CORS));
