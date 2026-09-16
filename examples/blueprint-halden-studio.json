@@ -1,0 +1,32 @@
+{
+  "$schema": "https://playground.wordpress.net/blueprint-schema.json",
+  "meta": {
+    "title": "Halden Studio — a starter site to test editing on",
+    "description": "A plain Twenty Twenty-Five site with somebody else's name on it, for testing how people get on making it theirs.",
+    "author": "jamiemarsland"
+  },
+  "landingPage": "/",
+  "preferredVersions": { "php": "8.2", "wp": "latest" },
+  "features": { "networking": true },
+  "login": true,
+  "steps": [
+    {
+      "step": "installTheme",
+      "themeData": { "resource": "wordpress.org/themes", "slug": "twentytwentyfive" },
+      "options": { "activate": true }
+    },
+    {
+      "step": "setSiteOptions",
+      "options": {
+        "blogname": "Halden Studio",
+        "blogdescription": "Furniture, made slowly",
+        "show_on_front": "page",
+        "posts_per_page": "6"
+      }
+    },
+    {
+      "step": "runPHP",
+      "code": "<?php\nrequire '/wordpress/wp-load.php';\nrequire_once ABSPATH . 'wp-admin/includes/media.php';\nrequire_once ABSPATH . 'wp-admin/includes/file.php';\nrequire_once ABSPATH . 'wp-admin/includes/image.php';\nwp_set_current_user( 1 );\n\n// Pictures first: the site has to look like somebody's real site, or nobody\n// believes in it enough to want to change it.\n$shots = array(\n\t'https://images.unsplash.com/photo-1538688525198-9b88f6f53126?auto=format&fit=crop&w=1600&q=80',\n\t'https://images.unsplash.com/photo-1567538096630-e0c55bd6374c?auto=format&fit=crop&w=1200&q=80',\n\t'https://images.unsplash.com/photo-1503602642458-232111445657?auto=format&fit=crop&w=1200&q=80'\n);\n$ids = array();\nforeach ( $shots as $url ) {\n\ttry {\n\t\t$id = media_sideload_image( $url, 0, null, 'id' );\n\t\tif ( ! is_wp_error( $id ) ) { $ids[] = $id; }\n\t} catch ( \\Throwable $e ) {}\n}\n$img = function ( $i ) use ( $ids ) {\n\tif ( empty( $ids[ $i ] ) ) { return ''; }\n\t$src = wp_get_attachment_image_url( $ids[ $i ], 'full' );\n\treturn '<!-- wp:image {\"id\":' . $ids[ $i ] . ',\"sizeSlug\":\"full\",\"linkDestination\":\"none\"} --><figure class=\"wp-block-image size-full\"><img src=\"' . esc_url( $src ) . '\" alt=\"\" class=\"wp-image-' . $ids[ $i ] . '\"/></figure><!-- /wp:image -->';\n};\n\n$home = '<!-- wp:group {\"align\":\"full\",\"style\":{\"spacing\":{\"padding\":{\"top\":\"var:preset|spacing|60\",\"bottom\":\"var:preset|spacing|60\"}}},\"layout\":{\"type\":\"constrained\"}} --><div class=\"wp-block-group alignfull\" style=\"padding-top:var(--wp--preset--spacing--60);padding-bottom:var(--wp--preset--spacing--60)\">'\n\t. '<!-- wp:heading {\"level\":1,\"fontSize\":\"xx-large\"} --><h1 class=\"wp-block-heading has-xx-large-font-size\">Chairs, tables and cabinets, made one at a time</h1><!-- /wp:heading -->'\n\t. '<!-- wp:paragraph {\"fontSize\":\"large\"} --><p class=\"has-large-font-size\">A small workshop on the edge of town. Everything here is made to order in oak, ash and elm, and it is meant to outlast us.</p><!-- /wp:paragraph -->'\n\t. $img( 0 )\n\t. '<!-- wp:heading --><h2 class=\"wp-block-heading\">Recent work</h2><!-- /wp:heading -->'\n\t. '<!-- wp:columns --><div class=\"wp-block-columns\">'\n\t. '<!-- wp:column --><div class=\"wp-block-column\">' . $img( 1 ) . '<!-- wp:paragraph --><p>A pair of dining chairs in steamed ash.</p><!-- /wp:paragraph --></div><!-- /wp:column -->'\n\t. '<!-- wp:column --><div class=\"wp-block-column\">' . $img( 2 ) . '<!-- wp:paragraph --><p>A writing desk in English oak, with a single drawer.</p><!-- /wp:paragraph --></div><!-- /wp:column -->'\n\t. '</div><!-- /wp:columns -->'\n\t. '</div><!-- /wp:group -->';\n\n$about = '<!-- wp:heading {\"level\":1} --><h1 class=\"wp-block-heading\">About the workshop</h1><!-- /wp:heading -->'\n\t. '<!-- wp:paragraph --><p>Halden Studio has been going since 2014. We took over an old joinery on Mill Lane and kept most of the machines that came with it.</p><!-- /wp:paragraph -->'\n\t. '<!-- wp:paragraph --><p>Everything is made by hand, which means there is usually a wait. We think it is worth it.</p><!-- /wp:paragraph -->';\n\n$contact = '<!-- wp:heading {\"level\":1} --><h1 class=\"wp-block-heading\">Get in touch</h1><!-- /wp:heading -->'\n\t. '<!-- wp:paragraph --><p>The workshop is open on Saturdays from ten until four, or by arrangement.</p><!-- /wp:paragraph -->'\n\t. '<!-- wp:paragraph --><p>Mill Lane, Halden<br>hello@example.com</p><!-- /wp:paragraph -->';\n\n$make = function ( $title, $content ) {\n\t$existing = get_page_by_path( sanitize_title( $title ) );\n\tif ( $existing ) { return $existing->ID; }\n\treturn wp_insert_post( array(\n\t\t'post_title'   => $title,\n\t\t'post_name'    => sanitize_title( $title ),\n\t\t'post_content' => $content,\n\t\t'post_status'  => 'publish',\n\t\t'post_type'    => 'page',\n\t) );\n};\n\n$home_id = $make( 'Home', $home );\n$make( 'About', $about );\n$make( 'Contact', $contact );\nupdate_option( 'show_on_front', 'page' );\nupdate_option( 'page_on_front', $home_id );\n\n// A couple of posts, so the blog is not an empty room.\n$posts = array(\n\tarray( 'Where the elm comes from', 'Most of our elm is storm-fallen, from two farms within twenty miles. It is not a reliable supply, which is why elm pieces come and go.' ),\n\tarray( 'A note on waiting lists', 'We are about four months out at the moment. If you are working to a date, say so when you write and we will tell you honestly whether it can be done.' ),\n);\nforeach ( $posts as $p ) {\n\tif ( ! get_page_by_title( $p[0], OBJECT, 'post' ) ) {\n\t\twp_insert_post( array(\n\t\t\t'post_title'   => $p[0],\n\t\t\t'post_content' => '<!-- wp:paragraph --><p>' . $p[1] . '</p><!-- /wp:paragraph -->',\n\t\t\t'post_status'  => 'publish',\n\t\t\t'post_type'    => 'post',\n\t\t) );\n\t}\n}\n\n// Delete the sample post and page so the tester is not tidying up after WordPress.\nforeach ( array( 'hello-world' ) as $slug ) {\n\t$p = get_page_by_path( $slug, OBJECT, 'post' );\n\tif ( $p ) { wp_delete_post( $p->ID, true ); }\n}\n$sample = get_page_by_path( 'sample-page' );\nif ( $sample ) { wp_delete_post( $sample->ID, true ); }\n"
+    }
+  ]
+}
