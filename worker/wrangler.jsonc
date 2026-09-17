@@ -15,9 +15,12 @@
 		// one zip, so the card is updated for everybody by changing this.
 		"PLUGIN_ZIP_URL": "https://github.com/jamiemarsland/playground-usertest/releases/latest/download/playground-usertest-card.zip",
 		// Caps. Sized for Cloudflare's FREE KV plan, which allows 1,000 writes a
-		// day. A tester spends about fifteen, so roughly sixty testers a day before
-		// Workers Paid at $5/month is worth it. Past the ceiling the counters fail
-		// and the Worker serves without enforcing them rather than going down.
+		// day. What spends them is event batches, not testers: each batch costs
+		// three writes (counter, session, index) and the card sends one per event,
+		// so a tester working through five tasks costs around forty — roughly
+		// twenty-five testers a day. Workers Paid at $5/month removes the ceiling.
+		// Past it the counters fail and the Worker serves without enforcing them
+		// rather than going down.
 		"CREATE_DAILY_LIMIT": "5",
 		"EVENTS_HOURLY_LIMIT": "300",
 

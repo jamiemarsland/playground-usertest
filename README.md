@@ -173,11 +173,20 @@ good site, do the whole test, and have none of it recorded.
 
 ## Cost
 
-Cloudflare's free KV tier allows 1,000 writes a day. A tester spends about
-fifteen, so roughly sixty testers a day before Workers Paid at $5/month is worth
-it. Past that ceiling the rate counters fail and the Worker keeps serving rather
-than going down — the caps are there to stop one address filling the store, not
-to bound a bill.
+Cloudflare's free KV tier allows 1,000 writes a day, and the thing that spends
+them is event batches, not testers. Each batch costs three writes — the rate
+counter, the session, the index — and the card sends a batch per event, so a
+tester working through five tasks costs around forty. That is roughly
+twenty-five testers a day before Workers Paid at $5/month, which removes the
+ceiling entirely.
+
+Past the ceiling the rate counters fail and the Worker keeps serving rather than
+going down — the caps are there to stop one address filling the store, not to
+bound a bill.
+
+If that ever needs to go further on the free tier, the counter is the cheapest
+third to drop: it is a cap, not accounting, and sampling it would cost a third
+of the writes.
 
 ## Abuse
 
