@@ -2,7 +2,7 @@
 // page, the wrapped blueprint, events coming in, and the results coming out —
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
-import worker, { cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, taskId } from './worker.js';
+import worker, { cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 
 const kv = () => {
   const m = new Map();
@@ -78,6 +78,72 @@ check(wrapped.steps[1].step === 'installPlugin' && wrapped.steps[1].pluginData.u
 check(wrapped.features.networking === true, 'networking is forced on, or the card cannot report in');
 check(JSON.parse(wrapped.steps[2].options.playground_user_test).report === ORIGIN + '/api/events', 'the card is told where to report');
 check(DEMO.steps.length === 1, 'wrapping does not touch the blueprint it was given');
+
+/* ------------------------------------------------- a blueprint, without one */
+
+let b = cleanBoot({ title: 'Harbourview', tagline: 'Sea kayaking', theme: 'twentytwentyfive', plugins: ['contact-form-7'] });
+check(!b.error && b.boot.theme === 'twentytwentyfive', 'a wordpress.org theme slug is taken as a slug');
+b = cleanBoot({ theme: 'https://example.com/my-theme.zip' });
+check(!b.error && b.boot.theme === 'https://example.com/my-theme.zip', 'a zip URL is taken as a zip');
+check(cleanBoot({ theme: 'http://example.com/t.zip' }).error, 'a theme zip over plain http is refused');
+check(cleanBoot({ plugins: ['https://127.0.0.1/p.zip'] }).error, 'a plugin zip on an IP literal is refused');
+check(cleanBoot({ images: ['https://10.0.0.1/x.jpg'] }).error, 'a picture on an IP literal is refused');
+check(cleanBoot({ theme: 'Not A Slug!' }).error, 'a theme that is neither slug nor URL is refused');
+check(cleanBoot({ plugins: Array(20).fill('akismet') }).boot.plugins.length === 6, 'no more than six plugins');
+check(cleanBoot({}).boot.theme === 'twentytwentyfive', 'a boot with nothing in it still gives a working site');
+
+const boot = cleanBoot({
+  title: 'Harbourview', tagline: 'Sea kayaking, all year',
+  plugins: ['contact-form-7'],
+  images: ['https://example.com/a.jpg', 'https://example.com/b.jpg'],
+}).boot;
+const built = blueprintFromBoot(boot);
+check(built.steps.map((s) => s.step).join() === 'installTheme,installPlugin,setSiteOptions,runPHP', 'the boot becomes theme, plugin, options, content: ' + built.steps.map((s) => s.step).join(' '));
+check(built.features.networking === true, 'the built blueprint turns networking on — the pictures need it');
+check(built.steps[2].options.blogname === 'Harbourview', 'the demo site gets the name it was given');
+check(blueprintFromBoot(cleanBoot({ content: 'none' }).boot).steps.every((s) => s.step !== 'runPHP'), 'content "none" leaves the site bare');
+
+const php = starterPhp(boot);
+// The PHP explains both traps in comments, so the assertions have to look at
+// the code rather than the prose — otherwise they pass on the warning itself.
+const phpCode = php.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+check(php.startsWith('<?php') && phpCode.includes('wp_upload_bits'), 'the generated PHP writes the bytes itself');
+check(!phpCode.includes('download_url'), 'and never streams the download, which comes back empty in Playground');
+check(!phpCode.includes('media_sideload_image'), 'and never sideloads by URL, which rejects a URL with no file extension');
+check(/base64_decode\( '[A-Za-z0-9+/=]+' \)/.test(php), 'the copy rides as base64 rather than being quoted into PHP source');
+// An apostrophe in a title is the thing that breaks naive interpolation.
+const tricky = starterPhp(cleanBoot({ title: "Nita's Bakery", tagline: "Bread, and that's it" }).boot);
+check(/base64_decode/.test(tricky) && !tricky.includes("Nita's"), 'an apostrophe in the site name never reaches the PHP source');
+
+/* ---------------------------------------------------------------- the check */
+
+let lint = lintTest({
+  subject: 'my theme',
+  persona: 'You are Elliot Grey, a photographer a few months into running your own business, and customers keep asking whether you have a website.',
+  boot: { title: 'Elliot Grey' },
+  tasks: [{ title: 'Click Settings and change the site title', hint: 'h' }, { title: 'Write a line about yourself', hint: 'h' }],
+});
+check(lint.problems.some((x) => /already called Elliot Grey/.test(x)), 'a persona named after the demo site is caught — the gogh bug, in one line');
+check(lint.problems.some((x) => /Click/.test(x) && /control/.test(x)), 'a task that names a control is caught');
+check(lint.notes.some((x) => /Five is a good number/.test(x)), 'two tasks gets a note about it');
+
+lint = lintTest({
+  subject: 'my theme',
+  persona: 'You are Priya Raman. For three years you have been making furniture in a rented workshop, mostly for people who found you through a friend, and you have just registered a business name.',
+  boot: { title: 'Halden Studio' },
+  tasks: [
+    { title: 'Put your own business name on the site', hint: 'h' },
+    { title: 'Change the big headline so it says what you make', hint: 'h' },
+    { title: 'Swap one of the photographs', hint: 'h' },
+    { title: 'Give the site a different look', hint: 'h' },
+    { title: 'Write a couple of sentences about yourself', hint: 'h' },
+  ],
+});
+check(lint.ok && !lint.problems.length, 'the Halden Studio test passes clean: ' + JSON.stringify(lint.problems));
+check(!lint.notes.length, 'and draws no notes either: ' + JSON.stringify(lint.notes));
+
+lint = lintTest({ subject: 's', persona: 'p', tasks: [{ title: 'a', hint: 'h' }, { title: 'A', hint: 'h' }] });
+check(lint.problems.some((x) => /repeats an earlier one/.test(x)), 'the same task twice is caught');
 
 /* ------------------------------------------------------------- end to end */
 
@@ -208,6 +274,114 @@ check(codes.filter((c) => c === 200).length === 5 && codes.slice(5).every((c) =>
 const e3 = env();
 r = await call(e3, '/api/tests', { method: 'POST', body: GOOD, ip: '198.51.100.9' });
 check(r.status === 200, 'the cap is per address, not for everybody at once');
+
+/* ------------------------------------------------------------- for agents */
+
+const eAgent = env();
+const rpc = async (msg, e) => {
+  const res = await call(e || eAgent, '/mcp', { method: 'POST', body: msg });
+  return { status: res.status, body: res.status === 202 ? null : await res.json() };
+};
+
+let m = await rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } });
+check(m.status === 200 && m.body.result.protocolVersion === '2025-06-18' && m.body.result.serverInfo.name === 'playground-usertest', 'initialize answers with the version asked for');
+check(/days, not minutes/.test(m.body.result.instructions), 'the instructions tell an agent that testing is slow, so it does not poll');
+
+m = await rpc({ jsonrpc: '2.0', method: 'notifications/initialized' });
+check(m.status === 202 && m.body === null, 'a notification gets 202 and no body');
+
+m = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+check(m.body.result.tools.map((t) => t.name).join() === 'usertest_check,usertest_create,usertest_results', 'three tools, check first');
+
+m = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'nonsense', arguments: {} } });
+check(m.body.error && m.body.error.code === -32602, 'a tool nobody has is an error, not a shrug');
+
+const goodDraft = {
+  subject: 'my theme',
+  persona: 'You are Priya Raman. For three years you have been making furniture in a rented workshop, mostly for people who found you through a friend, and you have just registered a business name.',
+  tasks: [
+    { title: 'Put your own business name on the site', hint: 'The name shows top-left' },
+    { title: 'Change the big headline so it says what you make', hint: 'Click the words and type' },
+    { title: 'Swap one of the photographs', hint: 'Look for Replace' },
+    { title: 'Give the site a different look', hint: 'Styles is the half-dark circle' },
+    { title: 'Write a couple of sentences about yourself', hint: 'The About page' },
+  ],
+  boot: { title: 'Halden Studio', tagline: 'Furniture, made slowly', theme: 'twentytwentyfive' },
+};
+
+m = await rpc({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'usertest_check', arguments: goodDraft } });
+check(m.body.result.structuredContent.ok === true, 'a good draft checks clean');
+
+m = await rpc({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'usertest_check', arguments: Object.assign({}, goodDraft, { tasks: [{ title: 'Click the Settings menu' }] }) } });
+check(m.body.result.structuredContent.ok === false && /control/.test(m.body.result.content[0].text), 'a draft that names a control is sent back with the reason');
+
+m = await rpc({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'usertest_create', arguments: goodDraft } });
+const agentTest = m.body.result.structuredContent;
+check(!m.body.result.isError && agentTest.id && agentTest.tester && agentTest.results, 'an agent can make a test with no blueprint at all');
+check(agentTest.password && agentTest.password.length >= 12, 'and gets a password made for it: ' + (agentTest.password || '').slice(0, 4) + '…');
+check(/none of it can be looked up again/.test(m.body.result.content[0].text), 'and is told to hand the password on, since nothing can recover it');
+
+m = await rpc({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'usertest_results', arguments: { test: agentTest.id, password: agentTest.password } } });
+check(/Nobody has started/.test(m.body.result.content[0].text), 'reading results before anyone has tested says so plainly');
+
+m = await rpc({ jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'usertest_results', arguments: { test: agentTest.id, password: 'wrong' } } });
+check(m.body.result.isError === true, 'the wrong password reads nothing through MCP either');
+
+// the blueprint an agent never wrote
+r = await call(eAgent, '/t/' + agentTest.id + '/blueprint.json');
+const agentBp = await r.json();
+check(r.status === 200 && agentBp.steps.map((s) => s.step).join().includes('installTheme,setSiteOptions,runPHP'), 'the test serves a blueprint built from the boot description');
+check(agentBp.steps.slice(-2)[0].step === 'installPlugin' && agentBp.steps.slice(-1)[0].step === 'setSiteOptions', 'with the card added on the end, as for any other test');
+
+/* --------------------------------------------------------------- the digest */
+
+const sid = (n) => 'agent' + String(n).repeat(7);
+const tasksOf = JSON.parse(agentBp.steps.slice(-1)[0].options.playground_user_test).tasks;
+const postTo = (session, events) => call(eAgent, '/api/events', { method: 'POST', body: { test: agentTest.id, session, events } });
+
+await postTo(sid(1), [
+  { type: 'start', data: { viewport: '1440x900' } },
+  { type: 'task_done', task: tasksOf[0].id, data: { secs: 60 } },
+  { type: 'hint', task: tasksOf[1].id },
+  { type: 'task_skip', task: tasksOf[1].id, note: 'could not find the headline', data: { secs: 300 } },
+  { type: 'wrap', task: 'wrap', data: { happy: '4', confident: 'yes', feel: 'fine', confused: 'the headline', name: 'Sam', minutes: 18 } },
+]);
+await postTo(sid(2), [
+  { type: 'start' },
+  { type: 'task_done', task: tasksOf[0].id, data: { secs: 100 } },
+  { type: 'task_skip', task: tasksOf[1].id, note: 'same, gave up', data: { secs: 200 } },
+]);
+
+m = await rpc({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'usertest_results', arguments: { test: agentTest.id, password: agentTest.password } } });
+const dig = m.body.result.structuredContent;
+check(dig.testers === 2 && dig.finished === 1, 'the digest counts testers and how many finished');
+const t1 = dig.tasks[0], t2 = dig.tasks[1], t3 = dig.tasks[2];
+check(t1.done === 2 && t1.medianSecs === 80, 'per task: how many managed it, and the median time — ' + t1.medianSecs + 's');
+check(t2.couldnt === 2 && t2.hintOpened === 1 && t2.notes.length === 2, 'the task everyone failed carries both notes and the hint count');
+check(t3.notReached === 2, 'a task nobody got to is counted apart from one everybody failed');
+check(dig.wrapUps.length === 1 && dig.wrapUps[0].who === 'Sam', 'the wrap-up comes back with a name on it');
+check(/could not find the headline/.test(m.body.result.content[0].text), 'and the text an agent reads quotes what people typed');
+check(dig.tasks.every((t) => t.title), 'every task in the digest carries its title, not just a slug');
+
+// the same thing over plain HTTP, for an agent that does not speak MCP
+r = await call(eAgent, '/api/results?test=' + agentTest.id + '&digest=1', { headers: { 'x-test-password': agentTest.password } });
+const httpDig = await r.json();
+check(r.status === 200 && httpDig.tasks[1].couldnt === 2, 'the digest is on the HTTP route too');
+
+r = await call(eAgent, '/llms.txt');
+const llms = await r.text();
+check(r.status === 200 && /usertest_check/.test(llms) && /digest=1/.test(llms), 'llms.txt describes both doors');
+check(/quietly ruin a test/.test(llms), 'and passes on the two mistakes that matter');
+
+/* ------------------------------------------------------- the global ceiling */
+
+const eFlood = Object.assign(env(), { CREATE_DAILY_LIMIT: '50', GLOBAL_CREATE_DAILY_LIMIT: '3' });
+codes = [];
+for (let i = 0; i < 5; i++) {
+  const res = await call(eFlood, '/api/tests', { method: 'POST', body: GOOD, ip: '198.51.100.' + i });
+  codes.push(res.status);
+}
+check(codes.filter((c) => c === 200).length === 3, 'a global daily ceiling holds even when every request comes from a different address: ' + codes.join(','));
 
 /* -------------------------------------------------------------------- misc */
 

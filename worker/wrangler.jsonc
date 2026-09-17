@@ -1,33 +1,42 @@
 {
-  // Playground user testing — Worker config.
-  //
-  // JSONC (not TOML) so the "Deploy to Cloudflare" button can read it to work
-  // out what to create for whoever is deploying.
-  //
-  // worker.js is deployed as it stands: no build step, nothing generated, so
-  // what you read is what ships.
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "playground-usertest",
-  "main": "worker.js",
-  "compatibility_date": "2025-01-01",
+	// Playground user testing — Worker config.
+	//
+	// JSONC (not TOML) so the "Deploy to Cloudflare" button can read it to work
+	// out what to create for whoever is deploying.
+	//
+	// worker.js is deployed as it stands: no build step, nothing generated, so
+	// what you read is what ships.
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "playground-usertest",
+	"main": "worker.js",
+	"compatibility_date": "2025-01-01",
+	"vars": {
+		// The card the tester sees. The blueprint route points every test at this
+		// one zip, so the card is updated for everybody by changing this.
+		"PLUGIN_ZIP_URL": "https://github.com/jamiemarsland/playground-usertest/releases/latest/download/playground-usertest-card.zip",
+		// Caps. Sized for Cloudflare's FREE KV plan, which allows 1,000 writes a
+		// day. A tester spends about fifteen, so roughly sixty testers a day before
+		// Workers Paid at $5/month is worth it. Past the ceiling the counters fail
+		// and the Worker serves without enforcing them rather than going down.
+		"CREATE_DAILY_LIMIT": "5",
+		"EVENTS_HOURLY_LIMIT": "300",
 
-  "vars": {
-    // The card the tester sees. The blueprint route points every test at this
-    // one zip, so the card is updated for everybody by changing this.
-    "PLUGIN_ZIP_URL": "https://github.com/jamiemarsland/playground-usertest/releases/latest/download/playground-usertest-card.zip",
-
-    // Caps. Sized for Cloudflare's FREE KV plan, which allows 1,000 writes a
-    // day. A tester spends about fifteen, so roughly sixty testers a day before
-    // Workers Paid at $5/month is worth it. Past the ceiling the counters fail
-    // and the Worker serves without enforcing them rather than going down.
-    "CREATE_DAILY_LIMIT": "5",
-    "EVENTS_HOURLY_LIMIT": "300"
-  },
-
-  // No id: Cloudflare creates the namespace on deploy and links it
-  // automatically (wrangler 4.45+). Without it there is nowhere to put a test,
-  // and every route answers 503.
-  "kv_namespaces": [{ "binding": "TESTS" }],
-
-  "observability": { "enabled": true }
+		// A per-address cap does nothing about agents: they arrive from shared
+		// cloud egress, so one caller's limit becomes everyone's, and anything
+		// determined can rotate addresses anyway. This one bounds the store no
+		// matter who is asking. Raise it when the service has a name and an owner.
+		"GLOBAL_CREATE_DAILY_LIMIT": "200"
+	},
+	// No id: Cloudflare creates the namespace on deploy and links it
+	// automatically (wrangler 4.45+). Without it there is nowhere to put a test,
+	// and every route answers 503.
+	"kv_namespaces": [
+		{
+			"binding": "TESTS",
+			"id": "a4f6b88d3f7e4323b79b23bb4c6b13e0"
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
 }

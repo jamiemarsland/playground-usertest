@@ -224,17 +224,17 @@ function cleanTasks(input) {
   return out;
 }
 
-// The owner's blueprint is fetched from wherever they keep it, so this is the
-// one place the Worker follows a URL someone gave it. Anything but a public
-// https host is refused: no http, no IP literals, no localhost.
-function checkBlueprintUrl(raw) {
+// URLs someone hands us — a blueprint to fetch, a plugin zip to install, a
+// photograph to import — all get the same treatment: public https only, no IP
+// literals, no localhost, nothing that could point back inside.
+function checkPublicUrl(raw, what) {
   let u;
   try {
     u = new URL(String(raw));
   } catch (e) {
-    return { error: 'That blueprint URL is not a URL.' };
+    return { error: `That ${what} is not a URL.` };
   }
-  if (u.protocol !== 'https:') return { error: 'The blueprint URL has to start with https://.' };
+  if (u.protocol !== 'https:') return { error: `The ${what} has to start with https://.` };
   const host = u.hostname.toLowerCase();
   if (
     host === 'localhost' ||
@@ -244,9 +244,13 @@ function checkBlueprintUrl(raw) {
     /^\d{1,3}(\.\d{1,3}){3}$/.test(host) ||
     host.includes(':')
   ) {
-    return { error: 'The blueprint has to be somewhere public — that host is not.' };
+    return { error: `The ${what} has to be somewhere public — that host is not.` };
   }
   return { url: u.toString() };
+}
+
+function checkBlueprintUrl(raw) {
+  return checkPublicUrl(raw, 'blueprint URL');
 }
 
 async function fetchBlueprint(url) {
@@ -274,9 +278,300 @@ async function fetchBlueprint(url) {
   }
 }
 
+/* ---------------------------------------------------------------- the check */
+// An agent drafting tasks gets two things wrong by default, and both of them
+// quietly ruin the test rather than breaking it. This says so before the test
+// goes out rather than after five people have sat through it.
+//
+// Advisory on purpose: it never blocks a create. Someone who means it can
+// ignore every word.
+
+const BUTTON_WORDS = /\b(click|press|tap|hit|select|choose|drag|navigate to|go to the|open the)\b/i;
+
+function lintTest(input) {
+  const problems = [];
+  const notes = [];
+
+  const subject = trim(input && input.subject, LIMITS.subject);
+  const persona = trimMultiline(input && input.persona, LIMITS.persona);
+  const tasks = cleanTasks(input && input.tasks);
+  const boot = input && input.boot && typeof input.boot === 'object' ? input.boot : null;
+  const siteName = boot ? trim(boot.title, 60) : '';
+
+  if (!subject) problems.push('Say what is being tested — it is the tester’s first line: “Thank you for helping make X better”.');
+  if (!persona) problems.push('There is no persona. The tester needs to know who they are meant to be.');
+  if (!tasks.length) problems.push('There is nothing for them to try.');
+
+  // The one that cost a whole round of testing: an Elliot Grey site and an
+  // Elliot Smith persona, so "give the site your own name" had nothing to change.
+  if (siteName && persona && persona.toLowerCase().includes(siteName.toLowerCase())) {
+    problems.push(`The persona is already called ${siteName}, which is the name the demo site carries. Anything about making the site theirs has nothing to change. Give them a different name.`);
+  }
+
+  tasks.forEach((task, i) => {
+    const hit = task.title.match(BUTTON_WORDS);
+    if (hit) {
+      problems.push(`Task ${i + 1} says “${hit[0]}” — it is telling them which control to use. Say what they want to end up with; put the control in the hint, where you find out who needed it.`);
+    }
+    if (/\?\s*$/.test(task.title)) {
+      notes.push(`Task ${i + 1} is phrased as a question. Tasks are things to do; the questions come at the end.`);
+    }
+  });
+
+  const titles = tasks.map((t) => t.title.toLowerCase());
+  titles.forEach((t, i) => {
+    if (titles.indexOf(t) !== i) problems.push(`Task ${i + 1} repeats an earlier one.`);
+  });
+
+  if (tasks.length && tasks.length < 3) notes.push('Two or three tasks rarely tells you much. Five is a good number.');
+  if (tasks.length > 7) notes.push(`${tasks.length} tasks is past what most people will sit through. Seven is about the ceiling.`);
+
+  const noHint = tasks.filter((t) => !t.hint).length;
+  if (noHint) notes.push(`${noHint} task(s) have no hint. Whether someone opened the hint is the clearest signal in the results — without one you only learn that they failed, not where.`);
+
+  if (persona && persona.length < 120) notes.push('The persona is short. Give them a reason to want the site, not just a job title — people put more care into a site they believe in.');
+  if (persona && !/\byou\b/i.test(persona)) notes.push('The persona does not address them as “you”. It reads better in the second person.');
+
+  const summary = tasks.length
+    ? `${tasks.length} task(s) for someone testing ${subject || 'something'}:\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.hint ? '' : '  (no hint)'}`).join('\n')
+    : '';
+
+  return { ok: problems.length === 0, problems, notes, summary };
+}
+
+/* ------------------------------------------------- a blueprint, without one */
+// Most people who want to test something do not have a Playground blueprint,
+// and writing one is fiddly in ways that bite quietly — a failed step does not
+// stop the boot, it just leaves a hole in the site. So a test can instead
+// describe what it wants booted, and the service assembles the blueprint:
+//
+//   { title, tagline, theme, plugins: [], images: [], pages: [], content }
+//
+// theme and each plugin are either a wordpress.org slug or an https zip.
+
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,60}$/;
+
+function cleanBoot(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'boot has to be an object.' };
+
+  const boot = {
+    title: trim(input.title, 60) || 'Harbourview',
+    tagline: trim(input.tagline, 80),
+    content: input.content === 'none' ? 'none' : 'starter',
+    plugins: [],
+    images: [],
+    pages: [],
+  };
+
+  // The demo site's own name must not be the name the tester is playing, or
+  // "give the site your own name" has nothing to change. The service cannot
+  // know the persona here, so lintTest() checks that pairing; this only makes
+  // sure there IS a name to change.
+  const theme = trim(input.theme, 300) || 'twentytwentyfive';
+  if (theme.includes('://')) {
+    const checked = checkPublicUrl(theme, 'theme zip');
+    if (checked.error) return { error: checked.error };
+    boot.theme = checked.url;
+  } else {
+    if (!SLUG_RE.test(theme)) return { error: 'The theme has to be a wordpress.org slug or an https zip URL.' };
+    boot.theme = theme;
+  }
+
+  for (const raw of (Array.isArray(input.plugins) ? input.plugins : []).slice(0, 6)) {
+    const one = trim(raw, 300);
+    if (!one) continue;
+    if (one.includes('://')) {
+      const checked = checkPublicUrl(one, 'plugin zip');
+      if (checked.error) return { error: checked.error };
+      boot.plugins.push(checked.url);
+    } else {
+      if (!SLUG_RE.test(one)) return { error: `"${one}" is not a wordpress.org slug or an https zip URL.` };
+      boot.plugins.push(one);
+    }
+  }
+
+  for (const raw of (Array.isArray(input.images) ? input.images : []).slice(0, 6)) {
+    const checked = checkPublicUrl(trim(raw, 500), 'picture URL');
+    if (checked.error) return { error: checked.error };
+    boot.images.push(checked.url);
+  }
+
+  for (const raw of (Array.isArray(input.pages) ? input.pages : []).slice(0, 6)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const title = trim(raw.title, 60);
+    if (!title) continue;
+    boot.pages.push({
+      title,
+      heading: trim(raw.heading, 140),
+      text: trimMultiline(raw.text, 1200),
+    });
+  }
+
+  return { boot };
+}
+
+// Everything the boot needs rides inside the step as base64 JSON rather than
+// being interpolated into PHP source. Quoting a person's apostrophes into a
+// string that is itself inside JSON inside a blueprint is a losing game.
+function starterPhp(boot) {
+  const data = {
+    title: boot.title,
+    tagline: boot.tagline,
+    images: boot.images,
+    pages: boot.pages.length ? boot.pages : defaultPages(boot),
+  };
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+
+  return [
+    '<?php',
+    "require '/wordpress/wp-load.php';",
+    "require_once ABSPATH . 'wp-admin/includes/image.php';",
+    'wp_set_current_user( 1 );',
+    `$d = json_decode( base64_decode( '${b64}' ), true );`,
+    '',
+    '// Two traps live here, and both fail silently. media_sideload_image() takes',
+    '// the filename from the URL, so a URL ending in an id with no extension is',
+    '// refused as an invalid file type; and download_url() streams to a temp file,',
+    '// which Playground does not do. Fetch it in one go, name it',
+    '// ourselves, attach it by hand.',
+    '$ids = array();',
+    'foreach ( (array) $d[\'images\'] as $i => $url ) {',
+    '\ttry {',
+    '\t\t$res = wp_remote_get( $url, array( \'timeout\' => 30 ) );',
+    '\t\tif ( is_wp_error( $res ) || 200 !== wp_remote_retrieve_response_code( $res ) ) { continue; }',
+    '\t\t$bytes = wp_remote_retrieve_body( $res );',
+    '\t\tif ( strlen( $bytes ) < 1000 ) { continue; }',
+    '\t\t$put = wp_upload_bits( \'picture-\' . ( $i + 1 ) . \'.jpg\', null, $bytes );',
+    '\t\tif ( ! empty( $put[\'error\'] ) ) { continue; }',
+    '\t\t$id = wp_insert_attachment( array(',
+    '\t\t\t\'post_mime_type\' => \'image/jpeg\',',
+    '\t\t\t\'post_title\'     => \'Picture \' . ( $i + 1 ),',
+    '\t\t\t\'post_status\'    => \'inherit\',',
+    '\t\t), $put[\'file\'] );',
+    '\t\tif ( is_wp_error( $id ) || ! $id ) { continue; }',
+    '\t\twp_update_attachment_metadata( $id, wp_generate_attachment_metadata( $id, $put[\'file\'] ) );',
+    '\t\t$ids[] = $id;',
+    '\t} catch ( \\Throwable $e ) {}',
+    '}',
+    '',
+    '$img = function ( $i ) use ( $ids ) {',
+    '\tif ( empty( $ids[ $i ] ) ) { return \'\'; }',
+    '\t$src = wp_get_attachment_image_url( $ids[ $i ], \'full\' );',
+    '\treturn \'<!-- wp:image {"id":\' . $ids[ $i ] . \',"sizeSlug":"full","linkDestination":"none"} -->\'',
+    '\t\t. \'<figure class="wp-block-image size-full"><img src="\' . esc_url( $src ) . \'" alt="" class="wp-image-\' . $ids[ $i ] . \'"/></figure>\'',
+    '\t\t. \'<!-- /wp:image -->\';',
+    '};',
+    '',
+    '$front = 0;',
+    'foreach ( (array) $d[\'pages\'] as $n => $page ) {',
+    '\t$blocks = \'\';',
+    '\tif ( ! empty( $page[\'heading\'] ) ) {',
+    '\t\t$blocks .= \'<!-- wp:heading {"level":1} --><h1 class="wp-block-heading">\' . esc_html( $page[\'heading\'] ) . \'</h1><!-- /wp:heading -->\';',
+    '\t}',
+    '\tforeach ( preg_split( \'/\\n{2,}/\', (string) $page[\'text\'] ) as $para ) {',
+    '\t\t$para = trim( $para );',
+    '\t\tif ( \'\' === $para ) { continue; }',
+    '\t\t$blocks .= \'<!-- wp:paragraph --><p>\' . esc_html( $para ) . \'</p><!-- /wp:paragraph -->\';',
+    '\t}',
+    '\tif ( 0 === $n ) {',
+    '\t\tforeach ( array_keys( $ids ) as $k ) { $blocks .= $img( $k ); }',
+    '\t}',
+    '\t$existing = get_page_by_path( sanitize_title( $page[\'title\'] ) );',
+    '\t$id = $existing ? $existing->ID : wp_insert_post( array(',
+    '\t\t\'post_title\'   => $page[\'title\'],',
+    '\t\t\'post_name\'    => sanitize_title( $page[\'title\'] ),',
+    '\t\t\'post_content\' => $blocks,',
+    '\t\t\'post_status\'  => \'publish\',',
+    '\t\t\'post_type\'    => \'page\',',
+    '\t) );',
+    '\tif ( 0 === $n && ! is_wp_error( $id ) ) { $front = $id; }',
+    '}',
+    'if ( $front ) {',
+    '\tupdate_option( \'show_on_front\', \'page\' );',
+    '\tupdate_option( \'page_on_front\', $front );',
+    '}',
+    '',
+    '// Clear the samples WordPress ships, so nobody tidies up before they start.',
+    '$hello = get_page_by_path( \'hello-world\', OBJECT, \'post\' );',
+    'if ( $hello ) { wp_delete_post( $hello->ID, true ); }',
+    '$sample = get_page_by_path( \'sample-page\' );',
+    'if ( $sample ) { wp_delete_post( $sample->ID, true ); }',
+  ].join('\n');
+}
+
+// Filler with a shape to it. Bland copy is its own kind of failure here: a
+// tester who does not believe in the site will not put any care into changing
+// it, and then the test measures nothing.
+function defaultPages(boot) {
+  const what = boot.tagline || 'what we do';
+  return [
+    {
+      title: 'Home',
+      heading: boot.tagline || boot.title,
+      text: `${boot.title} has been going for a few years now, in a small way, and mostly by word of mouth.\n\nThis is the sentence most visitors read first, so it is the one worth getting right.`,
+    },
+    {
+      title: 'About',
+      heading: `About ${boot.title}`,
+      text: `A few paragraphs about who is behind ${boot.title} and why they started.\n\nPeople read this page more than anyone expects them to.`,
+    },
+    {
+      title: 'Contact',
+      heading: 'Get in touch',
+      text: `The best way to reach ${boot.title} about ${what}.\n\nhello@example.com`,
+    },
+  ];
+}
+
+function blueprintFromBoot(boot) {
+  const steps = [];
+
+  steps.push({
+    step: 'installTheme',
+    themeData: boot.theme.includes('://')
+      ? { resource: 'url', url: boot.theme }
+      : { resource: 'wordpress.org/themes', slug: boot.theme },
+    options: { activate: true },
+  });
+
+  for (const one of boot.plugins) {
+    steps.push({
+      step: 'installPlugin',
+      pluginData: one.includes('://')
+        ? { resource: 'url', url: one }
+        : { resource: 'wordpress.org/plugins', slug: one },
+      options: { activate: true },
+    });
+  }
+
+  steps.push({
+    step: 'setSiteOptions',
+    options: { blogname: boot.title, blogdescription: boot.tagline || '' },
+  });
+
+  if (boot.content !== 'none') steps.push({ step: 'runPHP', code: starterPhp(boot) });
+
+  return {
+    $schema: 'https://playground.wordpress.net/blueprint-schema.json',
+    landingPage: '/',
+    preferredVersions: { php: '8.2', wp: 'latest' },
+    features: { networking: true },
+    login: true,
+    steps,
+  };
+}
+
 /* ---------------------------------------------------------------- create a test */
 
 async function createTest(env, req) {
+  let body = {};
+  try { body = JSON.parse(await req.text()) || {}; } catch (e) { body = {}; }
+  return makeTest(env, req, body);
+}
+
+// Everything past the parsing, so MCP can hand in a body it already has rather
+// than building a Request to feed back to ourselves.
+async function makeTest(env, req, body) {
   if (!env.TESTS) return json({ error: 'The store is not set up yet.' }, 503, CORS);
 
   // Only a test that actually gets made counts against the day's allowance: a
@@ -287,8 +582,12 @@ async function createTest(env, req) {
   const made = await peekCount(env, capKey);
   if (made >= cap) return json({ error: `That is ${cap} tests today from here. Try again tomorrow.` }, 429, CORS);
 
-  let body = {};
-  try { body = JSON.parse(await req.text()) || {}; } catch (e) { body = {}; }
+  // A per-address cap does nothing about agents, which arrive from shared
+  // cloud egress by the thousand. This one bounds the store no matter who asks.
+  const globalCap = parseInt(env.GLOBAL_CREATE_DAILY_LIMIT || '200', 10);
+  const globalKey = `all:create:${today()}`;
+  const madeToday = await peekCount(env, globalKey);
+  if (madeToday >= globalCap) return json({ error: 'The service has made as many tests as it will today. Try again tomorrow.' }, 429, CORS);
 
   const subject = trim(body.subject, LIMITS.subject);
   const persona = trimMultiline(body.persona, LIMITS.persona);
@@ -302,14 +601,21 @@ async function createTest(env, req) {
     return json({ error: `The results password has to be at least ${LIMITS.passwordMin} characters.` }, 400, CORS);
   }
 
-  // Either a URL to fetch each time, or JSON pasted once. Both are checked now
-  // so a broken blueprint is an error on the form, not a blank tab for a tester.
+  // Three ways to say what the tester's site should be: a URL to fetch each
+  // time, JSON pasted once, or a description of what to boot that the service
+  // turns into a blueprint itself. All three are checked now, so a broken one
+  // is an error here rather than a blank tab for a tester.
   let blueprintUrl = '';
   let blueprintJson = null;
+  let blueprintBoot = null;
   const rawUrl = trim(body.blueprintUrl, 500);
   const rawJson = String(body.blueprintJson || '').trim();
 
-  if (rawUrl) {
+  if (body.boot) {
+    const checked = cleanBoot(body.boot);
+    if (checked.error) return json({ error: checked.error }, 400, CORS);
+    blueprintBoot = checked.boot;
+  } else if (rawUrl) {
     const checked = checkBlueprintUrl(rawUrl);
     if (checked.error) return json({ error: checked.error }, 400, CORS);
     const got = await fetchBlueprint(checked.url);
@@ -327,7 +633,7 @@ async function createTest(env, req) {
       return json({ error: 'The pasted blueprint is not valid JSON.' }, 400, CORS);
     }
   } else {
-    return json({ error: 'Give a blueprint — a URL, or paste the JSON.' }, 400, CORS);
+    return json({ error: 'Say what the tester should get: a blueprint URL, blueprint JSON, or a boot description.' }, 400, CORS);
   }
 
   const { salt, hash } = await hashPassword(password);
@@ -343,6 +649,7 @@ async function createTest(env, req) {
     tasks,
     blueprintUrl,
     blueprintJson,
+    blueprintBoot,
     pwSalt: salt,
     pwHash: hash,
   };
@@ -350,6 +657,7 @@ async function createTest(env, req) {
   await writeJSON(env, `test:${id}`, record);
   await writeJSON(env, `test:${id}:index`, []);
   await bumpCount(env, capKey, made, 2 * 24 * 60 * 60);
+  await bumpCount(env, globalKey, madeToday, 2 * 24 * 60 * 60);
 
   const origin = new URL(req.url).origin;
   return json({ id, tester: `${origin}/t/${id}`, results: `${origin}/t/${id}/results` }, 200, CORS);
@@ -407,6 +715,7 @@ async function serveBlueprint(env, req, id) {
   if (!test) return json({ error: 'No such test.' }, 404, CORS);
 
   let base = test.blueprintJson;
+  if (!base && test.blueprintBoot) base = blueprintFromBoot(test.blueprintBoot);
   if (!base) {
     const got = await fetchBlueprint(test.blueprintUrl);
     if (got.error) return json({ error: got.error }, 502, CORS);
@@ -522,19 +831,120 @@ async function appendEvents(env, req) {
   return json({ ok: true, n: all.length }, 200, CORS);
 }
 
+/* -------------------------------------------------------------------- digest */
+// Raw events are the right thing to keep and the wrong thing to hand back. A
+// tester can spend six hundred of them, and nobody — person or agent — reads a
+// stream to find out that four people in five gave up on task three. This folds
+// the whole test down to one object: per task, how it went, and everything
+// anyone typed.
+
+const DIGEST_MAX_SESSIONS = 100;
+
+function median(nums) {
+  const xs = nums.filter((n) => typeof n === 'number' && isFinite(n)).sort((a, b) => a - b);
+  if (!xs.length) return null;
+  const mid = Math.floor(xs.length / 2);
+  return xs.length % 2 ? xs[mid] : Math.round((xs[mid - 1] + xs[mid]) / 2);
+}
+
+async function buildDigest(env, id, test) {
+  const index = await readJSON(env, `test:${id}:index`, []);
+  const rows = (Array.isArray(index) ? index : []).slice(0, DIGEST_MAX_SESSIONS);
+
+  const byTask = new Map();
+  for (const task of test.tasks) {
+    byTask.set(task.id, {
+      id: task.id, title: task.title,
+      done: 0, couldnt: 0, notReached: 0,
+      hintOpened: 0, secs: [], notes: [],
+    });
+  }
+
+  const wrapUps = [];
+  let errors = 0;
+  let lastEventAt = 0;
+
+  for (const row of rows) {
+    const events = await readJSON(env, `test:${id}:session:${row.id}`, []);
+    if (!Array.isArray(events) || !events.length) continue;
+    lastEventAt = Math.max(lastEventAt, row.last || 0);
+
+    const who = row.name || row.id;
+    const reached = new Set();
+
+    for (const e of events) {
+      if (e.type === 'error') { errors++; continue; }
+      if (e.type === 'wrap') {
+        const d = e.data || {};
+        wrapUps.push({
+          who,
+          happy: d.happy || '', confident: d.confident || '',
+          feel: d.feel || '', confused: d.confused || '',
+          minutes: d.minutes || 0,
+        });
+        continue;
+      }
+      const t = byTask.get(e.task);
+      if (!t) continue;
+      reached.add(e.task);
+      if (e.type === 'hint') t.hintOpened++;
+      if (e.type === 'task_done' || e.type === 'task_skip') {
+        if (e.type === 'task_done') t.done++; else t.couldnt++;
+        if (e.data && typeof e.data.secs === 'number') t.secs.push(e.data.secs);
+        if (e.note) t.notes.push({ who, note: e.note, got: e.type === 'task_done' ? 'done' : 'couldn’t', path: e.path || '' });
+      }
+    }
+
+    // A task nobody started is not the same as one everybody failed, and the
+    // difference is usually "they ran out of patience three tasks ago".
+    for (const [taskId, t] of byTask) {
+      if (!reached.has(taskId)) t.notReached++;
+    }
+  }
+
+  const tasks = [...byTask.values()].map((t) => ({
+    id: t.id, title: t.title,
+    done: t.done, couldnt: t.couldnt, notReached: t.notReached,
+    hintOpened: t.hintOpened,
+    medianSecs: median(t.secs),
+    notes: t.notes,
+  }));
+
+  return {
+    subject: test.subject,
+    created: test.created,
+    testers: rows.length,
+    counted: rows.length,
+    truncated: (Array.isArray(index) ? index.length : 0) > DIGEST_MAX_SESSIONS,
+    lastEventAt,
+    finished: wrapUps.length,
+    errors,
+    tasks,
+    wrapUps,
+  };
+}
+
 /* ------------------------------------------------------------------- results */
+
+// Hash even when there is no such test, so a wrong id and a wrong password take
+// the same time and come back saying the same thing: ids cannot be fished for.
+async function openTest(env, id, given) {
+  const test = await getTest(env, id);
+  const salt = test ? test.pwSalt : '00000000000000000000000000000000';
+  const { hash } = await hashPassword(String(given || ''), salt);
+  if (!test || !sameSecret(hash, test.pwHash)) return null;
+  return test;
+}
 
 async function readResults(env, req, url) {
   const id = url.searchParams.get('test') || '';
-  const test = await getTest(env, id);
-  const given = req.headers.get('x-test-password') || '';
-
-  // Hash even when there is no such test, so a wrong id and a wrong password
-  // take the same time and tell the asker the same thing.
-  const salt = test ? test.pwSalt : '00000000000000000000000000000000';
-  const { hash } = await hashPassword(given, salt);
-  if (!test || !sameSecret(hash, test.pwHash)) {
+  const test = await openTest(env, id, req.headers.get('x-test-password') || '');
+  if (!test) {
     return json({ error: 'That password is not right.' }, 401, { 'cache-control': 'no-store' });
+  }
+
+  if (url.searchParams.get('digest')) {
+    return json(await buildDigest(env, id, test), 200, { 'cache-control': 'no-store' });
   }
 
   const session = url.searchParams.get('session') || '';
@@ -556,6 +966,268 @@ async function readResults(env, req, url) {
     { 'cache-control': 'no-store' }
   );
 }
+
+/* ------------------------------------------------------------------- agents */
+// The same three things the form does, as tools an assistant can call: check a
+// draft, make the test, read what came back. Nothing here can do anything the
+// HTTP routes cannot — it is the same functions underneath — but an agent gets
+// told what the arguments mean and gets results in a shape that fits in a
+// context window.
+
+const MCP_CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-headers': 'content-type, accept, mcp-session-id, mcp-protocol-version, authorization',
+  'access-control-expose-headers': 'mcp-session-id',
+};
+
+const MCP_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
+
+const TASKS_SCHEMA = {
+  type: 'array',
+  description: 'Five to seven things to try, in order. Say what the tester wants to end up with, never which control to use — the control goes in the hint, so you find out who needed it.',
+  items: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: 'What they are trying to get done, in their words. "Give the site your own name", not "click Settings".' },
+      hint: { type: 'string', description: 'Shown only if they ask for it. This is where a control may be named.' },
+      why: { type: 'string', description: 'Optional one line of context under the task.' },
+    },
+    required: ['title'],
+  },
+};
+
+const BOOT_SCHEMA = {
+  type: 'object',
+  description: 'What the tester\'s site should be, if you do not already have a Playground blueprint. The service assembles the blueprint from this.',
+  properties: {
+    title: { type: 'string', description: 'The demo site\'s own name. It must NOT be the name the persona is playing, or tasks about making the site theirs have nothing to change.' },
+    tagline: { type: 'string' },
+    theme: { type: 'string', description: 'A wordpress.org theme slug, or an https URL to a theme zip. Defaults to twentytwentyfive.' },
+    plugins: { type: 'array', items: { type: 'string' }, description: 'Up to six wordpress.org slugs or https zip URLs. This is where the thing being tested usually goes.' },
+    images: { type: 'array', items: { type: 'string' }, description: 'Up to six https photographs to put on the front page. A site with no pictures is one nobody believes in, and a tester who does not believe in it will not put care into changing it.' },
+    pages: { type: 'array', items: { type: 'object' }, description: 'Optional [{title, heading, text}]. The first is the front page. Leave it out for a readable default.' },
+    content: { type: 'string', enum: ['starter', 'none'], description: 'starter builds pages and clears WordPress\'s samples. none leaves a bare site.' },
+  },
+};
+
+const TOOLS = [
+  {
+    name: 'usertest_check',
+    description: 'Check a draft test before making it. Returns problems worth fixing and softer notes, plus the task list read back. Call it first — two mistakes are easy to make and quietly ruin a test rather than breaking it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string', description: 'What is being tested. It becomes the tester\'s first line: "Thank you for helping make X better".' },
+        persona: { type: 'string', description: 'A paragraph, second person, giving them a reason to want the site — not just a job title.' },
+        tasks: TASKS_SCHEMA,
+        boot: BOOT_SCHEMA,
+      },
+      required: ['subject', 'persona', 'tasks'],
+    },
+  },
+  {
+    name: 'usertest_create',
+    description: 'Make a test. Returns a link to send a tester and a link to read the results, plus the results password — which cannot be recovered, so give it to the person and keep it. Say what the tester should get with EITHER boot, or blueprint_url, or blueprint_json.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string' },
+        persona: { type: 'string' },
+        tasks: TASKS_SCHEMA,
+        boot: BOOT_SCHEMA,
+        blueprint_url: { type: 'string', description: 'An https URL to an existing Playground blueprint. Re-read each time a tester starts, so it can keep changing.' },
+        blueprint_json: { type: 'string', description: 'A Playground blueprint as a JSON string, kept as-is.' },
+        password: { type: 'string', description: 'For the results page. One is made for you if you leave it out.' },
+      },
+      required: ['subject', 'persona', 'tasks'],
+    },
+  },
+  {
+    name: 'usertest_results',
+    description: 'Read what testers did. Returns, per task: how many managed it, how many could not, how many never reached it, the median time, how many opened the hint, and every note anyone typed — plus the wrap-up answers. Testing is slow; expect nothing for a day.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        test: { type: 'string', description: 'The test id from usertest_create.' },
+        password: { type: 'string', description: 'The results password from usertest_create.' },
+      },
+      required: ['test', 'password'],
+    },
+  },
+];
+
+function mcpText(t, extra) {
+  return Object.assign({ content: [{ type: 'text', text: t }] }, extra || {});
+}
+
+async function mcpCall(env, req, name, args) {
+  if (name === 'usertest_check') {
+    const r = lintTest(args);
+    const lines = [];
+    lines.push(r.ok ? 'Nothing blocking.' : 'Worth fixing first:');
+    r.problems.forEach((x) => lines.push('- ' + x));
+    if (r.notes.length) {
+      lines.push(r.ok ? 'Some notes:' : '\nAnd some notes:');
+      r.notes.forEach((x) => lines.push('- ' + x));
+    }
+    if (r.summary) lines.push('\n' + r.summary);
+    return mcpText(lines.join('\n'), { structuredContent: r });
+  }
+
+  if (name === 'usertest_create') {
+    // A password nobody chose is better than no password, and an agent has
+    // nowhere sensible to invent one from.
+    const password = String((args && args.password) || '') || makeId(16);
+    const res = await makeTest(env, req, {
+      subject: args && args.subject,
+      persona: args && args.persona,
+      tasks: args && args.tasks,
+      boot: args && args.boot,
+      blueprintUrl: args && args.blueprint_url,
+      blueprintJson: args && args.blueprint_json,
+      password,
+    });
+    const made = await res.json();
+    if (!res.ok) return mcpText(made.error || 'That did not work.', { isError: true, structuredContent: made });
+
+    const out = Object.assign({}, made, { password });
+    return mcpText(
+      `Made. Send this to a tester:\n${made.tester}\n\n` +
+      `Read the results here:\n${made.results}\n\nPassword: ${password}\n\n` +
+      'Give the person both links and the password — none of it can be looked up again. ' +
+      'The test keeps itself for ninety days after the last tester.',
+      { structuredContent: out }
+    );
+  }
+
+  if (name === 'usertest_results') {
+    const id = String((args && args.test) || '');
+    const test = await openTest(env, id, (args && args.password) || '');
+    if (!test) return mcpText('That test id and password do not go together.', { isError: true });
+    const d = await buildDigest(env, id, test);
+    if (!d.testers) return mcpText(`Nobody has started ${d.subject ? 'the ' + d.subject + ' test' : 'it'} yet.`, { structuredContent: d });
+
+    const lines = [`${d.testers} tester(s), ${d.finished} of them finished.`, ''];
+    for (const t of d.tasks) {
+      const bits = [`${t.done} done`, `${t.couldnt} couldn’t`];
+      if (t.notReached) bits.push(`${t.notReached} never got there`);
+      if (t.hintOpened) bits.push(`${t.hintOpened} opened the hint`);
+      if (t.medianSecs != null) bits.push(`${t.medianSecs}s median`);
+      lines.push(`${t.title} — ${bits.join(', ')}`);
+      t.notes.forEach((n) => lines.push(`    "${n.note}" — ${n.who} (${n.got})`));
+    }
+    if (d.wrapUps.length) {
+      lines.push('', 'At the end:');
+      d.wrapUps.forEach((w) => lines.push(`  ${w.who}: ${w.happy}/5, could finish: ${w.confident}${w.feel ? `, felt "${w.feel}"` : ''}${w.confused ? `, confused by "${w.confused}"` : ''}`));
+    }
+    if (d.truncated) lines.push('', `Only the most recent ${DIGEST_MAX_SESSIONS} testers are counted here.`);
+    return mcpText(lines.join('\n'), { structuredContent: d });
+  }
+
+  return mcpText(`Unknown tool ${name}`, { isError: true });
+}
+
+async function mcpMessage(env, req, msg) {
+  if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0') {
+    return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } };
+  }
+  const { id, method, params } = msg;
+  if (id === undefined) return null; // a notification: nothing to say back
+  const ok = (result) => ({ jsonrpc: '2.0', id, result });
+  const err = (code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
+  try {
+    if (method === 'initialize') {
+      const want = params && params.protocolVersion;
+      return ok({
+        protocolVersion: MCP_VERSIONS.includes(want) ? want : MCP_VERSIONS[0],
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: 'playground-usertest', version: '1.0.0' },
+        instructions:
+          'Sets up a user test of a WordPress theme, plugin or site: the tester opens a link, ' +
+          'gets a throwaway WordPress site in their browser with a card of things to try, and what ' +
+          'they do comes back here. Draft the persona and tasks with the person, usertest_check them, ' +
+          'then usertest_create and hand over both links and the password. Come back later for ' +
+          'usertest_results — real testers take days, not minutes.',
+      });
+    }
+    if (method === 'ping') return ok({});
+    if (method === 'tools/list') return ok({ tools: TOOLS });
+    if (method === 'tools/call') {
+      const name = params && params.name;
+      if (!TOOLS.some((t) => t.name === name)) return err(-32602, `Unknown tool: ${name}`);
+      return ok(await mcpCall(env, req, name, (params && params.arguments) || {}));
+    }
+    return err(-32601, `Method not found: ${method}`);
+  } catch (e) {
+    return err(-32603, e.message || String(e));
+  }
+}
+
+async function handleMcp(req, env) {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: MCP_CORS });
+  if (req.method !== 'POST') {
+    return json({ error: 'This is an MCP server: POST JSON-RPC here, or add it as a connector in your AI app.' }, 405, Object.assign({ allow: 'POST, OPTIONS' }, MCP_CORS));
+  }
+  let body;
+  try {
+    body = await req.json();
+  } catch (e) {
+    return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, 400, MCP_CORS);
+  }
+  const batch = Array.isArray(body);
+  const out = [];
+  for (const msg of batch ? body : [body]) {
+    const r = await mcpMessage(env, req, msg);
+    if (r) out.push(r);
+  }
+  if (!out.length) return new Response(null, { status: 202, headers: MCP_CORS });
+  return json(batch ? out : out[0], 200, Object.assign({ 'cache-control': 'no-store' }, MCP_CORS));
+}
+
+// For agents that read rather than speak MCP. Kept short on purpose: the whole
+// service is three calls, and a page of prose would only get skimmed.
+const LLMS_TXT = (origin) => `# Playground user testing
+
+User-test a WordPress theme, plugin or site with anyone who has a browser. The
+tester opens a link, gets a throwaway WordPress site (WordPress Playground) with
+a card of things to try, and what they do comes back here. Nothing to install at
+either end, and no accounts.
+
+## As MCP
+
+POST ${origin}/mcp — tools: usertest_check, usertest_create, usertest_results.
+
+## As HTTP
+
+POST ${origin}/api/tests
+  { subject, persona, tasks: [{ title, hint }], password,
+    boot: { title, tagline, theme, plugins: [], images: [] } }
+  -> { id, tester, results }
+
+  Say what the tester gets with ONE of: boot (the service builds the blueprint),
+  blueprintUrl (re-read each time), blueprintJson (kept as-is).
+
+GET ${origin}/api/results?test=<id>&digest=1
+  header: x-test-password: <the password>
+  -> per task: done, couldnt, notReached, hintOpened, medianSecs, notes[]
+     plus wrapUps[]. Drop &digest=1 for one row per tester, add
+     &session=<id> for one tester's raw events.
+
+## Two things that quietly ruin a test
+
+- A task that names a control ("click Settings") tests whether they can follow
+  an instruction, not whether they can find it. Say what they want to end up
+  with; put the control in the hint, which tells you who needed it.
+- A persona named after the demo site leaves nothing to change when the task is
+  about making the site their own.
+
+usertest_check catches both.
+
+## Pace
+
+Real testers take days. Create, hand over the links, come back later.
+`;
 
 /* --------------------------------------------------------------------- pages */
 
@@ -919,6 +1591,14 @@ export default {
       return html(HOME, { 'cache-control': 'public, max-age=300' });
     }
 
+    if (url.pathname === '/mcp') return handleMcp(req, env);
+
+    if (url.pathname === '/llms.txt') {
+      return new Response(LLMS_TXT(url.origin), {
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' },
+      });
+    }
+
     if (url.pathname === '/api/tests') {
       if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
       if (req.method !== 'POST') return json({ error: 'POST only' }, 405, CORS);
@@ -961,4 +1641,4 @@ const NOT_FOUND = `<!doctype html>
 </div></body></html>`;
 
 // exported for the tests
-export { cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, hashPassword, sameSecret, summarise, taskId, makeId, TEST_PATH };
+export { lintTest, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, summarise, taskId, makeId, TEST_PATH };

@@ -31,7 +31,7 @@ No account. Nothing to host. No JSON to edit.
 ## What is in here
 
 ```
-worker/worker.js               the service: form, intro page, blueprint, events, results
+worker/worker.js               the service: form, intro page, blueprint, events, results, MCP
 worker/wrangler.jsonc          config — no build step, worker.js deploys as it stands
 worker/test-worker.mjs         the whole thing against a KV mock
 
@@ -55,7 +55,60 @@ reaches everybody's next tester without redeploying the Worker.
 | `GET /t/<id>/blueprint.json` | the owner's blueprint plus the card |
 | `GET /t/<id>/results` | the results page (asks for the password) |
 | `POST /api/events` | the card reporting in |
-| `GET /api/results` | results as JSON, `x-test-password` header |
+| `GET /api/results` | results as JSON, `x-test-password` header; `&digest=1` folds them down |
+| `POST /mcp` | the same three things, as tools an assistant can call |
+| `GET /llms.txt` | what this is, for agents that read rather than speak MCP |
+
+## For agents
+
+An assistant that has just built someone a theme is the natural place to say
+"want to test this with five people?" — so the whole service is callable as
+three MCP tools at `/mcp`, and as plain HTTP for anything that would rather
+curl. No accounts either way: the results password is the key, and
+`usertest_create` makes one if you do not.
+
+| | |
+|---|---|
+| `usertest_check` | Check a draft. Returns problems and softer notes. |
+| `usertest_create` | Make the test. Returns both links and the password. |
+| `usertest_results` | The digest: per task, how it went, and everything anyone typed. |
+
+Three things make this usable by an agent rather than merely callable.
+
+**It will build the blueprint.** Nobody arrives holding a Playground blueprint,
+and writing one is fiddly in ways that bite quietly — a failed step does not
+stop the boot, it leaves a hole in the site. So a test can describe what it
+wants instead:
+
+```json
+{ "boot": { "title": "Halden Studio", "tagline": "Furniture, made slowly",
+            "theme": "twentytwentyfive", "plugins": ["the-thing-being-tested"],
+            "images": ["https://…jpg"] } }
+```
+
+and the service assembles the theme, the plugins, the site options and a
+starter site with those photographs on the front page. The two traps that make
+pictures vanish — a URL with no file extension, and a streaming download
+Playground cannot do — are handled, and written down in the generated PHP for
+whoever reads it next.
+
+**The results come back folded up.** A tester can spend six hundred events, and
+nobody reads a stream to learn that four people in five gave up on task three.
+The digest gives you, per task: done, couldn't, never reached, median seconds,
+how many opened the hint, and every note anyone typed.
+
+**The check knows the two mistakes.** An agent drafting tasks makes both by
+default, and both ruin a test quietly rather than breaking it:
+
+- A task that names a control — "click Settings" — tests whether someone can
+  follow an instruction, not whether they can find it. Say what they want to end
+  up with; the control belongs in the hint, which is how you learn who needed it.
+- A persona named after the demo site leaves nothing to change when the task is
+  about making the site their own. That one cost a whole round of testing in
+  gogh: an Elliot Grey site and an Elliot Smith persona.
+
+`usertest_check` catches both, and never blocks — someone who means it can
+ignore every word.
 
 ## KV
 
@@ -128,8 +181,10 @@ to bound a bill.
 
 ## Abuse
 
-Five tests a day per address (a rejected form does not count against it), 300
-events an hour per address, everything expires, and no free text reaches
+Five tests a day per address (a rejected form does not count against it), a
+global ceiling of 200 a day — because a per-address cap does nothing about
+agents, which arrive from shared cloud egress — 300 events an hour per address,
+everything expires, and no free text reaches
 anything but the results page, escaped there. The blueprint URL is the one thing
 the Worker fetches on someone's say-so: https only, no IP literals, no localhost,
 no `.internal`, and capped at 256KB.
