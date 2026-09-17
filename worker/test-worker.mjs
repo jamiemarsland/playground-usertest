@@ -50,6 +50,11 @@ globalThis.fetch = async (url) => {
   served++;
   if (String(url).includes('/broken')) return new Response('not json', { status: 200 });
   if (String(url).includes('forbidden.zip')) return new Response('', { status: 403 });
+  // What a host that refuses its workers outbound fetch answers with, in place
+  // of whatever was actually at the URL.
+  if (String(url).includes('/no-egress')) {
+    return new Response(JSON.stringify({ title: 'Egress denied', status: 403, detail: 'This version was not granted outbound fetch.', code: 'egress_denied' }), { status: 403 });
+  }
   if (String(url).includes('/gone')) return new Response('', { status: 404 });
   // A release asset redirects to a CDN, and not every runtime follows that on a
   // HEAD — so the card answers the way Spacefast sees it.
@@ -186,6 +191,14 @@ check(r.status === 400, 'a blueprint URL that does not answer JSON is refused at
 
 r = await call(e1, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { blueprintJson: '', blueprintUrl: 'https://example.com/gone.json' }) });
 check(r.status === 400 && (await r.json()).error.includes('404'), 'a blueprint URL that 404s says so');
+
+// A host can refuse its own workers outbound fetch and answer 403 for a URL
+// that is sitting there, readable by anyone else. Reporting that as the URL's
+// fault sends the owner off to check permissions on a file that is fine.
+r = await call(e1, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { blueprintJson: '', blueprintUrl: 'https://example.com/no-egress.json' }) });
+const egress = (await r.json()).error;
+check(r.status === 400 && /not allowed to fetch URLs where it is hosted/.test(egress), 'a host that refuses outbound fetch is named as the cause, not the URL');
+check(/Paste the blueprint JSON instead/.test(egress), 'and the owner is told what will work instead');
 
 r = await call(e1, '/api/tests', { method: 'POST', body: GOOD });
 const made = await r.json();

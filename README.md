@@ -198,11 +198,30 @@ alongside would be uploaded and never served.
 ## The card
 
 The blueprint installs the card from `PLUGIN_ZIP_URL`, defaulting to the GitHub
-release. That fetch happens in the **tester's browser**, not on the server —
-which matters, because GitHub answers 403 to every request from some hosts,
-Spacefast's egress among them. The service checks the URL before serving a
-blueprint, but only a definite 404 counts as missing: a host that cannot see a
-file knows nothing about whether a tester can.
+release. That fetch happens in the **tester's browser**, not on the server, so
+it works even where the service itself cannot reach out. The service checks the
+URL before serving a blueprint, but only a definite 404 counts as missing: a
+host that cannot see a file knows nothing about whether a tester can.
+
+## Saying what the tester gets
+
+Three ways, and on a host without outbound fetch only two of them work.
+
+| | Needs the service to fetch? |
+|---|---|
+| `boot` — describe the site, the service builds the blueprint | no |
+| `blueprintJson` — paste it | no |
+| `blueprintUrl` — a URL, re-read each time a tester starts | **yes** |
+
+The URL is the one that can fail, and not because of the URL. Unlike the card,
+this blueprint has to be *read* here — the owner's steps are wrapped with two
+more before a tester sees them, and you cannot wrap what you cannot fetch.
+
+**Spacefast denies workers outbound fetch** unless the version is granted it
+(`egress_denied`: "This version was not granted outbound fetch"), so on the
+live host `blueprintUrl` returns a message saying exactly that, rather than
+blaming a URL that is sitting there readable. `boot` and `blueprintJson` are
+unaffected, which includes the whole agent path.
 
 ## Cost
 

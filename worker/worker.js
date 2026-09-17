@@ -438,6 +438,9 @@ function checkBlueprintUrl(raw) {
   return checkPublicUrl(raw, 'blueprint URL');
 }
 
+// Unlike the card, this one the service really does have to read: the owner's
+// blueprint is wrapped with two more steps before a tester ever sees it, and
+// you cannot wrap what you cannot fetch.
 async function fetchBlueprint(url) {
   let res;
   try {
@@ -449,8 +452,15 @@ async function fetchBlueprint(url) {
   } catch (e) {
     return { error: 'Could not reach that blueprint URL.' };
   }
-  if (!res.ok) return { error: `That blueprint URL answered ${res.status}.` };
   const text = await res.text();
+  // A host that refuses its own workers outbound fetch answers for the URL
+  // rather than letting it answer, so the status says 403 about a file that is
+  // sitting there, readable, for anyone else. Saying that plainly matters: the
+  // owner would otherwise go and check permissions on a URL that is fine.
+  if (!res.ok && (res.status === 403 || res.status === 502) && /egress_denied|outbound fetch/i.test(text)) {
+    return { error: 'This service is not allowed to fetch URLs where it is hosted, so it cannot read that blueprint — nothing is wrong with the URL itself. Paste the blueprint JSON instead, or describe the site and let the service build one.' };
+  }
+  if (!res.ok) return { error: `That blueprint URL answered ${res.status}.` };
   if (text.length > LIMITS.blueprintBytes) return { error: 'That blueprint is too big.' };
   try {
     const parsed = JSON.parse(text);
@@ -881,10 +891,11 @@ function wrapBlueprint(base, test, origin, pluginZipUrl) {
 // What a HEAD can tell us about a URL: there, gone, or no idea.
 //
 // "No idea" is the answer that matters. Playground fetches the card from the
-// tester's browser, not from here, so the service being unable to see a URL
-// says nothing about whether a tester can. GitHub answers 403 to everything
-// from some hosts — Spacefast's egress among them — and reading that as "gone"
-// refused every blueprint on that host for a zip that was sitting there.
+// tester's browser, not from here, so this service being unable to see a URL
+// says nothing about whether a tester can. Some hosts refuse the worker
+// outbound fetch altogether — Spacefast answers every request with its own 403
+// unless the version is granted egress — and reading that as "gone" refused
+// every blueprint there for a zip sitting in plain sight.
 //
 // So only a definite 404 or 410 counts as gone.
 async function zipStatus(url) {
