@@ -1119,8 +1119,25 @@ async function buildDigest(env, id, test) {
   let errors = 0;
   let lastEventAt = 0;
 
+  // Every event for the test in one query, then split by tester here. A query
+  // per tester read the same rows and cost a round trip each, and it put the
+  // digest over D1's fifty-queries-per-invocation somewhere around the
+  // forty-eighth tester — which is to say, exactly when a test went well.
+  const wanted = new Set(rows.map((r) => r.id));
+  const everything = await all(
+    env,
+    'SELECT session_id, t, type, task, path, note, data FROM events WHERE test_id = ? ORDER BY session_id, seq',
+    id
+  );
+  const bySession = new Map();
+  for (const r of everything) {
+    if (!wanted.has(r.session_id)) continue;
+    if (!bySession.has(r.session_id)) bySession.set(r.session_id, []);
+    bySession.get(r.session_id).push(eventRow(r));
+  }
+
   for (const row of rows) {
-    const events = await sessionEvents(env, id, row.id);
+    const events = bySession.get(row.id) || [];
     if (!events.length) continue;
     lastEventAt = Math.max(lastEventAt, row.last || 0);
 
