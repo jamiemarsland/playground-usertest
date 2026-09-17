@@ -14,13 +14,9 @@
 		// The card the tester sees. The blueprint route points every test at this
 		// one zip, so the card is updated for everybody by changing this.
 		"PLUGIN_ZIP_URL": "https://github.com/jamiemarsland/playground-usertest/releases/latest/download/playground-usertest-card.zip",
-		// Caps. Sized for Cloudflare's FREE KV plan, which allows 1,000 writes a
-		// day. What spends them is event batches, not testers: each batch costs
-		// three writes (counter, session, index) and the card sends one per event,
-		// so a tester working through five tasks costs around forty — roughly
-		// twenty-five testers a day. Workers Paid at $5/month removes the ceiling.
-		// Past it the counters fail and the Worker serves without enforcing them
-		// rather than going down.
+		// Caps on how much one caller can create, not on how much the service can
+		// hold. The KV write ceiling that used to bound this is gone with KV: rows
+		// in a database are not rationed by the day.
 		"CREATE_DAILY_LIMIT": "5",
 		"EVENTS_HOURLY_LIMIT": "300",
 

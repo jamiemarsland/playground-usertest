@@ -30,6 +30,11 @@
  */
 
 const NINETY_DAYS = 90 * 24 * 60 * 60;
+
+// Where the tester's card comes from. Every test's blueprint installs whatever
+// is at this URL, so the card is updated for everybody by replacing the release
+// asset — no redeploy of the service.
+const DEFAULT_CARD_ZIP = 'https://github.com/jamiemarsland/playground-usertest/releases/latest/download/playground-usertest-card.zip';
 const TOUCH_AFTER = 24 * 60 * 60 * 1000; // how stale a test record may get before its expiry is refreshed
 
 const CORS = {
@@ -57,6 +62,19 @@ function html(body, headers = {}, status = 200) {
       headers
     ),
   });
+}
+
+// The address the outside world uses, which is not always the one the request
+// arrived on. Behind a host that runs the worker on its own internal origin —
+// Spacefast's Functions runner does — req.url carries that internal name, and
+// every link the service hands out would quietly point at it: tester links,
+// the results page, and the report URL baked into each tester's card.
+function publicOrigin(req) {
+  const url = new URL(req.url);
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+  if (!host || /[^a-zA-Z0-9.:-]/.test(host)) return url.origin;
+  const proto = (req.headers.get('x-forwarded-proto') || url.protocol.replace(':', '') || 'https').split(',')[0].trim();
+  return `${proto === 'http' && host !== 'localhost' && !host.startsWith('localhost:') ? 'https' : proto}://${host}`;
 }
 
 function esc(s) {
@@ -109,26 +127,134 @@ function sameSecret(a, b) {
   return diff === 0;
 }
 
-/* ------------------------------------------------------------------ counters */
+/* --------------------------------------------------------------------- store */
+// One SQL database behind a D1-shaped binding. That shape is what Spacefast's
+// Functions runtime hands a worker when it declares `"database": true`, and it
+// is also what Cloudflare D1 gives you — so the same code runs on either, and
+// moving hosts is a config change rather than a rewrite.
+//
+// The SQL is deliberately plain: VARCHAR with lengths (MySQL will not index a
+// bare TEXT key), no AUTOINCREMENT, no ON CONFLICT, no CREATE INDEX. Every
+// lookup rides a primary key that already covers it.
 
-// Counters are best-effort. On the free KV plan they can run out of writes, and
-// when they do the Worker keeps serving rather than going down — the caps exist
-// to stop one address filling the store, not to bound a bill.
-async function peekCount(env, key) {
-  if (!env.TESTS) return 0;
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS tests (
+     id             VARCHAR(16)  NOT NULL PRIMARY KEY,
+     created        BIGINT       NOT NULL,
+     touched        BIGINT       NOT NULL,
+     expires        BIGINT       NOT NULL,
+     subject        VARCHAR(120) NOT NULL,
+     persona        TEXT         NOT NULL,
+     tasks          TEXT         NOT NULL,
+     blueprint_url  VARCHAR(600),
+     blueprint_json TEXT,
+     blueprint_boot TEXT,
+     pw_salt        VARCHAR(64)  NOT NULL,
+     pw_hash        VARCHAR(64)  NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS sessions (
+     test_id  VARCHAR(16) NOT NULL,
+     id       VARCHAR(40) NOT NULL,
+     first_at BIGINT      NOT NULL,
+     last_at  BIGINT      NOT NULL,
+     viewport VARCHAR(40),
+     name     VARCHAR(120),
+     PRIMARY KEY (test_id, id)
+   )`,
+  // The primary key starts with test_id, so "everything for this test" and
+  // "everything for this tester" both read straight off it.
+  `CREATE TABLE IF NOT EXISTS events (
+     test_id    VARCHAR(16) NOT NULL,
+     session_id VARCHAR(40) NOT NULL,
+     seq        BIGINT      NOT NULL,
+     t          BIGINT      NOT NULL,
+     type       VARCHAR(20) NOT NULL,
+     task       VARCHAR(48),
+     path       VARCHAR(220),
+     note       TEXT,
+     data       TEXT,
+     PRIMARY KEY (test_id, session_id, seq)
+   )`,
+  `CREATE TABLE IF NOT EXISTS counters (
+     k       VARCHAR(160) NOT NULL PRIMARY KEY,
+     n       INT          NOT NULL,
+     expires BIGINT       NOT NULL
+   )`,
+];
+
+// Once per database, not once per request — and keyed on the binding rather
+// than kept in one module-level variable, so a second database in the same
+// isolate gets its own tables instead of inheriting someone else's "done".
+const schemaReady = new WeakMap();
+function ensureSchema(env) {
+  let pending = schemaReady.get(env.DB);
+  if (!pending) {
+    pending = (async () => {
+      for (const sql of SCHEMA) await env.DB.prepare(sql).run();
+    })().catch((e) => {
+      schemaReady.delete(env.DB); // a failed migration must not be remembered as done
+      throw e;
+    });
+    schemaReady.set(env.DB, pending);
+  }
+  return pending;
+}
+
+// D1 and node:sqlite report a write's row count in different places.
+function changed(res) {
+  if (!res) return 0;
+  if (res.meta && typeof res.meta.changes === 'number') return res.meta.changes;
+  if (typeof res.changes === 'number') return res.changes;
+  return 0;
+}
+
+const q = (env, sql, ...args) => env.DB.prepare(sql).bind(...args);
+const all = async (env, sql, ...args) => ((await q(env, sql, ...args).all()).results) || [];
+const one = async (env, sql, ...args) => (await q(env, sql, ...args).first()) || null;
+const run = (env, sql, ...args) => q(env, sql, ...args).run();
+
+// No ON CONFLICT: update first, insert only if nothing was there. Two round
+// trips on the first write of a row, one thereafter, and portable everywhere.
+async function upsert(env, updateSql, updateArgs, insertSql, insertArgs) {
+  const res = await run(env, updateSql, ...updateArgs);
+  if (changed(res) > 0) return;
   try {
-    return parseInt((await env.TESTS.get(key)) || '0', 10) || 0;
+    await run(env, insertSql, ...insertArgs);
+  } catch (e) {
+    // Someone else inserted it between the two statements; the update is now
+    // the right thing to have done, so do it.
+    await run(env, updateSql, ...updateArgs);
+  }
+}
+
+/* ------------------------------------------------------------------ counters */
+// Best-effort. If the store is unhappy the Worker keeps serving rather than
+// going down: the caps exist to stop one address filling the database, not to
+// bound a bill.
+
+async function peekCount(env, key) {
+  if (!env.DB) return 0;
+  try {
+    const row = await one(env, 'SELECT n, expires FROM counters WHERE k = ?', key);
+    if (!row) return 0;
+    if (Number(row.expires) < Date.now()) return 0;
+    return Number(row.n) || 0;
   } catch (e) {
     return 0;
   }
 }
 
 async function bumpCount(env, key, from, ttl) {
-  if (!env.TESTS) return;
+  if (!env.DB) return;
+  const expires = Date.now() + ttl * 1000;
   try {
-    await env.TESTS.put(key, String(from + 1), { expirationTtl: ttl });
+    await upsert(
+      env,
+      'UPDATE counters SET n = ?, expires = ? WHERE k = ?', [from + 1, expires, key],
+      'INSERT INTO counters (k, n, expires) VALUES (?, ?, ?)', [key, from + 1, expires]
+    );
   } catch (e) {
-    /* out of writes: serve anyway */
+    /* out of room, or racing: serve anyway */
   }
 }
 
@@ -151,27 +277,86 @@ function thisHour() {
   return new Date().toISOString().slice(0, 13);
 }
 
-/* --------------------------------------------------------------------- store */
+/* ------------------------------------------------------------------- reading */
 
-async function readJSON(env, key, fallback) {
-  if (!env.TESTS) return fallback;
+function parse(raw, fallback) {
+  if (raw == null || raw === '') return fallback;
   try {
-    const raw = await env.TESTS.get(key);
-    if (!raw) return fallback;
-    const val = JSON.parse(raw);
-    return val == null ? fallback : val;
+    const v = JSON.parse(raw);
+    return v == null ? fallback : v;
   } catch (e) {
     return fallback;
   }
 }
 
-function writeJSON(env, key, value) {
-  return env.TESTS.put(key, JSON.stringify(value), { expirationTtl: NINETY_DAYS });
+// A test past its expiry is gone whether or not the sweep has caught up with
+// it, so expiry is enforced on read rather than trusted to a cron.
+async function getTest(env, id) {
+  if (!TEST_ID_RE.test(id) || !env.DB) return null;
+  const row = await one(env, 'SELECT * FROM tests WHERE id = ?', id);
+  if (!row) return null;
+  if (Number(row.expires) < Date.now()) return null;
+  return {
+    id: row.id,
+    created: Number(row.created),
+    touched: Number(row.touched),
+    subject: row.subject,
+    persona: row.persona,
+    tasks: parse(row.tasks, []),
+    blueprintUrl: row.blueprint_url || '',
+    blueprintJson: parse(row.blueprint_json, null),
+    blueprintBoot: parse(row.blueprint_boot, null),
+    pwSalt: row.pw_salt,
+    pwHash: row.pw_hash,
+  };
 }
 
-async function getTest(env, id) {
-  if (!TEST_ID_RE.test(id)) return null;
-  return readJSON(env, `test:${id}`, null);
+function eventRow(r) {
+  return {
+    t: Number(r.t),
+    type: r.type,
+    task: r.task || '',
+    path: r.path || '',
+    note: r.note || '',
+    data: parse(r.data, null),
+  };
+}
+
+async function sessionEvents(env, id, session) {
+  const rows = await all(
+    env,
+    'SELECT * FROM events WHERE test_id = ? AND session_id = ? ORDER BY seq',
+    id, session
+  );
+  return rows.map(eventRow);
+}
+
+// One row per tester for the results table: the stored row plus the counts,
+// which are an aggregate now rather than a summary written on every event.
+async function sessionIndex(env, id, limit) {
+  const rows = await all(
+    env,
+    `SELECT s.test_id, s.id, s.first_at, s.last_at, s.viewport, s.name,
+            (SELECT COUNT(*) FROM events e WHERE e.test_id = s.test_id AND e.session_id = s.id) AS n,
+            (SELECT COUNT(*) FROM events e WHERE e.test_id = s.test_id AND e.session_id = s.id AND e.type = 'task_done') AS done,
+            (SELECT COUNT(*) FROM events e WHERE e.test_id = s.test_id AND e.session_id = s.id AND e.type = 'task_skip') AS skipped,
+            (SELECT COUNT(*) FROM events e WHERE e.test_id = s.test_id AND e.session_id = s.id AND e.type = 'wrap') AS wraps
+       FROM sessions s
+      WHERE s.test_id = ?
+      ORDER BY s.first_at DESC`,
+    id
+  );
+  return rows.slice(0, limit || MAX_SESSIONS_PER_TEST).map((r) => ({
+    id: r.id,
+    first: Number(r.first_at),
+    last: Number(r.last_at),
+    n: Number(r.n) || 0,
+    viewport: r.viewport || '',
+    done: Number(r.done) || 0,
+    skipped: Number(r.skipped) || 0,
+    wrapped: Number(r.wraps) > 0,
+    name: r.name || '',
+  }));
 }
 
 /* ---------------------------------------------------------------- validation */
@@ -572,7 +757,8 @@ async function createTest(env, req) {
 // Everything past the parsing, so MCP can hand in a body it already has rather
 // than building a Request to feed back to ourselves.
 async function makeTest(env, req, body) {
-  if (!env.TESTS) return json({ error: 'The store is not set up yet.' }, 503, CORS);
+  if (!env.DB) return json({ error: 'The store is not set up yet.' }, 503, CORS);
+  await ensureSchema(env);
 
   // Only a test that actually gets made counts against the day's allowance: a
   // typo in the form, or a blueprint URL that turns out to be wrong, must not
@@ -640,26 +826,21 @@ async function makeTest(env, req, body) {
   const id = makeId();
   const now = Date.now();
 
-  const record = {
-    id,
-    created: now,
-    touched: now,
-    subject,
-    persona,
-    tasks,
-    blueprintUrl,
-    blueprintJson,
-    blueprintBoot,
-    pwSalt: salt,
-    pwHash: hash,
-  };
-
-  await writeJSON(env, `test:${id}`, record);
-  await writeJSON(env, `test:${id}:index`, []);
+  await run(
+    env,
+    `INSERT INTO tests (id, created, touched, expires, subject, persona, tasks,
+                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id, now, now, now + NINETY_DAYS * 1000, subject, persona, JSON.stringify(tasks),
+    blueprintUrl || null,
+    blueprintJson ? JSON.stringify(blueprintJson) : null,
+    blueprintBoot ? JSON.stringify(blueprintBoot) : null,
+    salt, hash
+  );
   await bumpCount(env, capKey, made, 2 * 24 * 60 * 60);
   await bumpCount(env, globalKey, madeToday, 2 * 24 * 60 * 60);
 
-  const origin = new URL(req.url).origin;
+  const origin = publicOrigin(req);
   return json({ id, tester: `${origin}/t/${id}`, results: `${origin}/t/${id}/results` }, 200, CORS);
 }
 
@@ -697,20 +878,40 @@ function wrapBlueprint(base, test, origin, pluginZipUrl) {
   return out;
 }
 
-async function zipIsThere(url) {
+// What a HEAD can tell us about a URL: there, gone, or no idea.
+//
+// "No idea" is the answer that matters. Playground fetches the card from the
+// tester's browser, not from here, so the service being unable to see a URL
+// says nothing about whether a tester can. GitHub answers 403 to everything
+// from some hosts — Spacefast's egress among them — and reading that as "gone"
+// refused every blueprint on that host for a zip that was sitting there.
+//
+// So only a definite 404 or 410 counts as gone.
+async function zipStatus(url) {
   try {
     const res = await fetch(url, {
       method: 'HEAD',
       redirect: 'follow',
       cf: { cacheTtl: 3600, cacheEverything: true },
     });
-    return res.ok;
+    if (res.status === 404 || res.status === 410) return 'gone';
+    if (res.status < 400) return 'there';
+    return 'unknown';
   } catch (e) {
-    return false;
+    return 'unknown';
   }
 }
 
+// The card the blueprint installs. Defaulted rather than required, so the
+// service works on a fresh host with nothing configured; set PLUGIN_ZIP_URL to
+// point tests at a different card, or at a copy nearer the host.
+function cardZip(env) {
+  return env.PLUGIN_ZIP_URL || DEFAULT_CARD_ZIP;
+}
+
 async function serveBlueprint(env, req, id) {
+  if (!env.DB) return json({ error: 'The store is not set up yet.' }, 503, CORS);
+  await ensureSchema(env);
   const test = await getTest(env, id);
   if (!test) return json({ error: 'No such test.' }, 404, CORS);
 
@@ -722,16 +923,15 @@ async function serveBlueprint(env, req, id) {
     base = got.blueprint;
   }
 
-  const origin = new URL(req.url).origin;
-  const zip = env.PLUGIN_ZIP_URL || '';
-  if (!zip) return json({ error: 'The card plugin is not configured.' }, 503, CORS);
+  const origin = publicOrigin(req);
+  const zip = cardZip(env);
 
   // Serving a blueprint that installs a zip which is not there is the worst
   // thing this service can do: Playground shrugs off the failed step, the
   // tester gets a perfectly good site with no card on it, does the whole test,
-  // and nothing is recorded. One HEAD — cached for an hour, so it costs almost
-  // nothing — turns that into a refusal the owner can see.
-  if (!(await zipIsThere(zip))) {
+  // and nothing is recorded. A HEAD catches that — but only when it can see the
+  // answer, so a refusal needs a definite "gone" rather than a failure to look.
+  if (await zipStatus(zip) === 'gone') {
     return json({ error: 'The card plugin zip is not where the service expects it. Nothing can be recorded until it is, so no blueprint is served.' }, 503, CORS);
   }
 
@@ -767,27 +967,9 @@ function cleanEvent(e) {
   return out;
 }
 
-// One row per tester, kept beside the events so the results table is a single read.
-function summarise(row, all, now) {
-  const start = all.find((e) => e.type === 'start');
-  const wrap = all.filter((e) => e.type === 'wrap').slice(-1)[0];
-  const startData = (start && start.data) || {};
-  const wrapData = (wrap && wrap.data) || {};
-  return {
-    id: row.id,
-    first: row.first || now,
-    last: now,
-    n: all.length,
-    viewport: startData.viewport || '',
-    done: all.filter((e) => e.type === 'task_done').length,
-    skipped: all.filter((e) => e.type === 'task_skip').length,
-    wrapped: !!wrap,
-    name: wrapData.name || '',
-  };
-}
-
 async function appendEvents(env, req) {
-  if (!env.TESTS) return json({ error: 'The store is not set up yet.' }, 503, CORS);
+  if (!env.DB) return json({ error: 'The store is not set up yet.' }, 503, CORS);
+  await ensureSchema(env);
 
   let body = {};
   try { body = JSON.parse(await req.text()) || {}; } catch (e) { body = {}; }
@@ -807,28 +989,69 @@ async function appendEvents(env, req) {
   const events = (Array.isArray(body.events) ? body.events : []).slice(0, 50).map(cleanEvent);
   if (!events.length) return json({ ok: true, n: 0 }, 200, CORS);
 
-  const key = `test:${id}:session:${session}`;
-  const had = await readJSON(env, key, []);
-  const all = (Array.isArray(had) ? had : []).concat(events).slice(-MAX_EVENTS_PER_SESSION);
-  await writeJSON(env, key, all);
-
   const now = Date.now();
-  const index = await readJSON(env, `test:${id}:index`, []);
-  const rows = Array.isArray(index) ? index : [];
-  const at = rows.findIndex((r) => r && r.id === session);
-  const row = summarise({ id: session, first: at < 0 ? now : rows[at].first }, all, now);
-  if (at < 0) rows.unshift(row); else rows[at] = row;
-  await writeJSON(env, `test:${id}:index`, rows.slice(0, MAX_SESSIONS_PER_TEST));
+
+  // A tester's events are append-only, so a sequence per session is enough to
+  // keep them in order — no shared counter, no read-modify-write of a blob.
+  const top = await one(
+    env,
+    'SELECT COUNT(*) AS n, MAX(seq) AS top FROM events WHERE test_id = ? AND session_id = ?',
+    id, session
+  );
+  const have = Number((top && top.n) || 0);
+  let seq = Number((top && top.top) || 0);
+
+  if (have >= MAX_EVENTS_PER_SESSION) {
+    return json({ ok: true, n: have, full: true }, 200, CORS);
+  }
+  const room = events.slice(0, MAX_EVENTS_PER_SESSION - have);
+
+  const start = room.find((e) => e.type === 'start');
+  const wrapped = room.filter((e) => e.type === 'wrap').slice(-1)[0];
+  const viewport = start && start.data ? String(start.data.viewport || '').slice(0, 40) : '';
+  const name = wrapped && wrapped.data ? String(wrapped.data.name || '').slice(0, 120) : '';
+
+  const writes = room.map((e) => q(
+    env,
+    'INSERT INTO events (test_id, session_id, seq, t, type, task, path, note, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    id, session, ++seq, e.t, e.type, e.task || null, e.path || null, e.note || null,
+    e.data ? JSON.stringify(e.data) : null
+  ));
+  if (env.DB.batch) await env.DB.batch(writes);
+  else for (const w of writes) await w.run();
+
+  // Only overwrite the tester's viewport and name when this batch carried one,
+  // or a later batch would wipe what an earlier one learned.
+  await upsert(
+    env,
+    `UPDATE sessions SET last_at = ?,
+            viewport = CASE WHEN ? = '' THEN viewport ELSE ? END,
+            name     = CASE WHEN ? = '' THEN name     ELSE ? END
+      WHERE test_id = ? AND id = ?`,
+    [now, viewport, viewport, name, name, id, session],
+    'INSERT INTO sessions (test_id, id, first_at, last_at, viewport, name) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, session, now, now, viewport, name]
+  );
 
   // Ninety days from the last event, not from the day it was made — but only
-  // re-put the test when its expiry has had a day to drift, so a busy test does
-  // not spend a KV write per batch keeping itself alive.
+  // push the expiry out once a day, so a busy test does not spend a write per
+  // batch keeping itself alive.
   if (now - (test.touched || test.created || 0) > TOUCH_AFTER) {
-    test.touched = now;
-    await writeJSON(env, `test:${id}`, test);
+    await run(env, 'UPDATE tests SET touched = ?, expires = ? WHERE id = ?', now, now + NINETY_DAYS * 1000, id);
   }
 
-  return json({ ok: true, n: all.length }, 200, CORS);
+  return json({ ok: true, n: have + room.length }, 200, CORS);
+}
+
+// Clearing a test is part of running one. Every dry run is a row, and the
+// advice has always been to empty the store before the real invitations go
+// out — which on the old host meant reaching past the service with a CLI. It
+// needs to be the service's own job, and the results password is already the
+// thing that says who owns a test.
+async function deleteTest(env, id) {
+  await run(env, 'DELETE FROM events WHERE test_id = ?', id);
+  await run(env, 'DELETE FROM sessions WHERE test_id = ?', id);
+  await run(env, 'DELETE FROM tests WHERE id = ?', id);
 }
 
 /* -------------------------------------------------------------------- digest */
@@ -848,8 +1071,8 @@ function median(nums) {
 }
 
 async function buildDigest(env, id, test) {
-  const index = await readJSON(env, `test:${id}:index`, []);
-  const rows = (Array.isArray(index) ? index : []).slice(0, DIGEST_MAX_SESSIONS);
+  const everyone = await sessionIndex(env, id, MAX_SESSIONS_PER_TEST);
+  const rows = everyone.slice(0, DIGEST_MAX_SESSIONS);
 
   const byTask = new Map();
   for (const task of test.tasks) {
@@ -865,8 +1088,8 @@ async function buildDigest(env, id, test) {
   let lastEventAt = 0;
 
   for (const row of rows) {
-    const events = await readJSON(env, `test:${id}:session:${row.id}`, []);
-    if (!Array.isArray(events) || !events.length) continue;
+    const events = await sessionEvents(env, id, row.id);
+    if (!events.length) continue;
     lastEventAt = Math.max(lastEventAt, row.last || 0);
 
     const who = row.name || row.id;
@@ -913,9 +1136,9 @@ async function buildDigest(env, id, test) {
   return {
     subject: test.subject,
     created: test.created,
-    testers: rows.length,
+    testers: everyone.length,
     counted: rows.length,
-    truncated: (Array.isArray(index) ? index.length : 0) > DIGEST_MAX_SESSIONS,
+    truncated: everyone.length > DIGEST_MAX_SESSIONS,
     lastEventAt,
     finished: wrapUps.length,
     errors,
@@ -929,6 +1152,7 @@ async function buildDigest(env, id, test) {
 // Hash even when there is no such test, so a wrong id and a wrong password take
 // the same time and come back saying the same thing: ids cannot be fished for.
 async function openTest(env, id, given) {
+  if (env.DB) await ensureSchema(env);
   const test = await getTest(env, id);
   const salt = test ? test.pwSalt : '00000000000000000000000000000000';
   const { hash } = await hashPassword(String(given || ''), salt);
@@ -950,17 +1174,16 @@ async function readResults(env, req, url) {
   const session = url.searchParams.get('session') || '';
   if (session) {
     if (!SESSION_RE.test(session)) return json({ error: 'session' }, 400, { 'cache-control': 'no-store' });
-    const events = await readJSON(env, `test:${id}:session:${session}`, []);
+    const events = await sessionEvents(env, id, session);
     return json({ session, events }, 200, { 'cache-control': 'no-store' });
   }
 
-  const index = await readJSON(env, `test:${id}:index`, []);
   return json(
     {
       subject: test.subject,
       created: test.created,
       tasks: test.tasks,
-      sessions: Array.isArray(index) ? index : [],
+      sessions: await sessionIndex(env, id),
     },
     200,
     { 'cache-control': 'no-store' }
@@ -1044,6 +1267,18 @@ const TOOLS = [
     },
   },
   {
+    name: 'usertest_delete',
+    description: 'Delete a test and everything testers left on it. Use it to clear dry runs before the real invitations go out — every rehearsal is a row, and it is hard to read ten real testers past your own five attempts. It cannot be undone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        test: { type: 'string', description: 'The test id from usertest_create.' },
+        password: { type: 'string', description: 'The results password from usertest_create.' },
+      },
+      required: ['test', 'password'],
+    },
+  },
+  {
     name: 'usertest_results',
     description: 'Read what testers did. Returns, per task: how many managed it, how many could not, how many never reached it, the median time, how many opened the hint, and every note anyone typed — plus the wrap-up answers. Testing is slow; expect nothing for a day.',
     inputSchema: {
@@ -1098,6 +1333,19 @@ async function mcpCall(env, req, name, args) {
       'Give the person both links and the password — none of it can be looked up again. ' +
       'The test keeps itself for ninety days after the last tester.',
       { structuredContent: out }
+    );
+  }
+
+  if (name === 'usertest_delete') {
+    const id = String((args && args.test) || '');
+    const test = await openTest(env, id, (args && args.password) || '');
+    if (!test) return mcpText('That test id and password do not go together.', { isError: true });
+    const before = await buildDigest(env, id, test);
+    await deleteTest(env, id);
+    return mcpText(
+      `Deleted ${id}${test.subject ? ` (${test.subject})` : ''}, along with ${before.testers} tester session(s). ` +
+      'The tester link and the results page are both gone now.',
+      { structuredContent: { ok: true, deleted: id, testers: before.testers } }
     );
   }
 
@@ -1213,6 +1461,11 @@ GET ${origin}/api/results?test=<id>&digest=1
   -> per task: done, couldnt, notReached, hintOpened, medianSecs, notes[]
      plus wrapUps[]. Drop &digest=1 for one row per tester, add
      &session=<id> for one tester's raw events.
+
+DELETE ${origin}/api/results?test=<id>
+  header: x-test-password: <the password>
+  Clears a test and everything on it. Use it on dry runs before the real
+  invitations go out — every rehearsal is a row.
 
 ## Two things that quietly ruin a test
 
@@ -1594,7 +1847,7 @@ export default {
     if (url.pathname === '/mcp') return handleMcp(req, env);
 
     if (url.pathname === '/llms.txt') {
-      return new Response(LLMS_TXT(url.origin), {
+      return new Response(LLMS_TXT(publicOrigin(req)), {
         headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' },
       });
     }
@@ -1612,7 +1865,15 @@ export default {
     }
 
     if (url.pathname === '/api/results') {
-      if (req.method !== 'GET') return json({ error: 'GET only' }, 405);
+      if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+      if (req.method === 'DELETE') {
+        const id = url.searchParams.get('test') || '';
+        const test = await openTest(env, id, req.headers.get('x-test-password') || '');
+        if (!test) return json({ error: 'That password is not right.' }, 401, { 'cache-control': 'no-store' });
+        await deleteTest(env, id);
+        return json({ ok: true, deleted: id }, 200, { 'cache-control': 'no-store' });
+      }
+      if (req.method !== 'GET') return json({ error: 'GET or DELETE' }, 405);
       return readResults(env, req, url);
     }
 
@@ -1623,9 +1884,10 @@ export default {
       // The results page is the same HTML for every test; it reads the id out of
       // its own path and asks for the password before anything is fetched.
       if (tail === '/results') return html(RESULTS, { 'cache-control': 'no-store' });
+      if (env.DB) await ensureSchema(env);
       const test = await getTest(env, id);
       if (!test) return html(NOT_FOUND, { 'cache-control': 'no-store' }, 404);
-      return html(introPage(test, url.origin), { 'cache-control': 'public, max-age=300' });
+      return html(introPage(test, publicOrigin(req)), { 'cache-control': 'public, max-age=300' });
     }
 
     return html(NOT_FOUND, { 'cache-control': 'no-store' }, 404);
@@ -1641,4 +1903,4 @@ const NOT_FOUND = `<!doctype html>
 </div></body></html>`;
 
 // exported for the tests
-export { lintTest, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, summarise, taskId, makeId, TEST_PATH };
+export { lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };

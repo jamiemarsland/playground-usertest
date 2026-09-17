@@ -1,0 +1,18 @@
+{
+  // Spacefast Functions: a Cloudflare worker for this space, one fetch handler,
+  // with env.DB bound to the space's own database.
+  //
+  // The worker is the same file that runs on Cloudflare — the binding is
+  // D1-shaped on both, so the service is portable rather than ported. build.sh
+  // copies it in; nothing else is published, so nothing else is served.
+  "$schema": "https://spacefast.com/schemas/sf.json",
+  "name": "Playground user testing",
+  "runtime": {
+    "kind": "functions",
+    "entry": "worker.js",
+
+    // Declared, not detected. Without it there is no env.DB and every route
+    // answers 503 rather than quietly losing what testers type.
+    "database": true
+  }
+}

@@ -9,6 +9,9 @@ the right listing a few things to try. They press Done or Couldn't do it on each
 type a note if they like, and answer four questions at the end. Whoever made the
 test reads the results on a page behind a password.
 
+Live at **https://playground-usertest.view.fast** — the form for people, `/mcp`
+for agents.
+
 ## Why a service and not just a plugin
 
 The test site is a Playground tab. It vanishes when the tab closes, and the
@@ -32,8 +35,11 @@ No account. Nothing to host. No JSON to edit.
 
 ```
 worker/worker.js               the service: form, intro page, blueprint, events, results, MCP
-worker/wrangler.jsonc          config — no build step, worker.js deploys as it stands
-worker/test-worker.mjs         the whole thing against a KV mock
+worker/wrangler.jsonc          Cloudflare config — worker.js deploys as it stands
+worker/test-worker.mjs         the whole thing against a real SQL engine
+
+spacefast/sf.jsonc             Spacefast config: Functions, with a database
+spacefast/build.sh             assembles the two files Spacefast publishes
 
 plugin/playground-usertest.php the card plugin — inert unless the site is a test
 plugin/card.js                 the card itself: tasks, notes, the wrap-up, the queue
@@ -56,6 +62,7 @@ reaches everybody's next tester without redeploying the Worker.
 | `GET /t/<id>/results` | the results page (asks for the password) |
 | `POST /api/events` | the card reporting in |
 | `GET /api/results` | results as JSON, `x-test-password` header; `&digest=1` folds them down |
+| `DELETE /api/results` | clears a test and everything on it, same password |
 | `POST /mcp` | the same three things, as tools an assistant can call |
 | `GET /llms.txt` | what this is, for agents that read rather than speak MCP |
 
@@ -72,6 +79,7 @@ curl. No accounts either way: the results password is the key, and
 | `usertest_check` | Check a draft. Returns problems and softer notes. |
 | `usertest_create` | Make the test. Returns both links and the password. |
 | `usertest_results` | The digest: per task, how it went, and everything anyone typed. |
+| `usertest_delete` | Clears a test. Use it on dry runs before the real invitations. |
 
 Three things make this usable by an agent rather than merely callable.
 
@@ -110,19 +118,28 @@ default, and both ruin a test quietly rather than breaking it:
 `usertest_check` catches both, and never blocks — someone who means it can
 ignore every word.
 
-## KV
+## Where it runs, and what it stores in
 
-One namespace, bound as `TESTS`:
+One SQL database behind a D1-shaped binding — which is what Spacefast's
+Functions runtime hands a worker that declares `"database": true`, and what
+Cloudflare D1 gives you. The same `worker.js` runs on either; only the config
+differs.
 
 ```
-test:<id>                 the test (tasks, persona, blueprint, password hash)
-test:<id>:session:<sid>   one tester's events, newest last, capped at 600
-test:<id>:index           one row per tester session, newest first
-ip:*                      rate counters
+tests     one row per test: tasks, persona, blueprint, password hash, expiry
+sessions  one row per tester
+events    one row per thing a tester did, keyed (test, session, seq)
+counters  the rate caps
 ```
 
-Everything expires ninety days after the last event, so an abandoned test cleans
-itself up and the store never grows without bound.
+The SQL is deliberately plain — VARCHAR with lengths, no AUTOINCREMENT, no
+`ON CONFLICT`, no `CREATE INDEX` — because "D1-shaped" describes the API, not
+the engine underneath, and MySQL and SQLite disagree about all of those. Every
+lookup rides a primary key that already covers it. Tables are created on first
+use; there is no migration step.
+
+Everything expires ninety days after the last event, checked on read rather
+than trusted to a sweep, so a link is dead the moment it should be.
 
 ## What it collects
 
@@ -155,38 +172,46 @@ Events queue in `localStorage` and retry, so a flaky minute loses nothing.
 
 ```bash
 cd worker
-npm test                    # the service against a KV mock — no network, no account
-npm run dev                 # wrangler dev on localhost:8787, local KV
-npm run deploy              # wrangler deploy; Cloudflare makes the KV namespace
+npm test                    # the service against a real SQL engine — no network, no account
+npm run dev                 # wrangler dev on localhost:8787
 
 cd ../plugin
 php test-plugin.php         # the plugin against WordPress stubs
 ./build-zip.sh              # dist/playground-usertest-card.zip
 ```
 
-The zip has to stay somewhere Playground can fetch it, at the URL
-`PLUGIN_ZIP_URL` names — a GitHub release asset, which is what the default
-points at. If it ever goes missing the blueprint route answers 503 rather than
-serving a blueprint that would build a site with no card on it: Playground
-shrugs off a failed `installPlugin` step, so the tester would get a perfectly
-good site, do the whole test, and have none of it recorded.
+**On Spacefast**, which is where it lives:
+
+```bash
+cd spacefast
+./build.sh --publish --slug playground-usertest --access public
+```
+
+`build.sh` assembles the only two files Spacefast publishes — `sf.jsonc` and the
+worker. A declared runtime takes every request, so anything else published
+alongside would be uploaded and never served.
+
+**On Cloudflare**, from the same `worker.js`: create a database with
+`wrangler d1 create playground-usertest`, put its id in `wrangler.jsonc`, then
+`wrangler deploy`.
+
+## The card
+
+The blueprint installs the card from `PLUGIN_ZIP_URL`, defaulting to the GitHub
+release. That fetch happens in the **tester's browser**, not on the server —
+which matters, because GitHub answers 403 to every request from some hosts,
+Spacefast's egress among them. The service checks the URL before serving a
+blueprint, but only a definite 404 counts as missing: a host that cannot see a
+file knows nothing about whether a tester can.
 
 ## Cost
 
-Cloudflare's free KV tier allows 1,000 writes a day, and the thing that spends
-them is event batches, not testers. Each batch costs three writes — the rate
-counter, the session, the index — and the card sends a batch per event, so a
-tester working through five tasks costs around forty. That is roughly
-twenty-five testers a day before Workers Paid at $5/month, which removes the
-ceiling entirely.
-
-Past the ceiling the rate counters fail and the Worker keeps serving rather than
-going down — the caps are there to stop one address filling the store, not to
-bound a bill.
-
-If that ever needs to go further on the free tier, the counter is the cheapest
-third to drop: it is a cap, not accounting, and sampling it would cost a third
-of the writes.
+Rows in a database are not rationed by the day, so the ceiling that used to
+bound this — Cloudflare KV's 1,000 free writes, about twenty-five testers —
+is gone. What is left is what the plan gives the space, and Spacefast does not
+publish a figure for function invocations or database size. Undocumented is not
+the same as unlimited; if this ever carries real volume, that is the question to
+ask rather than assume.
 
 ## Abuse
 

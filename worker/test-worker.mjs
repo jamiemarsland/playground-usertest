@@ -2,15 +2,28 @@
 // page, the wrapped blueprint, events coming in, and the results coming out —
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
+import { DatabaseSync } from 'node:sqlite';
 import worker, { cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 
-const kv = () => {
-  const m = new Map();
+// A real SQL engine rather than a mock. The worker talks to a D1-shaped
+// binding, which is what both Spacefast Functions and Cloudflare D1 hand it, so
+// these tests run the actual statements — including the ones a mock would
+// happily accept and a database would not.
+const d1 = () => {
+  const db = new DatabaseSync(':memory:');
+  const prepare = (sql) => {
+    let args = [];
+    const stmt = {
+      bind(...a) { args = a; return stmt; },
+      async run() { const r = db.prepare(sql).run(...args); return { success: true, meta: { changes: Number(r.changes) } }; },
+      async all() { return { results: db.prepare(sql).all(...args) }; },
+      async first() { const r = db.prepare(sql).get(...args); return r === undefined ? null : r; },
+    };
+    return stmt;
+  };
   return {
-    async get(k) { return m.has(k) ? m.get(k) : null; },
-    async put(k, v) { m.set(k, v); },
-    async delete(k) { m.delete(k); },
-    _m: m,
+    prepare,
+    async batch(stmts) { const out = []; for (const st of stmts) out.push(await st.run()); return out; },
   };
 };
 
@@ -18,7 +31,7 @@ let failures = 0;
 const check = (cond, msg) => { if (!cond) { failures++; console.error('FAIL', msg); } else console.log('ok  ', msg); };
 
 const ORIGIN = 'https://usertest.test';
-const env = () => ({ TESTS: kv(), PLUGIN_ZIP_URL: 'https://example.com/card.zip', CREATE_DAILY_LIMIT: '5' });
+const env = () => ({ DB: d1(), PLUGIN_ZIP_URL: 'https://example.com/card.zip', CREATE_DAILY_LIMIT: '5' });
 
 const call = (e, path, { method = 'GET', body, ip = '203.0.113.9', headers = {} } = {}) =>
   worker.fetch(
@@ -36,7 +49,11 @@ let served = 0;
 globalThis.fetch = async (url) => {
   served++;
   if (String(url).includes('/broken')) return new Response('not json', { status: 200 });
+  if (String(url).includes('forbidden.zip')) return new Response('', { status: 403 });
   if (String(url).includes('/gone')) return new Response('', { status: 404 });
+  // A release asset redirects to a CDN, and not every runtime follows that on a
+  // HEAD — so the card answers the way Spacefast sees it.
+  if (String(url).includes('card.zip')) return new Response('', { status: 302, headers: { location: 'https://cdn.example/card.zip' } });
   return new Response(JSON.stringify(DEMO), { status: 200 });
 };
 
@@ -199,9 +216,17 @@ check(r.status === 404, 'a blueprint for a test that is not there is a 404');
 // The one failure a tester would never notice: Playground shrugs off a failed
 // installPlugin, so a missing zip means a working site with no card on it and a
 // whole test recorded nowhere. It has to be refused before it is served.
-const eGone = Object.assign(env(), { TESTS: e1.TESTS, PLUGIN_ZIP_URL: 'https://example.com/gone.zip' });
+const eGone = Object.assign(env(), { DB: e1.DB, PLUGIN_ZIP_URL: 'https://example.com/gone.zip' });
 r = await call(eGone, '/t/' + ID + '/blueprint.json');
-check(r.status === 503 && (await r.json()).error.includes('not where the service expects'), 'a card zip that is not there stops the blueprint being served at all');
+check(r.status === 503 && (await r.json()).error.includes('not where the service expects'), 'a card zip that is definitely gone stops the blueprint being served at all');
+
+// GitHub answers 403 to every request from some hosts, Spacefast's among them.
+// Reading that as "gone" refused every blueprint there for a zip sitting in
+// plain sight — and the tester's browser, which is what actually fetches it,
+// was never blocked at all.
+const eBlocked = Object.assign(env(), { DB: e1.DB, PLUGIN_ZIP_URL: 'https://example.com/forbidden.zip' });
+r = await call(eBlocked, '/t/' + ID + '/blueprint.json');
+check(r.status === 200, 'a card zip the service cannot see is served anyway — the tester fetches it, not us');
 
 // a tester reports in
 const SID = 'ab12cd34ef56';
@@ -291,7 +316,7 @@ m = await rpc({ jsonrpc: '2.0', method: 'notifications/initialized' });
 check(m.status === 202 && m.body === null, 'a notification gets 202 and no body');
 
 m = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-check(m.body.result.tools.map((t) => t.name).join() === 'usertest_check,usertest_create,usertest_results', 'three tools, check first');
+check(m.body.result.tools.map((t) => t.name).join() === 'usertest_check,usertest_create,usertest_delete,usertest_results', 'four tools, check first');
 
 m = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'nonsense', arguments: {} } });
 check(m.body.error && m.body.error.code === -32602, 'a tool nobody has is an error, not a shrug');
@@ -383,6 +408,60 @@ for (let i = 0; i < 5; i++) {
 }
 check(codes.filter((c) => c === 200).length === 3, 'a global daily ceiling holds even when every request comes from a different address: ' + codes.join(','));
 
+/* ------------------------------------------------------ the public address */
+// Spacefast runs the worker on an internal origin of its own and puts the real
+// hostname in x-forwarded-host. Without this every link the service hands out —
+// tester link, results page, and the report URL baked into each tester's card —
+// points at that internal host instead.
+
+const behindHost = async (headers) => {
+  const e = env();
+  const res = await worker.fetch(new Request(ORIGIN + '/api/tests', {
+    method: 'POST',
+    headers: Object.assign({ 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.9' }, headers),
+    body: JSON.stringify(GOOD),
+  }), e);
+  return (await res.json()).tester;
+};
+
+check((await behindHost({ 'x-forwarded-host': 'usertest.example', 'x-forwarded-proto': 'https' })).startsWith('https://usertest.example/t/'),
+  'links use x-forwarded-host when a host runs the worker on an origin of its own');
+check((await behindHost({})).startsWith('https://usertest.test/t/'),
+  'and fall back to the request when nothing is forwarded');
+check((await behindHost({ 'x-forwarded-host': 'evil host/../x' })).startsWith('https://usertest.test/t/'),
+  'a forwarded host that is not a hostname is ignored rather than trusted');
+
+/* ------------------------------------------------------------- clearing up */
+// Every dry run is a row, and it is hard to read ten real testers past your own
+// five attempts. The password that reads a test is the one that clears it.
+
+const eWipe = env();
+r = await call(eWipe, '/api/tests', { method: 'POST', body: GOOD });
+const doomed = await r.json();
+await call(eWipe, '/api/events', { method: 'POST', body: { test: doomed.id, session: 'wipe11112222', events: [{ type: 'start' }, { type: 'task_done', task: 'x', data: { secs: 5 } }] } });
+
+r = await call(eWipe, '/api/results?test=' + doomed.id, { method: 'DELETE', headers: { 'x-test-password': 'not-it' } });
+check(r.status === 401, 'the wrong password deletes nothing');
+
+r = await call(eWipe, '/api/results?test=' + doomed.id, { headers: { 'x-test-password': GOOD.password } });
+check((await r.json()).sessions.length === 1, 'the test is there before');
+
+r = await call(eWipe, '/api/results?test=' + doomed.id, { method: 'DELETE', headers: { 'x-test-password': GOOD.password } });
+check(r.status === 200 && (await r.json()).deleted === doomed.id, 'the right password clears it');
+
+r = await call(eWipe, '/t/' + doomed.id);
+check(r.status === 404, 'and the tester link is gone with it');
+r = await call(eWipe, '/api/results?test=' + doomed.id, { headers: { 'x-test-password': GOOD.password } });
+check(r.status === 401, 'so is the results page');
+
+// A second test in the same database must be untouched by the first's deletion.
+r = await call(eWipe, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { password: 'keep-this-one' }) });
+const keeper = await r.json();
+await call(eWipe, '/api/events', { method: 'POST', body: { test: keeper.id, session: 'keep11112222', events: [{ type: 'start' }] } });
+r = await call(eWipe, '/api/results?test=' + doomed.id, { method: 'DELETE', headers: { 'x-test-password': GOOD.password } });
+r = await call(eWipe, '/api/results?test=' + keeper.id, { headers: { 'x-test-password': 'keep-this-one' } });
+check(r.status === 200 && (await r.json()).sessions.length === 1, 'deleting one test leaves the others alone');
+
 /* -------------------------------------------------------------------- misc */
 
 r = await call(e1, '/nope');
@@ -393,7 +472,13 @@ r = await call(e1, '/api/tests', { method: 'GET' });
 check(r.status === 405, 'the create route is POST only');
 
 const noStore = await worker.fetch(new Request(ORIGIN + '/api/tests', { method: 'POST', body: JSON.stringify(GOOD) }), { PLUGIN_ZIP_URL: 'x' });
-check(noStore.status === 503, 'with no KV bound, the Worker says so rather than pretending');
+check(noStore.status === 503, 'with no database bound, the Worker says so rather than pretending');
+
+// The schema memo is keyed on the binding, so a second database in the same
+// process gets its own tables rather than inheriting the first one's "done".
+const eFresh = env();
+r = await call(eFresh, '/api/tests', { method: 'POST', body: GOOD });
+check(r.status === 200, 'a second, separate database is set up on its own');
 
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');
 process.exit(failures ? 1 : 0);
