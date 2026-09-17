@@ -104,6 +104,14 @@ function hex(buf) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Who asked, in a form that cannot be read back into an address. The day is in
+// the hash, so an allowance resets on its own and yesterday's rows stop
+// matching without anything having to sweep them.
+async function creatorKey(day, ip) {
+  const bytes = new TextEncoder().encode(`${day}:${ip}`);
+  return hex(await crypto.subtle.digest('SHA-256', bytes)).slice(0, 32);
+}
+
 // PBKDF2 rather than a bare hash: the password is whatever the owner typed, and
 // the results page is the only thing standing in front of a tester's notes.
 async function hashPassword(password, saltHex) {
@@ -150,7 +158,8 @@ const SCHEMA = [
      blueprint_json TEXT,
      blueprint_boot TEXT,
      pw_salt        VARCHAR(64)  NOT NULL,
-     pw_hash        VARCHAR(64)  NOT NULL
+     pw_hash        VARCHAR(64)  NOT NULL,
+     creator        VARCHAR(64)
    )`,
   `CREATE TABLE IF NOT EXISTS sessions (
      test_id  VARCHAR(16) NOT NULL,
@@ -182,6 +191,8 @@ const SCHEMA = [
    )`,
 ];
 
+const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)'];
+
 // Once per database, not once per request — and keyed on the binding rather
 // than kept in one module-level variable, so a second database in the same
 // isolate gets its own tables instead of inheriting someone else's "done".
@@ -191,6 +202,12 @@ function ensureSchema(env) {
   if (!pending) {
     pending = (async () => {
       for (const sql of SCHEMA) await env.DB.prepare(sql).run();
+      // Added after the first tables were already in use. ADD COLUMN is the one
+      // piece of schema change both engines agree on, and it throws once the
+      // column is there — which is the signal that there is nothing to do.
+      for (const sql of MIGRATIONS) {
+        try { await env.DB.prepare(sql).run(); } catch (e) { /* already applied */ }
+      }
     })().catch((e) => {
       schemaReady.delete(env.DB); // a failed migration must not be remembered as done
       throw e;
@@ -770,20 +787,26 @@ async function makeTest(env, req, body) {
   if (!env.DB) return json({ error: 'The store is not set up yet.' }, 503, CORS);
   await ensureSchema(env);
 
-  // Only a test that actually gets made counts against the day's allowance: a
-  // typo in the form, or a blueprint URL that turns out to be wrong, must not
-  // cost someone one of their five.
+  // The allowance counts tests that EXIST, not creates that once happened. A
+  // typo in the form never cost anyone a slot, and now neither does a dry run
+  // they have since cleared up — which matters, because the advice is to make a
+  // few rehearsals and delete them before inviting anybody.
+  const day = today();
+  const creator = await creatorKey(day, ipOf(req));
   const cap = parseInt(env.CREATE_DAILY_LIMIT || '5', 10);
-  const capKey = `ip:create:${today()}:${ipOf(req)}`;
-  const made = await peekCount(env, capKey);
-  if (made >= cap) return json({ error: `That is ${cap} tests today from here. Try again tomorrow.` }, 429, CORS);
+  const mine = await one(env, 'SELECT COUNT(*) AS n FROM tests WHERE creator = ?', creator);
+  if (Number((mine && mine.n) || 0) >= cap) {
+    return json({ error: `That is ${cap} tests today from here, and they are all still live. Delete one you have finished with, or try again tomorrow.` }, 429, CORS);
+  }
 
-  // A per-address cap does nothing about agents, which arrive from shared
-  // cloud egress by the thousand. This one bounds the store no matter who asks.
+  // A per-address cap does nothing about agents, which arrive from shared cloud
+  // egress by the thousand. This one bounds the store no matter who asks.
   const globalCap = parseInt(env.GLOBAL_CREATE_DAILY_LIMIT || '200', 10);
-  const globalKey = `all:create:${today()}`;
-  const madeToday = await peekCount(env, globalKey);
-  if (madeToday >= globalCap) return json({ error: 'The service has made as many tests as it will today. Try again tomorrow.' }, 429, CORS);
+  const since = Date.parse(day + 'T00:00:00Z');
+  const everyone = await one(env, 'SELECT COUNT(*) AS n FROM tests WHERE created >= ?', since);
+  if (Number((everyone && everyone.n) || 0) >= globalCap) {
+    return json({ error: 'The service has made as many tests as it will today. Try again tomorrow.' }, 429, CORS);
+  }
 
   const subject = trim(body.subject, LIMITS.subject);
   const persona = trimMultiline(body.persona, LIMITS.persona);
@@ -839,16 +862,14 @@ async function makeTest(env, req, body) {
   await run(
     env,
     `INSERT INTO tests (id, created, touched, expires, subject, persona, tasks,
-                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id, now, now, now + NINETY_DAYS * 1000, subject, persona, JSON.stringify(tasks),
     blueprintUrl || null,
     blueprintJson ? JSON.stringify(blueprintJson) : null,
     blueprintBoot ? JSON.stringify(blueprintBoot) : null,
-    salt, hash
+    salt, hash, creator
   );
-  await bumpCount(env, capKey, made, 2 * 24 * 60 * 60);
-  await bumpCount(env, globalKey, madeToday, 2 * 24 * 60 * 60);
 
   const origin = publicOrigin(req);
   return json({ id, tester: `${origin}/t/${id}`, results: `${origin}/t/${id}/results` }, 200, CORS);

@@ -316,6 +316,25 @@ for (let i = 0; i < 7; i++) {
   codes.push(res.status);
 }
 check(codes.filter((c) => c === 200).length === 5 && codes.slice(5).every((c) => c === 429), 'five tests a day from one address, then no: ' + codes.join(','));
+
+// The allowance counts what exists, not what once happened. The advice is to
+// rehearse and clear up before inviting anybody, and that advice cost you the
+// day's allowance when a create was a tally mark rather than a row.
+const firstFive = [];
+for (let i = 0; i < 5; i++) {
+  const res = await call(e2, '/api/tests', { method: 'POST', body: GOOD, ip: '203.0.113.77' });
+  if (res.status === 200) firstFive.push(await res.json());
+}
+let blocked = await call(e2, '/api/tests', { method: 'POST', body: GOOD, ip: '203.0.113.77' });
+check(blocked.status === 429 && /still live/.test((await blocked.json()).error), 'the sixth is refused, and says they are all still live');
+
+await call(e2, '/api/results?test=' + firstFive[0].id, { method: 'DELETE', headers: { 'x-test-password': GOOD.password } });
+const after = await call(e2, '/api/tests', { method: 'POST', body: GOOD, ip: '203.0.113.77' });
+check(after.status === 200, 'deleting a dry run gives the slot back');
+
+// And somebody else's deletions do not hand you their allowance.
+const otherAddress = await call(e2, '/api/tests', { method: 'POST', body: GOOD, ip: '203.0.113.78' });
+check(otherAddress.status === 200, 'a different address has its own five');
 const e3 = env();
 r = await call(e3, '/api/tests', { method: 'POST', body: GOOD, ip: '198.51.100.9' });
 check(r.status === 200, 'the cap is per address, not for everybody at once');
