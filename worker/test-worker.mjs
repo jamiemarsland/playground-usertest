@@ -172,7 +172,14 @@ check(lint.problems.some((x) => /repeats an earlier one/.test(x)), 'the same tas
 const e1 = env();
 
 let r = await call(e1, '/');
-check(r.status === 200 && (await r.text()).includes('User-test it with anyone'), 'the front page is the create form');
+const home = await r.text();
+check(r.status === 200 && home.includes('User-test it with anyone'), 'the front page is the create form');
+// An agent arriving at the front page should not have to guess. The form stays
+// the default, because it is the product; the other door is one click away.
+check(home.includes('data-door="form"') && home.includes('data-door="agent"'), 'and there is a door for someone whose assistant is doing it');
+check(home.includes('id="agent" hidden'), 'the form is what you get first');
+check(/\[hidden\] \{ display:none !important; \}/.test(home), 'hidden is spelled out, since the controls throw away the browser rule for it');
+check(/cannot be looked up again/.test(home), 'and the agent door warns that the password cannot be recovered');
 
 r = await call(e1, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { persona: '' }) });
 check(r.status === 400 && (await r.json()).error.includes('pretend to be'), 'a test with no persona is refused');
@@ -410,6 +417,8 @@ r = await call(eAgent, '/llms.txt');
 const llms = await r.text();
 check(r.status === 200 && /usertest_check/.test(llms) && /digest=1/.test(llms), 'llms.txt describes both doors');
 check(/quietly ruin a test/.test(llms), 'and passes on the two mistakes that matter');
+check(/usertest_delete/.test(llms), 'and lists every tool there is, not the three there used to be');
+check(llms.indexOf('CANNOT be looked up again') < llms.indexOf('## As MCP'), 'the password warning comes before anything an agent might act on');
 
 /* ------------------------------------------------------- the global ceiling */
 

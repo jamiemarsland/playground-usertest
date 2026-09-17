@@ -192,8 +192,9 @@ worker. A declared runtime takes every request, so anything else published
 alongside would be uploaded and never served.
 
 **On Cloudflare**, from the same `worker.js`: create a database with
-`wrangler d1 create playground-usertest`, put its id in `wrangler.jsonc`, then
-`wrangler deploy`.
+`wrangler d1 create playground-usertest`, put its id in `wrangler.jsonc` over
+the `local-dev` placeholder, then `wrangler deploy`. Untested since the move —
+the SQL runs against D1's own API locally, but nobody has deployed it there.
 
 ## The card
 

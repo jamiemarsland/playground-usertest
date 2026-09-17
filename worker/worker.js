@@ -1453,9 +1453,17 @@ tester opens a link, gets a throwaway WordPress site (WordPress Playground) with
 a card of things to try, and what they do comes back here. Nothing to install at
 either end, and no accounts.
 
+## Before anything else
+
+usertest_create hands back a results password that CANNOT be looked up again by
+anyone, including this service. Give it to the person you are working for, in
+your reply, the moment you have it. A test whose password is lost is a test
+nobody can ever read.
+
 ## As MCP
 
-POST ${origin}/mcp — tools: usertest_check, usertest_create, usertest_results.
+POST ${origin}/mcp — tools: usertest_check, usertest_create, usertest_delete,
+usertest_results.
 
 ## As HTTP
 
@@ -1566,9 +1574,34 @@ const HOME = `<!doctype html>
   .err { color:var(--bad); font-weight:600; }
   .out { margin:26px 0 0; padding:20px 22px; border:1px solid var(--line); border-radius:16px; background:#fff; }
   .out code { display:block; font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; padding:8px 10px; background:var(--paper); border-radius:8px; margin:4px 0 14px; }
+  /* Spelled out because the controls here use all:unset, which throws away the
+     browser's own rule for the hidden attribute. */
+  [hidden] { display:none !important; }
+  .doors { display:flex; gap:8px; margin:0 0 28px; }
+  .door { all:unset; cursor:pointer; padding:9px 18px; border-radius:999px; border:1px solid var(--line); background:#fff; font-size:15px; }
+  .door.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .prompt { position:relative; border:1px solid var(--line); border-radius:12px; background:#fff; padding:16px 18px; margin:0 0 18px; }
+  .prompt p { font:14px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; white-space:pre-wrap; padding-right:72px; }
+  .copy { all:unset; cursor:pointer; position:absolute; top:10px; right:10px; font-size:13px; padding:5px 12px; border-radius:999px; border:1px solid var(--line); background:var(--paper); }
+  .copy:hover { background:#efeae1; }
+  .addr { font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; }
+  .warn { border-left:3px solid var(--bad); padding:2px 0 2px 14px; margin:18px 0 0; }
 </style></head><body><div class="wrap">
 <h1>User-test it with anyone</h1>
 <p>Someone opens a link, gets a throwaway WordPress site in their browser, and a small card lists a few things to try. You read what happened. Nothing to install, at either end.</p>
+
+<div class="doors">
+  <button type="button" class="door on" data-door="form">I'll fill this in</button>
+  <button type="button" class="door" data-door="agent">My assistant will</button>
+</div>
+
+<div id="agent" hidden>
+  <p>Paste this at Claude, ChatGPT, Cursor, or anything else that can fetch a URL. There is nothing to install and no account to make.</p>
+  <div class="prompt"><button type="button" class="copy" id="copy">Copy</button><p id="promptText"></p></div>
+  <p>It will read <a href="/llms.txt">/llms.txt</a> — the routes, and the two mistakes that quietly ruin a test — then draft the persona and tasks with you and make the test.</p>
+  <p class="soft">Rather connect it properly? It is an MCP server too: <span class="addr" id="mcpAddr"></span></p>
+  <div class="warn"><p style="margin:0"><strong>Ask it for the password.</strong> The results password cannot be looked up again by anyone, including us. If your assistant makes a test and does not pass the password on, nothing your testers write can ever be read.</p></div>
+</div>
 
 <form id="f">
 <fieldset>
@@ -1592,7 +1625,7 @@ const HOME = `<!doctype html>
 
 <fieldset>
   <label>The blueprint that sets up your site</label>
-  <p class="hint">The one you already use to demo your thing. A URL is re-read each time, so you can keep editing it.</p>
+  <p class="hint">The one you already use to demo your thing. A URL is read once, now, and kept — so every tester gets the same site even if you carry on editing.</p>
   <div class="tabs"><button type="button" class="on" data-bp="url">A URL</button><button type="button" data-bp="json">Paste JSON</button></div>
   <input type="url" id="bpurl" placeholder="https://example.com/blueprint.json">
   <textarea id="bpjson" hidden placeholder='{ "steps": [ … ] }'></textarea>
@@ -1614,6 +1647,44 @@ const HOME = `<!doctype html>
 (function () {
   var tasksEl = document.getElementById('tasks');
   var mode = 'url';
+
+  // The two doors. The form is the default because it is the product: you can
+  // make a test in half a minute without reading anything.
+  var form = document.getElementById('f');
+  var agent = document.getElementById('agent');
+  var origin = location.origin;
+  document.getElementById('promptText').textContent =
+    'Fetch ' + origin + '/llms.txt and set up a user test for my plugin. ' +
+    'Draft the persona and tasks with me, check them, then give me both links and the password.';
+  document.getElementById('mcpAddr').textContent = origin + '/mcp';
+
+  [].slice.call(document.querySelectorAll('[data-door]')).forEach(function (b) {
+    b.addEventListener('click', function () {
+      var wantAgent = b.dataset.door === 'agent';
+      [].slice.call(document.querySelectorAll('[data-door]')).forEach(function (o) { o.classList.toggle('on', o === b); });
+      agent.hidden = !wantAgent;
+      form.hidden = wantAgent;
+      document.getElementById('out').hidden = wantAgent;
+      try { localStorage.setItem('pgut:door', b.dataset.door); } catch (e) {}
+    });
+  });
+  try {
+    if (localStorage.getItem('pgut:door') === 'agent') document.querySelector('[data-door=agent]').click();
+  } catch (e) {}
+
+  document.getElementById('copy').addEventListener('click', function () {
+    var btn = this;
+    var text = document.getElementById('promptText').textContent;
+    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
+    else {
+      // Older browsers, and any page not served over https.
+      var ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      ta.remove();
+    }
+  });
 
   function addTask(title, hint) {
     var d = document.createElement('div');
@@ -1655,18 +1726,48 @@ const HOME = `<!doctype html>
 
     submit.disabled = true;
     submit.textContent = 'Checking the blueprint…';
-    fetch('/api/tests', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        subject: document.getElementById('subject').value,
-        persona: document.getElementById('persona').value,
-        tasks: tasks,
-        blueprintUrl: mode === 'url' ? document.getElementById('bpurl').value : '',
-        blueprintJson: mode === 'json' ? document.getElementById('bpjson').value : '',
-        password: document.getElementById('password').value,
-      }),
-    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+
+    var url = mode === 'url' ? document.getElementById('bpurl').value.trim() : '';
+
+    // Read the blueprint here rather than asking the service to. The browser can
+    // reach anywhere the owner can, which the service cannot always say — and a
+    // copy taken now means every tester gets the same site, which is what you
+    // want from a test anyway. If the page cannot read it (a site that sends no
+    // CORS header), hand the URL over and let the service try.
+    var fetched = !url ? Promise.resolve(null) : fetch(url, { headers: { accept: 'application/json' } })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function (t) { JSON.parse(t); return t; })
+      .catch(function () { return null; });
+
+    fetched.then(function (text) {
+      return fetch('/api/tests', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          subject: document.getElementById('subject').value,
+          persona: document.getElementById('persona').value,
+          tasks: tasks,
+          blueprintUrl: text ? '' : url,
+          blueprintJson: text || (mode === 'json' ? document.getElementById('bpjson').value : ''),
+          password: document.getElementById('password').value,
+        }),
+      });
+    }).then(function (r) {
+      // Not every failure comes from the service. Something in front of it can
+      // answer instead — an edge rate limiter returns an HTML page — and
+      // assuming JSON turns a clear "too many requests" into "could not reach
+      // the service", which sends you looking in the wrong place.
+      return r.text().then(function (body) {
+        var d = {};
+        try { d = JSON.parse(body) || {}; } catch (e) {
+          d = { error: r.ok ? 'The service sent something unreadable back.'
+                            : (r.status === 429
+                               ? 'Too many requests to this address for the moment. Wait a minute and try again.'
+                               : 'The service answered ' + r.status + '.') };
+        }
+        return { ok: r.ok, d: d };
+      });
+    })
       .then(function (res) {
         submit.disabled = false;
         submit.textContent = 'Make the test';

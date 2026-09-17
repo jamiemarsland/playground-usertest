@@ -26,13 +26,20 @@
 		// matter who is asking. Raise it when the service has a name and an owner.
 		"GLOBAL_CREATE_DAILY_LIMIT": "200"
 	},
-	// No id: Cloudflare creates the namespace on deploy and links it
-	// automatically (wrangler 4.45+). Without it there is nowhere to put a test,
-	// and every route answers 503.
-	"kv_namespaces": [
+	// The service stores everything in SQL behind a D1-shaped binding — what
+	// Spacefast's Functions runtime hands a worker, and what D1 gives you here,
+	// so the same worker.js runs on either. Without it there is nowhere to put a
+	// test and every route answers 503.
+	//
+	// "local-dev" is a placeholder that keeps `wrangler dev --local` working.
+	// Before deploying to Cloudflare, create the database with
+	// `wrangler d1 create playground-usertest` and paste the real id over it.
+	// The tables are made on first use; there is no migration step.
+	"d1_databases": [
 		{
-			"binding": "TESTS",
-			"id": "a4f6b88d3f7e4323b79b23bb4c6b13e0"
+			"binding": "DB",
+			"database_name": "playground-usertest",
+			"database_id": "local-dev"
 		}
 	],
 	"observability": {
