@@ -3,7 +3,7 @@
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
 import { DatabaseSync } from 'node:sqlite';
-import worker, { guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
+import worker, { TASK_SETS, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 
 // A real SQL engine rather than a mock. The worker talks to a D1-shaped
 // binding, which is what both Spacefast Functions and Cloudflare D1 hand it, so
@@ -355,7 +355,7 @@ m = await rpc({ jsonrpc: '2.0', method: 'notifications/initialized' });
 check(m.status === 202 && m.body === null, 'a notification gets 202 and no body');
 
 m = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-check(m.body.result.tools.map((t) => t.name).join() === 'usertest_check,usertest_create,usertest_delete,usertest_results', 'four tools, check first');
+check(m.body.result.tools.map((t) => t.name).join() === 'usertest_task_sets,usertest_check,usertest_create,usertest_delete,usertest_results', 'five tools: the ready-made sets, then check first');
 
 m = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'nonsense', arguments: {} } });
 check(m.body.error && m.body.error.code === -32602, 'a tool nobody has is an error, not a shrug');
@@ -648,6 +648,29 @@ let mc = await rpcC({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { nam
 check(/Comparing A \(Today\)/.test(mc.result.content[0].text) && /  B: 1 done/.test(mc.result.content[0].text), 'an agent reads the versions side by side');
 r = await call(e1, '/t/' + ID);
 check(/public, max-age=300/.test(r.headers.get('cache-control') || '') && !r.headers.get('set-cookie'), 'a test with one site is unchanged: cached, no cookie');
+
+
+/* ---------------------------------------------------------------- task sets */
+// Ready-made sets: each one a test someone could send today, so each passes the
+// service's own check clean, with hints and a check wherever the site can show it.
+
+check(TASK_SETS.length >= 6, 'six ready-made sets');
+for (const set of TASK_SETS) {
+  const l = lintTest({ subject: 'my theme', persona: set.persona, tasks: set.tasks });
+  check(l.ok && !l.problems.length, `“${set.name}” has no problems: ` + JSON.stringify(l.problems));
+  check(!l.notes.length, `“${set.name}” draws no notes: ` + JSON.stringify(l.notes));
+  check(set.tasks.length >= 5 && set.tasks.length <= 7 && set.tasks.every((t) => t.hint), `“${set.name}” has five to seven tasks, each with a hint`);
+}
+const eSet = env();
+r = await call(eSet, '/api/task-sets');
+check(r.status === 200 && (await r.json()).sets.length === TASK_SETS.length, 'the sets are on the API for anyone');
+r = await call(eSet, '/api/tests', { method: 'POST', body: { subject: 'my theme', taskSet: 'pages-and-menu', boot: { title: 'Demo Site' }, password: 'set-pass-1' } });
+const fromSet = await r.json();
+check(r.status === 200 && fromSet.checks.length === 5 && fromSet.checks[1].check === CHECKS.menu, 'a test made from a set gets its persona, tasks and checks');
+r = await call(eSet, '/api/tests', { method: 'POST', body: { subject: 'my theme', taskSet: 'pages-and-menu', tasks: [{ title: 'Something of my own', hint: 'h' }], boot: { title: 'Demo Site' }, password: 'set-pass-2' } });
+check(r.status === 200 && (await r.json()).checks.length === 1, 'tasks of your own win over the set’s');
+r = await call(eSet, '/');
+check(/Start from a ready-made set/.test(await r.text()), 'the form offers the sets');
 
 /* -------------------------------------------------------------------- misc */
 

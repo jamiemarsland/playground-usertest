@@ -557,6 +557,95 @@ async function fetchBlueprint(url) {
 // Advisory on purpose: it never blocks a create. Someone who means it can
 // ignore every word.
 
+// Ready-made task sets for the tests most people want to run. Each is a
+// starting point, not a script: the form fills itself from one and the owner
+// edits from there. Every task says what the tester wants to end up with (the
+// control is in the hint), carries a hint, and is checked against the site
+// where the site can show it. Every set passes lintTest clean.
+const TASK_SETS = [
+  {
+    key: 'make-it-yours',
+    name: 'Make it yours',
+    for: 'A theme, a site builder or a starter site: the first edits anyone makes.',
+    persona: 'You make pots in a small studio called Ash & Clay, and people keep asking where they can see your work. A friend set up this site for you to start from. You want it to feel like yours before you send the link to anyone.',
+    tasks: [
+      { title: 'Give the site your studio’s name', hint: 'Settings → General, or the site title in the header.', check: 'site_name' },
+      { title: 'Change the main headline on the home page so it says what you make', hint: 'Edit the home page and type over the big heading.', check: 'home' },
+      { title: 'Swap one of the photos on the home page for another', hint: 'Use Replace on the image, then pick a photo from the media library.', check: 'home' },
+      { title: 'Give the site colours that feel like your studio', hint: 'Appearance → Editor → Styles.', check: 'styles' },
+      { title: 'Add a Contact page with your email address on it', hint: 'Pages → Add New, then Publish.', check: 'new_page' },
+      { title: 'See how the home page looks on a phone', hint: 'The device preview at the top of the editor.', check: 'none' },
+    ],
+  },
+  {
+    key: 'pages-and-menu',
+    name: 'Pages and the menu',
+    for: 'Navigation: adding pages and getting them into the menu, which trips up more people than anything else.',
+    persona: 'You teach yoga in a village hall called Still Point and you are building a small site for your classes. You have the home page; now you need somewhere for your timetable and your prices, and you want people to find them from the menu.',
+    tasks: [
+      { title: 'Add a page for your prices', hint: 'Pages → Add New. Give it a title and Publish.', check: 'new_page' },
+      { title: 'Put the prices page in the menu at the top of the site', hint: 'Edit the header in the Site Editor and use the menu’s + to add a page link.', check: 'menu' },
+      { title: 'Make the prices page the first thing in the menu', hint: 'Drag the menu item, or use the arrows on its toolbar.', check: 'menu' },
+      { title: 'Change the words of one menu item so they are shorter', hint: 'Edit the menu item’s label in the header.', check: 'menu' },
+      { title: 'See the menu on a phone and make sure the prices page is there', hint: 'The device preview at the top of the editor.', check: 'none' },
+    ],
+  },
+  {
+    key: 'write-a-post',
+    name: 'Write a post',
+    for: 'Blogging and the editor: writing, a picture, a category, and getting it on the site.',
+    persona: 'You write about food from your allotment, and you have finally started a blog called Second Helpings so you stop losing your recipes in notebooks. Today you want to get your first proper post up.',
+    tasks: [
+      { title: 'Write a short post about something you cooked this week and publish it', hint: 'Posts → Add New, then Publish.', check: 'new_post' },
+      { title: 'Put a picture in the middle of the post', hint: 'The + in the editor, then Image.', check: 'none' },
+      { title: 'Give the post a picture that shows on the blog page', hint: 'Featured image, in the post settings on the right.', check: 'none' },
+      { title: 'Put the post in a category called Recipes', hint: 'Categories, in the post settings on the right.', check: 'none' },
+      { title: 'Find your post on the site as a visitor would', hint: 'View post, or the site’s blog page.', check: 'none' },
+    ],
+  },
+  {
+    key: 'brand-the-site',
+    name: 'Brand the site',
+    for: 'Site identity: the name, tagline, logo and the little icon in the browser tab.',
+    persona: 'You run a bike repair workshop called Spoke & Chain. Your nephew made you a logo and you want the site to look like the sign above your door, from the name in the header to the icon in the browser tab.',
+    tasks: [
+      { title: 'Give the site your workshop’s name', hint: 'Settings → General, or the site title in the header.', check: 'site_name' },
+      { title: 'Give the site a tagline that says what you do', hint: 'Settings → General, or the tagline block in the header.', check: 'tagline' },
+      { title: 'Put your logo in the header', hint: 'The site logo block in the header. Any picture will do for the test.', check: 'logo' },
+      { title: 'Give the site its own little icon for the browser tab', hint: 'Site icon, in Settings → General or the site logo block’s settings.', check: 'site_icon' },
+      { title: 'Change the words at the bottom of every page to your opening hours', hint: 'Edit the footer in the Site Editor.', check: 'home' },
+    ],
+  },
+  {
+    key: 'build-a-page',
+    name: 'Build a page from scratch',
+    for: 'Page building: a blank page, the pieces people reach for first, and publishing it.',
+    persona: 'You organise a small craft fair called The Saturday Market, twice a year in the town hall. You need one page that tells people when it is, what they will find, and how to get a stall.',
+    tasks: [
+      { title: 'Make a new page for the next market and publish it', hint: 'Pages → Add New, then Publish.', check: 'new_page' },
+      { title: 'Give the page a big heading with the date of the market', hint: 'The + in the editor, then Heading.', check: 'none' },
+      { title: 'Add a photo under the heading', hint: 'The + in the editor, then Image.', check: 'none' },
+      { title: 'Put text and a picture side by side', hint: 'The Columns block, or Media & Text.', check: 'none' },
+      { title: 'Add a button people can use to email you about a stall', hint: 'The Buttons block. A mailto: link works.', check: 'none' },
+      { title: 'Look at the published page as a visitor would', hint: 'View page, after publishing.', check: 'none' },
+    ],
+  },
+  {
+    key: 'set-up-a-shop',
+    name: 'Set up a shop',
+    for: 'WooCommerce: a product, a sale and the shop in the menu. Your blueprint needs WooCommerce installed.',
+    needs: 'woocommerce',
+    persona: 'You make candles at your kitchen table and sell them at markets under the name Wick & Wax. People keep asking if they can buy online, so you are setting up a small shop before the Christmas fairs.',
+    tasks: [
+      { title: 'Add a product: a large candle for £18', hint: 'Products → Add New. The price is under Product data.', check: 'none' },
+      { title: 'Give the product a photo', hint: 'Product image, on the right of the product screen.', check: 'none' },
+      { title: 'Put one product on sale for a lower price', hint: 'Sale price, under Product data.', check: 'none' },
+      { title: 'Make sure people can find the shop from the menu', hint: 'Edit the header and add a link to the Shop page.', check: 'menu' },
+      { title: 'Buy something as a customer would, up to the payment step', hint: 'View the shop, Add to cart, then the cart and checkout.', check: 'none' },
+    ],
+  },
+];
+
 const BUTTON_WORDS = /\b(click|press|tap|hit|select|choose|drag|navigate to|go to the|open the)\b/i;
 
 function lintTest(input) {
@@ -564,8 +653,9 @@ function lintTest(input) {
   const notes = [];
 
   const subject = trim(input && input.subject, LIMITS.subject);
-  const persona = trimMultiline(input && input.persona, LIMITS.persona);
-  const tasks = cleanTasks(input && input.tasks);
+  const set = TASK_SETS.find((x) => x.key === (input && (input.task_set || input.taskSet)));
+  const persona = trimMultiline(input && input.persona, LIMITS.persona) || (set ? set.persona : '');
+  const tasks = cleanTasks(input && Array.isArray(input.tasks) && input.tasks.length ? input.tasks : (set ? set.tasks : []));
   const boot = input && input.boot && typeof input.boot === 'object' ? input.boot : null;
   const siteName = boot ? trim(boot.title, 60) : '';
 
@@ -919,8 +1009,10 @@ async function makeTest(env, req, body) {
   }
 
   const subject = trim(body.subject, LIMITS.subject);
-  const persona = trimMultiline(body.persona, LIMITS.persona);
-  const tasks = cleanTasks(body.tasks);
+  // a ready-made set fills whatever was left out: the tasks, the persona
+  const set = TASK_SETS.find((x) => x.key === body.taskSet);
+  const persona = trimMultiline(body.persona, LIMITS.persona) || (set ? set.persona : '');
+  const tasks = cleanTasks(Array.isArray(body.tasks) && body.tasks.length ? body.tasks : (set ? set.tasks : []));
   const password = String(body.password || '');
 
   if (!subject) return json({ error: 'Say what is being tested — it goes in the tester’s thank-you line.' }, 400, CORS);
@@ -1527,17 +1619,23 @@ const BOOT_SCHEMA = {
 
 const TOOLS = [
   {
+    name: 'usertest_task_sets',
+    description: 'Ready-made task sets for the tests most people run (first edits, pages and the menu, writing a post, branding, building a page, a WooCommerce shop). Each has a persona and five or six tasks with hints and site checks. Pass task_set to usertest_check or usertest_create to use one, or copy and change its tasks.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'usertest_check',
     description: 'Check a draft test before making it. Returns problems worth fixing and softer notes, plus the task list read back. Call it first — two mistakes are easy to make and quietly ruin a test rather than breaking it.',
     inputSchema: {
       type: 'object',
       properties: {
         subject: { type: 'string', description: 'What is being tested. It becomes the tester\'s first line: "Thank you for helping make X better".' },
+        task_set: { type: 'string', enum: TASK_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
         persona: { type: 'string', description: 'A paragraph, second person, giving them a reason to want the site — not just a job title.' },
         tasks: TASKS_SCHEMA,
         boot: BOOT_SCHEMA,
       },
-      required: ['subject', 'persona', 'tasks'],
+      required: ['subject'],
     },
   },
   {
@@ -1547,6 +1645,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         subject: { type: 'string' },
+        task_set: { type: 'string', enum: TASK_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
         persona: { type: 'string' },
         tasks: TASKS_SCHEMA,
         boot: BOOT_SCHEMA,
@@ -1560,7 +1659,7 @@ const TOOLS = [
         },
         webhook: { type: 'string', description: 'Optional. A Slack or Discord webhook URL (or any https address that takes a JSON POST). Each tester who finishes is posted there: what they managed, what the site showed, their answers and the results link. Never the password.' },
       },
-      required: ['subject', 'persona', 'tasks'],
+      required: ['subject'],
     },
   },
   {
@@ -1594,6 +1693,11 @@ function mcpText(t, extra) {
 }
 
 async function mcpCall(env, req, name, args) {
+  if (name === 'usertest_task_sets') {
+    const lines = TASK_SETS.map((x) => `${x.key} — ${x.name}: ${x.for}\n` + x.tasks.map((t, i) => `    ${i + 1}. ${t.title}`).join('\n'));
+    return mcpText(lines.join('\n\n') + '\n\nPass task_set: "<key>" to usertest_check or usertest_create; your own tasks or persona, if given, win.', { structuredContent: { sets: TASK_SETS } });
+  }
+
   if (name === 'usertest_check') {
     const r = lintTest(args);
     const lines = [];
@@ -1615,6 +1719,7 @@ async function mcpCall(env, req, name, args) {
       subject: args && args.subject,
       persona: args && args.persona,
       tasks: args && args.tasks,
+      taskSet: args && args.task_set,
       boot: args && args.boot,
       blueprintUrl: args && args.blueprint_url,
       blueprintJson: args && args.blueprint_json,
@@ -1807,6 +1912,9 @@ POST ${origin}/api/tests
   text takes { type: "text", text: "the words" }. Left out, it is guessed.
   webhook (optional): a Slack or Discord webhook (or any https JSON endpoint);
   each tester who finishes is posted there. Never the password.
+  taskSet (optional): start from a ready-made set (GET ${origin}/api/task-sets,
+  or the usertest_task_sets tool): ${TASK_SETS.map((x) => x.key).join(', ')}.
+  It fills the persona and tasks you leave out.
   versions (optional, to compare): [{ label, boot | blueprintUrl | blueprintJson }, …]
   two or three, instead of one site. One tester link shares testers out
   evenly; the digest gains versions[] side by side.
@@ -1931,6 +2039,7 @@ const HOME = `<!doctype html>
   .drop:hover { background:rgba(22,24,28,.06); }
   .add { all:unset; cursor:pointer; font-weight:600; text-decoration:underline; text-underline-offset:3px; }
   .tabs { display:flex; gap:8px; margin:0 0 10px; }
+  .setpick { font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; color:inherit; width:100%; }
   .cmp-toggle { display:flex; gap:8px; align-items:center; margin:14px 0 0; font-weight:500; cursor:pointer; }
   .names { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:0 0 10px; }
   @media (max-width:560px) { .names { grid-template-columns:1fr; } }
@@ -1969,6 +2078,13 @@ const HOME = `<!doctype html>
 </div>
 
 <form id="f">
+<fieldset>
+  <label for="set">Start from a ready-made set <span class="soft">(optional)</span></label>
+  <p class="hint">A persona and tasks for the tests most people run, with hints and checks already in. Change anything you like.</p>
+  <select id="set" class="setpick"><option value="">My own tasks</option>${TASK_SETS.map((x) => `<option value="${x.key}">${esc(x.name)}</option>`).join('')}</select>
+  <p class="hint" id="setfor" hidden></p>
+</fieldset>
+
 <fieldset>
   <label for="subject">What are you testing?</label>
   <p class="hint">Goes in the tester’s first line: “Thank you for helping make <em>this</em> better.”</p>
@@ -2070,7 +2186,8 @@ const HOME = `<!doctype html>
 
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   var CHECK_OPTIONS = ${JSON.stringify(Object.keys(CHECKS).map((k) => `<option value="${k}">${CHECKS[k]}</option>`).join(''))};
-  function addTask(title, hint) {
+  var SETS = ${JSON.stringify(TASK_SETS)};
+  function addTask(title, hint, check) {
     var d = document.createElement('div');
     d.className = 'task';
     d.innerHTML =
@@ -2092,10 +2209,24 @@ const HOME = `<!doctype html>
     if (title) d.querySelector('.t-title').value = title;
     if (hint) d.querySelector('.t-hint').value = hint;
     var sel = d.querySelector('.t-check');
+    if (check) sel.value = check;
     sel.addEventListener('change', function () { d.querySelector('.t-words').hidden = sel.value !== 'text'; });
     tasksEl.appendChild(d);
   }
   for (var i = 0; i < 5; i++) addTask();
+
+  // a ready-made set fills the persona and the tasks; the owner edits from there
+  var setPick = document.getElementById('set'), setFor = document.getElementById('setfor'), lastSetPersona = '';
+  setPick.addEventListener('change', function () {
+    var set = SETS.filter(function (x) { return x.key === setPick.value; })[0];
+    setFor.hidden = !set;
+    if (!set) return;
+    setFor.textContent = set.for;
+    var persona = document.getElementById('persona');
+    if (!persona.value.trim() || persona.value === lastSetPersona) { persona.value = set.persona; lastSetPersona = set.persona; }
+    tasksEl.innerHTML = '';
+    set.tasks.forEach(function (t) { addTask(t.title, t.hint, t.check); });
+  });
   document.getElementById('add').addEventListener('click', function () { addTask(); });
 
   var mode2 = 'url';
@@ -2414,6 +2545,10 @@ export default {
       });
     }
 
+    if (url.pathname === '/api/task-sets') {
+      return json({ sets: TASK_SETS }, 200, Object.assign({ 'cache-control': 'public, max-age=3600' }, CORS));
+    }
+
     if (url.pathname === '/api/tests') {
       if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
       if (req.method !== 'POST') return json({ error: 'POST only' }, 405, CORS);
@@ -2473,4 +2608,4 @@ const NOT_FOUND = `<!doctype html>
 </div></body></html>`;
 
 // exported for the tests
-export { guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };
+export { TASK_SETS, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };
