@@ -2016,12 +2016,131 @@ ${paras}
 }
 
 // The owner's whole flow: one form, two links back. No account, nothing to host.
+// Above the form, a tester's-eye demo: the card working on a pretend site, so
+// you see what you are sending people before you read a word about it.
+const DEMO = TASK_SETS.find((x) => x.key === 'make-it-yours');
 const HOME = `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>User-test a WordPress thing with anyone</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>${PAGE_CSS}
-  .wrap { max-width: 720px; }
+  :root { --paper:#ffffff; --ink:#111216; --soft:#4a4c55; --line:#d5d7de; --mist:#f3f4f7; --blue:#2448e0; --blue-dark:#1a35a8; --bad:#b23a1e; --ok:#1f7a4d; }
+  body { background:var(--paper); }
+  a { color:var(--blue); } a:hover { color:var(--blue-dark); }
+  .display { font-family:"Bricolage Grotesque",Georgia,serif; letter-spacing:-.025em; }
+  .mono { font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .shell { max-width:1200px; margin:0 auto; padding:0 24px; }
+  .band { background:var(--mist); }
+  .dark { background:var(--ink); color:#fff; }
+  section { padding:88px 0; }
+  h2.big { font:800 44px/1.1 "Bricolage Grotesque",Georgia,serif; letter-spacing:-.02em; margin:0 0 16px; }
+  .lede { color:var(--soft); max-width:640px; }
+  .eyebrow { font:500 13px/1.4 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.08em; text-transform:uppercase; color:var(--blue); margin:0 0 18px; }
+  .pill { display:inline-block; padding:15px 24px; border-radius:999px; font-weight:600; text-decoration:none; border:1px solid transparent; cursor:pointer; font:inherit; font-weight:600; }
+  .pill.solid { background:var(--blue); color:#fff; } .pill.solid:hover { background:var(--blue-dark); color:#fff; }
+  .pill.line { background:#fff; color:var(--ink); border-color:var(--line); } .pill.line:hover { border-color:var(--ink); color:var(--ink); }
+  .row { display:flex; flex-wrap:wrap; gap:12px; }
+
+  .topbar { display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between; padding-top:22px; padding-bottom:22px; }
+  .brand { display:flex; gap:10px; align-items:center; font:700 19px/1 "Bricolage Grotesque",Georgia,serif; color:var(--ink); text-decoration:none; }
+  .topbar nav { display:flex; flex-wrap:wrap; gap:22px; align-items:center; font-size:15px; }
+  .topbar nav a { color:var(--ink); text-decoration:none; } .topbar nav a:hover { text-decoration:underline; }
+  .topbar nav a.cta { background:var(--ink); color:#fff; padding:10px 18px; border-radius:999px; font-weight:600; } .topbar nav a.cta:hover { text-decoration:none; background:#2a2c33; }
+
+  .hero { padding:48px 0 24px; }
+  .hero-row { display:flex; flex-wrap:wrap; gap:32px 56px; align-items:flex-end; justify-content:space-between; }
+  .hero h1 { flex:1 1 620px; margin:0; font:800 72px/1 "Bricolage Grotesque",Georgia,serif; letter-spacing:-.03em; }
+  .hero-side { flex:1 1 340px; min-width:0; }
+  .hero-side p { font-size:19px; color:var(--soft); margin:0 0 24px; }
+  @media (max-width:640px) { .hero h1 { font-size:46px; } h2.big { font-size:34px; } section { padding:64px 0; } }
+
+  .demo { padding:40px 0 96px; }
+  .demo-intro { font-size:15px; color:var(--soft); margin:0 0 14px; }
+  .browser { border:1px solid var(--line); border-radius:18px; overflow:hidden; background:var(--mist); box-shadow:0 40px 80px -40px rgba(17,18,22,.4); }
+  .chrome { display:flex; gap:8px; align-items:center; padding:12px 14px; background:#fff; border-bottom:1px solid #e4e6eb; }
+  .chrome i { width:11px; height:11px; border-radius:50%; background:var(--line); flex:none; }
+  .chrome span { flex:1; min-width:0; margin-left:10px; padding:5px 12px; border-radius:8px; background:var(--mist); font:12px/1.4 "IBM Plex Mono",ui-monospace,monospace; color:#5b5e68; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stage { display:flex; flex-wrap:wrap; gap:20px; padding:20px; align-items:flex-start; }
+  .site { --site-ink:#2e3440; --site-wash:#f3f4f7; flex:1 1 520px; min-width:0; background:#fff; border-radius:12px; overflow:hidden; border:1px solid #e4e6eb; transition:all .4s; }
+  .site.styled { --site-ink:#8a3b17; --site-wash:#f6ebdd; }
+  .site-head { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:16px 22px; border-bottom:1px solid #eef0f3; }
+  .site-name { font:700 20px/1.2 "Bricolage Grotesque",Georgia,serif; color:var(--site-ink); transition:color .4s; }
+  .site-menu { display:flex; gap:16px; font-size:14px; color:var(--soft); }
+  .site-menu .new { color:var(--site-ink); font-weight:600; }
+  .site-hero { padding:36px 22px 28px; background:var(--site-wash); transition:background .4s; }
+  .site-hero p { margin:0 0 18px; font:700 36px/1.1 "Bricolage Grotesque",Georgia,serif; color:var(--site-ink); max-width:460px; transition:color .4s; }
+  .site-hero span { display:inline-block; padding:10px 18px; border-radius:999px; background:var(--site-ink); color:#fff; font-size:14px; font-weight:600; transition:background .4s; }
+  .site-body { padding:22px; display:flex; gap:16px; flex-wrap:wrap; }
+  .photo { flex:2 1 220px; height:170px; border-radius:10px; background:#dce0e8; display:flex; align-items:center; justify-content:center; transition:background .4s; }
+  .photo.swapped { background:#e9c9a8; }
+  .lines { flex:1 1 160px; display:flex; flex-direction:column; gap:10px; padding-top:4px; }
+  .lines i { height:10px; border-radius:4px; background:#eef0f3; }
+  .flash { animation:flash 1s ease-out; }
+  @keyframes flash { from { box-shadow:0 0 0 4px rgba(36,72,224,.45); } to { box-shadow:0 0 0 0 rgba(36,72,224,0); } }
+  @media (prefers-reduced-motion:reduce) { .flash { animation:none; } .site, .site * { transition:none !important; } }
+
+  .tcard { flex:0 1 330px; min-width:260px; background:#fff; border-radius:16px; padding:20px; border:1px solid var(--line); box-shadow:0 20px 40px -20px rgba(17,18,22,.35); }
+  .tcard .who { margin:0 0 12px; font-size:13px; color:#5b5e68; }
+  .tcard .head { display:flex; justify-content:space-between; align-items:baseline; margin:0 0 12px; }
+  .tcard .head strong { font:700 18px/1.2 "Bricolage Grotesque",Georgia,serif; }
+  .tcard .head span { font:12px/1 "IBM Plex Mono",ui-monospace,monospace; color:#5b5e68; }
+  .tlist { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; font-size:14px; line-height:1.4; }
+  .tlist li { display:flex; gap:10px; padding:8px 10px; margin:0; border-radius:10px; color:#5b5e68; }
+  .tlist li svg { flex:none; }
+  .tlist li.now { background:#eef1ff; color:var(--ink); font-weight:600; }
+  .tlist li.done span { text-decoration:line-through; }
+  .thint { margin:12px 0 0; padding:10px 12px; border-radius:10px; background:#fff6e0; font-size:13px; color:#5c4300; }
+  .tbtns { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 0; }
+  .tbtns button { font:inherit; font-size:14px; padding:10px 16px; border-radius:999px; border:1px solid var(--line); background:#fff; color:var(--ink); cursor:pointer; }
+  .tbtns button.primary { background:var(--ink); color:#fff; border-color:var(--ink); font-weight:600; }
+  .tdone { margin:16px 0 0; padding:14px; border-radius:12px; background:#e8f6ee; }
+  .tdone p { margin:0 0 10px; font-size:14px; color:#2c4a3a; }
+  .tdone strong { color:#145a37; }
+
+  .steps { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px; margin-top:40px; }
+  .step { background:#fff; border-radius:16px; padding:28px; }
+  .step .n { font:14px/1 "IBM Plex Mono",ui-monospace,monospace; color:var(--blue); margin:0 0 14px; }
+  .step h3 { margin:0 0 8px; font-size:21px; }
+  .step p { margin:0; color:var(--soft); }
+
+  .chips { display:flex; flex-wrap:wrap; gap:10px; margin:32px 0 24px; }
+  .chip { font:inherit; font-size:15px; font-weight:600; padding:11px 18px; border-radius:999px; cursor:pointer; background:#fff; color:var(--ink); border:1px solid var(--line); }
+  .chip[aria-pressed="true"] { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .setview { display:flex; flex-wrap:wrap; gap:20px; align-items:stretch; }
+  .setview > div { flex:1 1 380px; min-width:0; border-radius:16px; padding:28px; }
+  .setview .about { border:1px solid var(--line); }
+  .setview .list { background:var(--mist); }
+  .label { font:500 12px/1.4 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.06em; text-transform:uppercase; color:#5b5e68; margin:0 0 8px; }
+  .setview ol { padding-left:22px; } .setview li { margin:0 0 8px; }
+
+  .split { display:flex; flex-wrap:wrap; gap:56px; align-items:flex-start; }
+  .split > .words { flex:1 1 340px; min-width:0; }
+  .split > .words p { color:var(--soft); }
+  .table { flex:1 1 560px; min-width:0; background:#fff; border:1px solid var(--line); border-radius:16px; overflow-x:auto; }
+  .table table { width:100%; min-width:520px; border-collapse:collapse; font-size:15px; }
+  .table caption { text-align:left; padding:14px 20px; border-bottom:1px solid #e4e6eb; font:13px/1.4 "IBM Plex Mono",ui-monospace,monospace; color:#5b5e68; }
+  .table th { text-align:left; font-weight:400; font-size:13px; color:#5b5e68; padding:12px 20px; border-bottom:1px solid #e4e6eb; }
+  .table td { padding:13px 20px; border-bottom:1px solid #eef0f3; }
+  .table td.y { color:var(--ok); font-weight:600; } .table td.n { color:var(--bad); font-weight:600; }
+  .table tr.now td { background:#eef1ff; }
+  .table .foot { padding:16px 20px; background:#f8f9fb; font-size:15px; color:var(--soft); margin:0; }
+
+  .mistakes { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:20px; margin-top:40px; }
+  .mistakes > div { border:1px solid #33363f; border-radius:16px; padding:28px; }
+  .mistakes h3 { margin:0 0 16px; font-size:20px; }
+  .mistakes p { color:#b9bcc6; font-size:15px; margin:0 0 10px; }
+  .mistakes .no { font:15px/1.5 "IBM Plex Mono",ui-monospace,monospace; color:#ff9b85; text-decoration:line-through; }
+  .mistakes .yes { font:15px/1.5 "IBM Plex Mono",ui-monospace,monospace; color:#7ee2a8; }
+
+  #start .wrap { max-width:720px; padding:0 0 40px; }
+  #start h2.big { text-align:center; font-size:56px; }
+  #start .lede { text-align:center; margin:0 auto 32px; }
+  @media (max-width:640px) { #start h2.big { font-size:38px; } }
+  .foot-note { border-top:1px solid #e4e6eb; padding:28px 0 48px; font-size:14px; color:#5b5e68; }
+
   label { display:block; font-weight:600; margin:0 0 6px; }
   .hint { font-size:14px; color:var(--soft); margin:0 0 8px; font-weight:400; }
   input[type=text], input[type=password], input[type=url], textarea {
@@ -2044,26 +2163,155 @@ const HOME = `<!doctype html>
   .names { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:0 0 10px; }
   @media (max-width:560px) { .names { grid-template-columns:1fr; } }
   .tabs button { all:unset; cursor:pointer; padding:7px 14px; border-radius:999px; border:1px solid var(--line); background:#fff; font-size:15px; }
-  .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .tabs button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
   .err { color:var(--bad); font-weight:600; }
   .out { margin:26px 0 0; padding:20px 22px; border:1px solid var(--line); border-radius:16px; background:#fff; }
-  .out code { display:block; font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; padding:8px 10px; background:var(--paper); border-radius:8px; margin:4px 0 14px; }
+  .out code { display:block; font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; padding:8px 10px; background:var(--mist); border-radius:8px; margin:4px 0 14px; }
   /* Spelled out because the controls here use all:unset, which throws away the
      browser's own rule for the hidden attribute. */
   [hidden] { display:none !important; }
-  .doors { display:flex; gap:8px; margin:0 0 28px; }
-  .door { all:unset; cursor:pointer; padding:9px 18px; border-radius:999px; border:1px solid var(--line); background:#fff; font-size:15px; }
-  .door.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .doors { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 28px; justify-content:center; }
+  .door { all:unset; cursor:pointer; padding:12px 22px; border-radius:999px; border:1px solid var(--line); background:#fff; font-size:16px; font-weight:600; }
+  .door.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .door:focus-visible, .tabs button:focus-visible, .add:focus-visible, .drop:focus-visible, .copy:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  .go { background:var(--blue); } .go:hover { background:var(--blue-dark); }
   .prompt { position:relative; border:1px solid var(--line); border-radius:12px; background:#fff; padding:16px 18px; margin:0 0 18px; }
   .prompt p { font:14px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; white-space:pre-wrap; padding-right:72px; }
-  .copy { all:unset; cursor:pointer; position:absolute; top:10px; right:10px; font-size:13px; padding:5px 12px; border-radius:999px; border:1px solid var(--line); background:var(--paper); }
-  .copy:hover { background:#efeae1; }
+  .copy { all:unset; cursor:pointer; position:absolute; top:10px; right:10px; font-size:13px; padding:5px 12px; border-radius:999px; border:1px solid var(--line); background:var(--mist); }
+  .copy:hover { background:#e4e6eb; }
   .addr { font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; }
-  .warn { border-left:3px solid var(--bad); padding:2px 0 2px 14px; margin:18px 0 0; }
-</style></head><body><div class="wrap">
-<h1>User-test it with anyone</h1>
-<p>Someone opens a link, gets a throwaway WordPress site in their browser, and a small card lists a few things to try. You read what happened. Nothing to install, at either end.</p>
+  .warn { display:flex; gap:14px; align-items:flex-start; padding:16px 18px; border-radius:14px; background:#fff4ec; color:#5a2615; margin:18px 0 0; }
+  .warn svg { flex:none; margin-top:2px; }
+</style></head><body>
 
+<header class="shell topbar">
+  <a class="brand" href="/"><svg aria-hidden="true" width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="#2448e0" stroke-width="2.2"><rect x="3" y="5" width="22" height="17" rx="3"/><path d="M9 12l3 3 6-6"/></svg>Playground user testing</a>
+  <nav aria-label="On this page">
+    <a href="#how">How it works</a>
+    <a href="#sets">Ready-made sets</a>
+    <a href="#results">What comes back</a>
+    <a class="cta" href="#start">Make a test</a>
+  </nav>
+</header>
+
+<div class="shell hero">
+  <p class="eyebrow">For WordPress themes, plugins and sites</p>
+  <div class="hero-row">
+    <h1>Find out where people get stuck. Before your users do.</h1>
+    <div class="hero-side">
+      <p>Send someone a link. They get a throwaway WordPress site in their browser and a little card of things to try. You read exactly what happened. Nothing to install, at either end.</p>
+      <div class="row">
+        <a class="pill solid" href="#start" data-go-door="form">I’ll fill it in</a>
+        <a class="pill line" href="#start" data-go-door="agent">My assistant will</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="shell demo" aria-labelledby="demo-intro">
+  <p class="demo-intro" id="demo-intro"><strong style="color:var(--ink)">Try it as a tester.</strong> This is what they see. Press Done and watch the site change.</p>
+  <div class="browser">
+    <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span>A fresh WordPress, just for this tester</span></div>
+    <div class="stage">
+      <div class="site" id="dSite" aria-label="The pretend site" role="img">
+        <div class="site-head">
+          <span class="site-name" id="dName">My Starter Site</span>
+          <span class="site-menu"><span>Home</span><span>Shop</span><span>About</span><span class="new" id="dContact" hidden>Contact</span></span>
+        </div>
+        <div class="site-hero"><p id="dHeadline">Welcome to your new site</p><span>See the work</span></div>
+        <div class="site-body">
+          <div class="photo" id="dPhoto">
+            <svg id="dPlain" aria-hidden="true" width="56" height="44" viewBox="0 0 56 44" fill="none" stroke="#8a90a0" stroke-width="2.5"><rect x="2" y="2" width="52" height="40" rx="4"/><path d="M2 34l16-14 12 10 8-6 16 12"/><circle cx="40" cy="13" r="4"/></svg>
+            <svg id="dPot" hidden aria-hidden="true" width="90" height="110" viewBox="0 0 90 110" fill="none" stroke="#6e3a1e" stroke-width="3"><path d="M28 10h34M32 10c0 14-22 24-22 52 0 22 16 38 35 38s35-16 35-38c0-28-22-38-22-52"/><path d="M14 60h62"/></svg>
+          </div>
+          <div class="lines" aria-hidden="true"><i style="width:70%;height:12px;background:#e4e6eb"></i><i></i><i style="width:90%"></i><i style="width:60%"></i></div>
+        </div>
+      </div>
+      <div class="tcard">
+        <p class="who">You make pots in a small studio called Ash &amp; Clay. Make this site feel like yours.</p>
+        <div class="head"><strong>Things to try</strong><span id="dProgress" aria-live="polite">1 of ${DEMO.tasks.length}</span></div>
+        <ol class="tlist" id="dList">${DEMO.tasks.map((t, i) => `<li${i === 0 ? ' class="now"' : ''}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke-width="2"></svg><span>${esc(t.title)}</span></li>`).join('')}</ol>
+        <p class="thint" id="dHint" hidden></p>
+        <div class="tbtns" id="dBtns">
+          <button type="button" class="primary" id="dDone">Done</button>
+          <button type="button" id="dCouldnt">I couldn’t</button>
+          <button type="button" id="dHintBtn" aria-expanded="false" aria-controls="dHint">Hint</button>
+        </div>
+        <div class="tdone" id="dFinished" hidden>
+          <p><strong>That’s everything. Thank you.</strong></p>
+          <p>Your run just landed in <a href="#results">the results below</a>.</p>
+          <div class="tbtns" style="margin:0"><button type="button" id="dReset">Start again</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section class="band" id="how">
+  <div class="shell">
+    <h2 class="big">Three steps. About half a minute.</h2>
+    <div class="steps">
+      <div class="step"><p class="n">01</p><h3>Give them a reason</h3><p>A persona with a reason to want the site, and five to seven things to try. Or start from a ready-made set.</p></div>
+      <div class="step"><p class="n">02</p><h3>Send one link</h3><p>To a friend, a customer, a Slack channel. Each tester gets their own fresh WordPress, set up from your blueprint.</p></div>
+      <div class="step"><p class="n">03</p><h3>Read what happened</h3><p>What they managed, where they gave up, who needed a hint. Checked against the site itself, not just their word.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="sets">
+  <div class="shell">
+    <h2 class="big">Not sure what to ask? Start from a set.</h2>
+    <p class="lede">A persona and tasks for the tests most people run, with hints and checks already in. Change anything you like.</p>
+    <div class="chips" role="group" aria-label="Ready-made sets">${TASK_SETS.map((x, i) => `<button type="button" class="chip" data-set="${x.key}" aria-pressed="${i === 0}">${esc(x.name)}</button>`).join('')}</div>
+    <div class="setview">
+      <div class="about">
+        <p class="label">Good for</p><p id="sFor" style="font-weight:600">${esc(DEMO.for)}</p>
+        <p class="label">The tester is</p><p id="sPersona" class="soft">${esc(DEMO.persona)}</p>
+        <button type="button" class="pill solid" id="sUse" style="margin-top:8px">Use this set</button>
+      </div>
+      <div class="list">
+        <p class="label">Things to try</p>
+        <ol id="sTasks">${DEMO.tasks.map((t) => `<li>${esc(t.title)}</li>`).join('')}</ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="results">
+  <div class="shell split">
+    <div class="words">
+      <h2 class="big">The bit you’ve been guessing at.</h2>
+      <p>Every task comes back with who finished it, who couldn’t, who never got there and who opened the hint. Plus their notes, in their own words, and four quick questions at the end.</p>
+      <p>Comparing two onboarding flows? One link shares testers out evenly, and the results sit side by side.</p>
+      <p>Want it as it happens? Paste a Slack or Discord webhook and each tester who finishes is posted there. Never the password.</p>
+    </div>
+    <div class="table">
+      <table>
+        <caption id="rCaption">Results · ${esc(DEMO.name)} · try the demo above and your run shows up here</caption>
+        <thead><tr><th scope="col">Task</th><th scope="col">Done</th><th scope="col">Couldn’t</th><th scope="col">Hint</th></tr></thead>
+        <tbody id="rBody">${DEMO.tasks.map((t) => `<tr><td>${esc(t.title)}</td><td>–</td><td>–</td><td>–</td></tr>`).join('')}</tbody>
+      </table>
+      <p class="foot">Each tester is a row of their own, too: open one for their notes and how long each task took.</p>
+    </div>
+  </div>
+</section>
+
+<section class="dark">
+  <div class="shell">
+    <h2 class="big">Two things that quietly ruin a test</h2>
+    <p class="lede" style="color:#b9bcc6">Both get caught before you send anything.</p>
+    <div class="mistakes">
+      <div><h3>Naming the button</h3><p class="no">Click Settings → General</p><p class="yes">Give the site your studio’s name</p><p style="margin:0">Say what they want to end up with. The control goes in the hint, which tells you who needed it.</p></div>
+      <div><h3>A persona named after the demo</h3><p>If the demo site is already called what they are, “make it yours” has nothing to change.</p><p style="margin:0">Give them a life of their own: a pottery studio, a yoga class, a bike workshop.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+<div class="shell">
+<h2 class="big">User-test it with anyone</h2>
+<p class="lede">Two ways in. Same test either way.</p>
+<div class="wrap">
 <div class="doors">
   <button type="button" class="door on" data-door="form">I'll fill this in</button>
   <button type="button" class="door" data-door="agent">My assistant will</button>
@@ -2074,9 +2322,8 @@ const HOME = `<!doctype html>
   <div class="prompt"><button type="button" class="copy" id="copy">Copy</button><p id="promptText"></p></div>
   <p>It will read <a href="/llms.txt">/llms.txt</a> — the routes, and the two mistakes that quietly ruin a test — then draft the persona and tasks with you and make the test.</p>
   <p class="soft">Rather connect it properly? It is an MCP server too: <span class="addr" id="mcpAddr"></span></p>
-  <div class="warn"><p style="margin:0"><strong>Ask it for the password.</strong> The results password cannot be looked up again by anyone, including us. If your assistant makes a test and does not pass the password on, nothing your testers write can ever be read.</p></div>
+  <div class="warn"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#b23a1e" stroke-width="2"><rect x="4" y="10" width="14" height="10" rx="2"/><path d="M7 10V7a4 4 0 0 1 8 0v3"/></svg><p style="margin:0"><strong>Ask it for the password.</strong> The results password cannot be looked up again by anyone, including us. If your assistant makes a test and does not pass the password on, nothing your testers write can ever be read.</p></div>
 </div>
-
 <form id="f">
 <fieldset>
   <label for="set">Start from a ready-made set <span class="soft">(optional)</span></label>
@@ -2141,6 +2388,10 @@ const HOME = `<!doctype html>
 
 <div id="out"></div>
 </div>
+</div>
+</section>
+
+<footer class="shell foot-note">Every tester gets a throwaway site in their own browser. The only thing kept is what the card learns. <a href="/llms.txt">llms.txt</a> · <a href="/mcp">MCP</a></footer>
 <script>
 (function () {
   var tasksEl = document.getElementById('tasks');
@@ -2337,6 +2588,104 @@ const HOME = `<!doctype html>
         submit.textContent = 'Make the test';
         msg.textContent = 'Could not reach the service. Try again.';
       });
+  });
+})();
+</script>
+<script>
+// The demo, the set browser, and the links that open a door. None of it talks
+// to the service: it is all for looking at before you make anything.
+(function () {
+  var SETS = ${JSON.stringify(TASK_SETS)};
+  var demo = SETS.filter(function (x) { return x.key === 'make-it-yours'; })[0];
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  function openDoor(which) {
+    var b = document.querySelector('[data-door=' + which + ']');
+    if (b) b.click();
+  }
+  [].slice.call(document.querySelectorAll('[data-go-door]')).forEach(function (a) {
+    a.addEventListener('click', function () { openDoor(a.dataset.goDoor); });
+  });
+
+  // What each finished task does to the pretend site, in the set's own order.
+  var effects = [
+    function (on) { $('dName').textContent = on ? 'Ash & Clay' : 'My Starter Site'; return $('dName'); },
+    function (on) { $('dHeadline').textContent = on ? 'Hand-thrown pots from a small studio by the river' : 'Welcome to your new site'; return $('dHeadline'); },
+    function (on) { $('dPhoto').classList.toggle('swapped', on); $('dPot').hidden = !on; $('dPlain').hidden = on; return $('dPhoto'); },
+    function (on) { $('dSite').classList.toggle('styled', on); return $('dSite'); },
+    function (on) { $('dContact').hidden = !on; return $('dContact'); },
+    function () { return null; },
+  ];
+  var ICON = {
+    done: '<circle cx="9" cy="9" r="8" stroke="#1f7a4d"/><path d="M5.5 9.2l2.3 2.3 4.7-4.7" stroke="#1f7a4d"/>',
+    couldnt: '<circle cx="9" cy="9" r="8" stroke="#b23a1e"/><path d="M6 6l6 6M12 6l-6 6" stroke="#b23a1e"/>',
+    now: '<circle cx="9" cy="9" r="8" stroke="#2448e0"/>',
+    open: '<circle cx="9" cy="9" r="8" stroke="#b4b7c0"/>',
+  };
+  var step = 0, out = [], hints = [];
+
+  function draw() {
+    var n = demo.tasks.length, finished = step >= n;
+    [].slice.call($('dList').children).forEach(function (li, i) {
+      var s = out[i] || (i === step ? 'now' : 'open');
+      li.className = s === 'open' ? '' : s;
+      li.querySelector('svg').innerHTML = ICON[s];
+    });
+    $('dProgress').textContent = finished ? 'All done' : (step + 1) + ' of ' + n;
+    $('dBtns').hidden = finished;
+    $('dFinished').hidden = !finished;
+    $('dHint').hidden = true;
+    $('dHintBtn').textContent = 'Hint';
+    $('dHintBtn').setAttribute('aria-expanded', 'false');
+    var ran = step > 0;
+    $('rCaption').textContent = 'Results · ' + demo.name + ' · ' + (ran ? 'your run, just now' : 'try the demo above and your run shows up here');
+    $('rBody').innerHTML = demo.tasks.map(function (t, i) {
+      var c = function (yes, cls) { return !ran || i >= step ? '<td>–</td>' : (yes ? '<td class="' + cls + '">1</td>' : '<td>0</td>'); };
+      return '<tr' + (ran && i === step ? ' class="now"' : '') + '><td>' + esc(t.title) + '</td>' +
+        c(out[i] === 'done', 'y') + c(out[i] === 'couldnt', 'n') + c(hints[i], 'y') + '</tr>';
+    }).join('');
+  }
+  function mark(kind) {
+    var el = effects[step] && effects[step](kind === 'done');
+    if (el && kind === 'done') { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+    out[step] = kind; step++; draw();
+  }
+  $('dDone').addEventListener('click', function () { mark('done'); });
+  $('dCouldnt').addEventListener('click', function () { mark('couldnt'); });
+  $('dHintBtn').addEventListener('click', function () {
+    var h = $('dHint'), show = h.hidden;
+    h.innerHTML = '<strong>Hint:</strong> ' + esc(demo.tasks[step].hint);
+    h.hidden = !show;
+    this.textContent = show ? 'Hide hint' : 'Hint';
+    this.setAttribute('aria-expanded', String(show));
+    if (show) hints[step] = true;
+  });
+  $('dReset').addEventListener('click', function () {
+    effects.forEach(function (f) { f(false); });
+    step = 0; out = []; hints = []; draw();
+  });
+  draw();
+
+  // The set browser. "Use this set" hands it to the form's own picker, so the
+  // form fills itself exactly as if it had been picked there.
+  var picked = demo.key;
+  [].slice.call(document.querySelectorAll('[data-set]')).forEach(function (b) {
+    b.addEventListener('click', function () {
+      picked = b.dataset.set;
+      var set = SETS.filter(function (x) { return x.key === picked; })[0];
+      [].slice.call(document.querySelectorAll('[data-set]')).forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+      $('sFor').textContent = set.for;
+      $('sPersona').textContent = set.persona;
+      $('sTasks').innerHTML = set.tasks.map(function (t) { return '<li>' + esc(t.title) + '</li>'; }).join('');
+    });
+  });
+  $('sUse').addEventListener('click', function () {
+    openDoor('form');
+    var sel = $('set');
+    sel.value = picked;
+    sel.dispatchEvent(new Event('change'));
+    $('start').scrollIntoView({ behavior: 'smooth' });
   });
 })();
 </script>
