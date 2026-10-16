@@ -160,7 +160,8 @@ const SCHEMA = [
      pw_salt        VARCHAR(64)  NOT NULL,
      pw_hash        VARCHAR(64)  NOT NULL,
      creator        VARCHAR(64),
-     webhook        VARCHAR(600)
+     webhook        VARCHAR(600),
+     versions       TEXT
    )`,
   `CREATE TABLE IF NOT EXISTS sessions (
      test_id  VARCHAR(16) NOT NULL,
@@ -169,6 +170,7 @@ const SCHEMA = [
      last_at  BIGINT      NOT NULL,
      viewport VARCHAR(40),
      name     VARCHAR(120),
+     version  VARCHAR(4),
      PRIMARY KEY (test_id, id)
    )`,
   // The primary key starts with test_id, so "everything for this test" and
@@ -192,7 +194,7 @@ const SCHEMA = [
    )`,
 ];
 
-const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)'];
+const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN versions TEXT', 'ALTER TABLE sessions ADD COLUMN version VARCHAR(4)'];
 
 // Once per database, not once per request — and keyed on the binding rather
 // than kept in one module-level variable, so a second database in the same
@@ -327,6 +329,7 @@ async function getTest(env, id) {
     pwSalt: row.pw_salt,
     pwHash: row.pw_hash,
     webhook: row.webhook || '',
+    versions: parse(row.versions, null),
   };
 }
 
@@ -355,7 +358,7 @@ async function sessionEvents(env, id, session) {
 async function sessionIndex(env, id, limit) {
   const rows = await all(
     env,
-    `SELECT s.test_id, s.id, s.first_at, s.last_at, s.viewport, s.name,
+    `SELECT s.test_id, s.id, s.first_at, s.last_at, s.viewport, s.name, s.version,
             (SELECT COUNT(*) FROM events e WHERE e.test_id = s.test_id AND e.session_id = s.id) AS n,
             (SELECT COUNT(*) FROM events e WHERE e.test_id = s.test_id AND e.session_id = s.id AND e.type = 'task_done') AS done,
             (SELECT COUNT(*) FROM events e WHERE e.test_id = s.test_id AND e.session_id = s.id AND e.type = 'task_skip') AS skipped,
@@ -375,6 +378,7 @@ async function sessionIndex(env, id, limit) {
     skipped: Number(r.skipped) || 0,
     wrapped: Number(r.wraps) > 0,
     name: r.name || '',
+    version: r.version || '',
   }));
 }
 
@@ -849,6 +853,46 @@ async function createTest(env, req) {
 
 // Everything past the parsing, so MCP can hand in a body it already has rather
 // than building a Request to feed back to ourselves.
+// Three ways to say what the tester's site should be: a URL to fetch each
+// time, JSON pasted once, or a description of what to boot that the service
+// turns into a blueprint itself. All three are checked now, so a broken one is
+// an error here rather than a blank tab for a tester. Used once per version.
+async function readSiteSpec(body) {
+  let blueprintUrl = '';
+  let blueprintJson = null;
+  let blueprintBoot = null;
+  const rawUrl = trim(body.blueprintUrl, 500);
+  const rawJson = String(body.blueprintJson || '').trim();
+
+  if (body.boot) {
+    const checked = cleanBoot(body.boot);
+    if (checked.error) return { error: checked.error };
+    blueprintBoot = checked.boot;
+  } else if (rawUrl) {
+    const checked = checkBlueprintUrl(rawUrl);
+    if (checked.error) return { error: checked.error };
+    const got = await fetchBlueprint(checked.url);
+    if (got.error) return { error: got.error };
+    blueprintUrl = checked.url;
+  } else if (rawJson) {
+    if (rawJson.length > LIMITS.blueprintBytes) return { error: 'That blueprint is too big.' };
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { error: 'The pasted blueprint is not a JSON object.' };
+      }
+      blueprintJson = parsed;
+    } catch (e) {
+      return { error: 'The pasted blueprint is not valid JSON.' };
+    }
+  } else {
+    return { error: 'Say what the tester should get: a blueprint URL, blueprint JSON, or a boot description.' };
+  }
+  return { blueprintUrl, blueprintJson, blueprintBoot };
+}
+
+const VERSION_KEYS = ['a', 'b', 'c'];
+
 async function makeTest(env, req, body) {
   if (!env.DB) return json({ error: 'The store is not set up yet.' }, 503, CORS);
   await ensureSchema(env);
@@ -893,39 +937,29 @@ async function makeTest(env, req, body) {
     webhook = checked.url;
   }
 
-  // Three ways to say what the tester's site should be: a URL to fetch each
-  // time, JSON pasted once, or a description of what to boot that the service
-  // turns into a blueprint itself. All three are checked now, so a broken one
-  // is an error here rather than a blank tab for a tester.
+  // One site, or two or three versions of it to compare: the same tasks on
+  // each, with testers shared out evenly by one link.
   let blueprintUrl = '';
   let blueprintJson = null;
   let blueprintBoot = null;
-  const rawUrl = trim(body.blueprintUrl, 500);
-  const rawJson = String(body.blueprintJson || '').trim();
-
-  if (body.boot) {
-    const checked = cleanBoot(body.boot);
-    if (checked.error) return json({ error: checked.error }, 400, CORS);
-    blueprintBoot = checked.boot;
-  } else if (rawUrl) {
-    const checked = checkBlueprintUrl(rawUrl);
-    if (checked.error) return json({ error: checked.error }, 400, CORS);
-    const got = await fetchBlueprint(checked.url);
-    if (got.error) return json({ error: got.error }, 400, CORS);
-    blueprintUrl = checked.url;
-  } else if (rawJson) {
-    if (rawJson.length > LIMITS.blueprintBytes) return json({ error: 'That blueprint is too big.' }, 400, CORS);
-    try {
-      const parsed = JSON.parse(rawJson);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        return json({ error: 'The pasted blueprint is not a JSON object.' }, 400, CORS);
-      }
-      blueprintJson = parsed;
-    } catch (e) {
-      return json({ error: 'The pasted blueprint is not valid JSON.' }, 400, CORS);
+  let versions = null;
+  if (Array.isArray(body.versions) && body.versions.length) {
+    if (body.versions.length < 2 || body.versions.length > VERSION_KEYS.length) {
+      return json({ error: `To compare, give two or three versions — that was ${body.versions.length}.` }, 400, CORS);
     }
+    versions = [];
+    for (let i = 0; i < body.versions.length; i++) {
+      const v = body.versions[i] || {};
+      const spec = await readSiteSpec(v);
+      const label = trim(v.label, 60) || `Version ${VERSION_KEYS[i].toUpperCase()}`;
+      if (spec.error) return json({ error: `${label}: ${spec.error}` }, 400, CORS);
+      versions.push(Object.assign({ key: VERSION_KEYS[i], label }, spec));
+    }
+    ({ blueprintUrl, blueprintJson, blueprintBoot } = versions[0]);
   } else {
-    return json({ error: 'Say what the tester should get: a blueprint URL, blueprint JSON, or a boot description.' }, 400, CORS);
+    const spec = await readSiteSpec(body);
+    if (spec.error) return json({ error: spec.error }, 400, CORS);
+    ({ blueprintUrl, blueprintJson, blueprintBoot } = spec);
   }
 
   const { salt, hash } = await hashPassword(password);
@@ -935,13 +969,14 @@ async function makeTest(env, req, body) {
   await run(
     env,
     `INSERT INTO tests (id, created, touched, expires, subject, persona, tasks,
-                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator, webhook)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator, webhook, versions)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id, now, now, now + NINETY_DAYS * 1000, subject, persona, JSON.stringify(tasks),
     blueprintUrl || null,
     blueprintJson ? JSON.stringify(blueprintJson) : null,
     blueprintBoot ? JSON.stringify(blueprintBoot) : null,
-    salt, hash, creator, webhook || null
+    salt, hash, creator, webhook || null,
+    versions ? JSON.stringify(versions) : null
   );
 
   const origin = publicOrigin(req);
@@ -949,6 +984,7 @@ async function makeTest(env, req, body) {
     id, tester: `${origin}/t/${id}`, results: `${origin}/t/${id}/results`,
     checks: tasks.map((t) => ({ title: t.title, check: t.check ? CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') : '' })),
     webhook: webhook ? hookKind(webhook) : '',
+    versions: versions ? versions.map((v) => ({ key: v.key, label: v.label })) : undefined,
   }, 200, CORS);
 }
 
@@ -957,7 +993,7 @@ async function makeTest(env, req, body) {
 // The owner's blueprint plus the two steps that make it a test: install the card
 // plugin, and hand it the test id, the tasks and where to report. Their own steps
 // run first so the card lands on a site that is already set up.
-function wrapBlueprint(base, test, origin, pluginZipUrl) {
+function wrapBlueprint(base, test, origin, pluginZipUrl, version) {
   const out = Object.assign({}, base);
   const steps = Array.isArray(base.steps) ? base.steps.slice() : [];
 
@@ -975,7 +1011,9 @@ function wrapBlueprint(base, test, origin, pluginZipUrl) {
     options: {
       playground_user_test: JSON.stringify({
         test: test.id,
-        report: `${origin}/api/events`,
+        // a compared test's tester reports under the version they were given,
+        // so the card needs to know nothing about versions
+        report: `${origin}/api/events${version ? `?v=${version}` : ''}`,
         subject: test.subject,
         tasks: test.tasks,
       }),
@@ -1024,10 +1062,15 @@ async function serveBlueprint(env, req, id) {
   const test = await getTest(env, id);
   if (!test) return json({ error: 'No such test.' }, 404, CORS);
 
-  let base = test.blueprintJson;
-  if (!base && test.blueprintBoot) base = blueprintFromBoot(test.blueprintBoot);
+  // which version: ?v= on the link the intro page handed out
+  const wantV = new URL(req.url).searchParams.get('v') || '';
+  const ver = test.versions ? (test.versions.find((v) => v.key === wantV) || test.versions[0]) : null;
+  const site = ver || test;
+
+  let base = site.blueprintJson;
+  if (!base && site.blueprintBoot) base = blueprintFromBoot(site.blueprintBoot);
   if (!base) {
-    const got = await fetchBlueprint(test.blueprintUrl);
+    const got = await fetchBlueprint(site.blueprintUrl);
     if (got.error) return json({ error: got.error }, 502, CORS);
     base = got.blueprint;
   }
@@ -1044,7 +1087,7 @@ async function serveBlueprint(env, req, id) {
     return json({ error: 'The card plugin zip is not where the service expects it. Nothing can be recorded until it is, so no blueprint is served.' }, 503, CORS);
   }
 
-  const wrapped = wrapBlueprint(base, test, origin, zip);
+  const wrapped = wrapBlueprint(base, test, origin, zip, ver ? ver.key : '');
   return json(wrapped, 200, Object.assign({ 'cache-control': 'public, max-age=60' }, CORS));
 }
 
@@ -1118,6 +1161,8 @@ async function appendEvents(env, req, ctx) {
   const start = room.find((e) => e.type === 'start');
   const wrapped = room.filter((e) => e.type === 'wrap').slice(-1)[0];
   const viewport = start && start.data ? String(start.data.viewport || '').slice(0, 40) : '';
+  const vParam = new URL(req.url).searchParams.get('v') || '';
+  const version = test.versions && test.versions.some((v) => v.key === vParam) ? vParam : '';
   const name = wrapped && wrapped.data ? String(wrapped.data.name || '').slice(0, 120) : '';
 
   // the wrap-up is the finish line: tell the owner's channel, once per tester
@@ -1140,11 +1185,12 @@ async function appendEvents(env, req, ctx) {
     env,
     `UPDATE sessions SET last_at = ?,
             viewport = CASE WHEN ? = '' THEN viewport ELSE ? END,
-            name     = CASE WHEN ? = '' THEN name     ELSE ? END
+            name     = CASE WHEN ? = '' THEN name     ELSE ? END,
+            version  = CASE WHEN ? = '' THEN version  ELSE ? END
       WHERE test_id = ? AND id = ?`,
-    [now, viewport, viewport, name, name, id, session],
-    'INSERT INTO sessions (test_id, id, first_at, last_at, viewport, name) VALUES (?, ?, ?, ?, ?, ?)',
-    [id, session, now, now, viewport, name]
+    [now, viewport, viewport, name, name, version, version, id, session],
+    'INSERT INTO sessions (test_id, id, first_at, last_at, viewport, name, version) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, session, now, now, viewport, name, version || null]
   );
 
   // Ninety days from the last event, not from the day it was made — but only
@@ -1252,8 +1298,9 @@ function median(nums) {
   return xs.length % 2 ? xs[mid] : Math.round((xs[mid - 1] + xs[mid]) / 2);
 }
 
-async function buildDigest(env, id, test) {
-  const everyone = await sessionIndex(env, id, MAX_SESSIONS_PER_TEST);
+async function buildDigest(env, id, test, only) {
+  // only: one version of a compared test (its testers, nobody else's)
+  const everyone = (await sessionIndex(env, id, MAX_SESSIONS_PER_TEST)).filter((r) => !only || r.version === only);
   const rows = everyone.slice(0, DIGEST_MAX_SESSIONS);
 
   const byTask = new Map();
@@ -1341,9 +1388,12 @@ async function buildDigest(env, id, test) {
     notes: t.notes,
   }));
 
+  const happies = wrapUps.map((w) => Number(w.happy)).filter((n) => n >= 1 && n <= 5);
   return {
     subject: test.subject,
     created: test.created,
+    happyAvg: happies.length ? Math.round(happies.reduce((a, b) => a + b, 0) / happies.length * 10) / 10 : null,
+    couldFinish: { yes: wrapUps.filter((w) => w.confident === 'yes').length, maybe: wrapUps.filter((w) => w.confident === 'maybe').length, no: wrapUps.filter((w) => w.confident === 'no').length },
     testers: everyone.length,
     counted: rows.length,
     truncated: everyone.length > DIGEST_MAX_SESSIONS,
@@ -1353,6 +1403,24 @@ async function buildDigest(env, id, test) {
     tasks,
     wrapUps,
   };
+}
+
+// A compared test: the whole digest once per version, side by side.
+async function compareDigest(env, id, test) {
+  const out = [];
+  for (const v of test.versions) {
+    const d = await buildDigest(env, id, test, v.key);
+    out.push(Object.assign({ key: v.key, label: v.label }, d));
+  }
+  return out;
+}
+
+// Small numbers lie: say so plainly when the groups are too small to trust.
+function compareCaution(versions) {
+  const ns = versions.map((v) => v.testers);
+  const fewest = Math.min(...ns);
+  if (fewest < 8) return `With ${ns.join(' and ')} testers, a difference of one or two people is noise. Read the notes before deciding anything.`;
+  return '';
 }
 
 /* ------------------------------------------------------------------- results */
@@ -1376,7 +1444,12 @@ async function readResults(env, req, url) {
   }
 
   if (url.searchParams.get('digest')) {
-    return json(await buildDigest(env, id, test), 200, { 'cache-control': 'no-store' });
+    const d = await buildDigest(env, id, test);
+    if (test.versions) {
+      d.versions = await compareDigest(env, id, test);
+      d.caution = compareCaution(d.versions);
+    }
+    return json(d, 200, { 'cache-control': 'no-store' });
   }
 
   const session = url.searchParams.get('session') || '';
@@ -1392,6 +1465,7 @@ async function readResults(env, req, url) {
       created: test.created,
       tasks: test.tasks.map((t) => (t.check ? Object.assign({}, t, { checkLabel: CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') }) : t)),
       sessions: await sessionIndex(env, id),
+      versions: test.versions ? await compareDigest(env, id, test) : undefined,
     },
     200,
     { 'cache-control': 'no-store' }
@@ -1479,6 +1553,11 @@ const TOOLS = [
         blueprint_url: { type: 'string', description: 'An https URL to an existing Playground blueprint. Re-read each time a tester starts, so it can keep changing.' },
         blueprint_json: { type: 'string', description: 'A Playground blueprint as a JSON string, kept as-is.' },
         password: { type: 'string', description: 'For the results page. One is made for you if you leave it out.' },
+        versions: {
+          type: 'array',
+          description: 'Optional, to compare: two or three versions of the site, each { label, boot | blueprint_url | blueprint_json }, given INSTEAD of boot/blueprint_url/blueprint_json. Same persona and tasks on each; one tester link shares testers out evenly; results come back side by side.',
+          items: { type: 'object', properties: { label: { type: 'string' }, boot: BOOT_SCHEMA, blueprint_url: { type: 'string' }, blueprint_json: { type: 'string' } }, required: ['label'] },
+        },
         webhook: { type: 'string', description: 'Optional. A Slack or Discord webhook URL (or any https address that takes a JSON POST). Each tester who finishes is posted there: what they managed, what the site showed, their answers and the results link. Never the password.' },
       },
       required: ['subject', 'persona', 'tasks'],
@@ -1541,6 +1620,9 @@ async function mcpCall(env, req, name, args) {
       blueprintJson: args && args.blueprint_json,
       password,
       webhook: args && args.webhook,
+      versions: args && Array.isArray(args.versions)
+        ? args.versions.map((v) => ({ label: v && v.label, boot: v && v.boot, blueprintUrl: v && v.blueprint_url, blueprintJson: v && v.blueprint_json }))
+        : undefined,
     });
     const made = await res.json();
     if (!res.ok) return mcpText(made.error || 'That did not work.', { isError: true, structuredContent: made });
@@ -1551,6 +1633,7 @@ async function mcpCall(env, req, name, args) {
       `Read the results here:\n${made.results}\n\nPassword: ${password}\n\n` +
       'Give the person both links and the password — none of it can be looked up again. ' +
       'The test keeps itself for ninety days after the last tester.' +
+      (made.versions ? `\n\nOne link for all ${made.versions.length} versions (${made.versions.map((v) => v.label).join(', ')}): testers are shared out evenly, and usertest_results compares them.` : '') +
       (made.webhook ? `\n\nEach tester who finishes will be posted to the ${made.webhook === 'json' ? 'webhook' : made.webhook[0].toUpperCase() + made.webhook.slice(1) + ' channel'}.` : ''),
       { structuredContent: out }
     );
@@ -1575,6 +1658,36 @@ async function mcpCall(env, req, name, args) {
     if (!test) return mcpText('That test id and password do not go together.', { isError: true });
     const d = await buildDigest(env, id, test);
     if (!d.testers) return mcpText(`Nobody has started ${d.subject ? 'the ' + d.subject + ' test' : 'it'} yet.`, { structuredContent: d });
+
+    if (test.versions) {
+      const vs = await compareDigest(env, id, test);
+      d.versions = vs;
+      d.caution = compareCaution(vs);
+      const L = [`Comparing ${vs.map((v) => `${v.key.toUpperCase()} (${v.label}): ${v.testers} tester(s), ${v.finished} finished`).join('; ')}.`];
+      if (d.caution) L.push(d.caution);
+      L.push('');
+      test.tasks.forEach((task, i) => {
+        L.push(task.title);
+        vs.forEach((v) => {
+          const t = v.tasks[i];
+          const bits = [`${t.done} done`, `${t.couldnt} couldn’t`];
+          if (t.notReached) bits.push(`${t.notReached} never got there`);
+          if (t.hintOpened) bits.push(`${t.hintOpened} opened the hint`);
+          if (t.medianSecs != null) bits.push(`${t.medianSecs}s median`);
+          if (t.notShown) bits.push(`${t.notShown} said done but the site did not change`);
+          if (t.didAnyway) bits.push(`${t.didAnyway} said couldn’t but the site changed`);
+          L.push(`  ${v.key.toUpperCase()}: ${bits.join(', ')}`);
+          t.notes.forEach((n) => L.push(`      "${n.note}" — ${n.who} (${n.got})`));
+        });
+      });
+      L.push('', 'At the end:');
+      vs.forEach((v) => {
+        const c = v.couldFinish;
+        L.push(`  ${v.key.toUpperCase()}: happy ${v.happyAvg == null ? '–' : v.happyAvg + '/5 on average'}; could finish with more time: ${c.yes} yes, ${c.maybe} maybe, ${c.no} no`);
+        v.wrapUps.forEach((w) => { if (w.confused) L.push(`      confused ${w.who}: "${w.confused}"`); });
+      });
+      return mcpText(L.join('\n'), { structuredContent: d });
+    }
 
     const lines = [`${d.testers} tester(s), ${d.finished} of them finished.`, ''];
     for (const t of d.tasks) {
@@ -1694,6 +1807,9 @@ POST ${origin}/api/tests
   text takes { type: "text", text: "the words" }. Left out, it is guessed.
   webhook (optional): a Slack or Discord webhook (or any https JSON endpoint);
   each tester who finishes is posted there. Never the password.
+  versions (optional, to compare): [{ label, boot | blueprintUrl | blueprintJson }, …]
+  two or three, instead of one site. One tester link shares testers out
+  evenly; the digest gains versions[] side by side.
 
   Say what the tester gets with ONE of: boot (the service builds the blueprint),
   blueprintUrl (re-read each time), blueprintJson (kept as-is).
@@ -1744,9 +1860,27 @@ const PAGE_CSS = `
 
 // The page a tester is sent. Their name for the next half hour, what happens,
 // and Start. It never says how long it takes: that is what puts people off.
-function introPage(test, origin) {
+// Sharing testers out: the version with the fewest testers started so far,
+// with an assignment count breaking ties, so two people opening the link in the
+// same minute do not both land on A.
+async function versionFor(env, test, req) {
+  const keys = test.versions.map((v) => v.key);
+  const cookie = (req.headers.get('cookie') || '').split(/;\s*/).find((c) => c.startsWith(`pgut_v_${test.id}=`));
+  const had = cookie ? cookie.split('=')[1] : '';
+  if (keys.includes(had)) return had;
+  const rows = await all(env, 'SELECT version, COUNT(*) AS n FROM sessions WHERE test_id = ? GROUP BY version', test.id);
+  const started = Object.fromEntries(keys.map((k) => [k, 0]));
+  for (const r of rows) if (keys.includes(r.version)) started[r.version] = Number(r.n) || 0;
+  const handed = {};
+  for (const k of keys) handed[k] = await peekCount(env, `assign:${test.id}:${k}`);
+  const pick = keys.slice().sort((x, y) => (started[x] - started[y]) || (handed[x] - handed[y]))[0];
+  await bumpCount(env, `assign:${test.id}:${pick}`, handed[pick], NINETY_DAYS);
+  return pick;
+}
+
+function introPage(test, origin, version) {
   const playground = 'https://playground.wordpress.net/?blueprint-url=' +
-    encodeURIComponent(`${origin}/t/${test.id}/blueprint.json`) + '&storage=temp&mode=seamless';
+    encodeURIComponent(`${origin}/t/${test.id}/blueprint.json${version ? `?v=${version}` : ''}`) + '&storage=temp&mode=seamless';
   // seamless: Playground's own toolbar stays out of the way, so the tester
   // sees a website and the card, nothing about the machinery underneath
   const paras = test.persona
@@ -1797,6 +1931,9 @@ const HOME = `<!doctype html>
   .drop:hover { background:rgba(22,24,28,.06); }
   .add { all:unset; cursor:pointer; font-weight:600; text-decoration:underline; text-underline-offset:3px; }
   .tabs { display:flex; gap:8px; margin:0 0 10px; }
+  .cmp-toggle { display:flex; gap:8px; align-items:center; margin:14px 0 0; font-weight:500; cursor:pointer; }
+  .names { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:0 0 10px; }
+  @media (max-width:560px) { .names { grid-template-columns:1fr; } }
   .tabs button { all:unset; cursor:pointer; padding:7px 14px; border-radius:999px; border:1px solid var(--line); background:#fff; font-size:15px; }
   .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
   .err { color:var(--bad); font-weight:600; }
@@ -1857,6 +1994,17 @@ const HOME = `<!doctype html>
   <div class="tabs"><button type="button" class="on" data-bp="url">A URL</button><button type="button" data-bp="json">Paste JSON</button></div>
   <input type="url" id="bpurl" placeholder="https://example.com/blueprint.json">
   <textarea id="bpjson" hidden placeholder='{ "steps": [ … ] }'></textarea>
+  <label class="cmp-toggle"><input type="checkbox" id="compare"> Compare it with a second version</label>
+  <p class="hint">Same tasks on both. One link shares testers out evenly, and the results come back side by side.</p>
+</fieldset>
+
+<fieldset id="second" hidden>
+  <label>The second version</label>
+  <p class="hint">Name both, so the results say which is which.</p>
+  <div class="names"><input type="text" id="labelA" maxlength="60" placeholder="First version, e.g. Today’s onboarding"><input type="text" id="labelB" maxlength="60" placeholder="Second version, e.g. New onboarding"></div>
+  <div class="tabs"><button type="button" class="on" data-bp2="url">A URL</button><button type="button" data-bp2="json">Paste JSON</button></div>
+  <input type="url" id="bp2url" placeholder="https://example.com/blueprint-b.json">
+  <textarea id="bp2json" hidden placeholder='{ "steps": [ … ] }'></textarea>
 </fieldset>
 
 <fieldset>
@@ -1950,6 +2098,16 @@ const HOME = `<!doctype html>
   for (var i = 0; i < 5; i++) addTask();
   document.getElementById('add').addEventListener('click', function () { addTask(); });
 
+  var mode2 = 'url';
+  document.getElementById('compare').addEventListener('change', function () { document.getElementById('second').hidden = !this.checked; });
+  [].slice.call(document.querySelectorAll('[data-bp2]')).forEach(function (b) {
+    b.addEventListener('click', function () {
+      mode2 = b.dataset.bp2;
+      [].slice.call(document.querySelectorAll('[data-bp2]')).forEach(function (o) { o.classList.toggle('on', o === b); });
+      document.getElementById('bp2url').hidden = mode2 !== 'url';
+      document.getElementById('bp2json').hidden = mode2 !== 'json';
+    });
+  });
   [].slice.call(document.querySelectorAll('[data-bp]')).forEach(function (b) {
     b.addEventListener('click', function () {
       mode = b.dataset.bp;
@@ -1974,18 +2132,29 @@ const HOME = `<!doctype html>
     submit.textContent = 'Checking the blueprint…';
 
     var url = mode === 'url' ? document.getElementById('bpurl').value.trim() : '';
+    var comparing = document.getElementById('compare').checked;
+    var url2 = comparing && mode2 === 'url' ? document.getElementById('bp2url').value.trim() : '';
 
     // Read the blueprint here rather than asking the service to. The browser can
     // reach anywhere the owner can, which the service cannot always say — and a
     // copy taken now means every tester gets the same site, which is what you
     // want from a test anyway. If the page cannot read it (a site that sends no
     // CORS header), hand the URL over and let the service try.
-    var fetched = !url ? Promise.resolve(null) : fetch(url, { headers: { accept: 'application/json' } })
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-      .then(function (t) { JSON.parse(t); return t; })
-      .catch(function () { return null; });
+    var read = function (u) {
+      return !u ? Promise.resolve(null) : fetch(u, { headers: { accept: 'application/json' } })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function (t) { JSON.parse(t); return t; })
+        .catch(function () { return null; });
+    };
+    var fetched = Promise.all([read(url), read(url2)]);
 
-    fetched.then(function (text) {
+    fetched.then(function (texts) {
+      var text = texts[0], text2 = texts[1];
+      var first = { blueprintUrl: text ? '' : url, blueprintJson: text || (mode === 'json' ? document.getElementById('bpjson').value : '') };
+      var versions = comparing ? [
+        Object.assign({ label: document.getElementById('labelA').value.trim() }, first),
+        { label: document.getElementById('labelB').value.trim(), blueprintUrl: text2 ? '' : url2, blueprintJson: text2 || (mode2 === 'json' ? document.getElementById('bp2json').value : '') },
+      ] : undefined;
       return fetch('/api/tests', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -1993,8 +2162,9 @@ const HOME = `<!doctype html>
           subject: document.getElementById('subject').value,
           persona: document.getElementById('persona').value,
           tasks: tasks,
-          blueprintUrl: text ? '' : url,
-          blueprintJson: text || (mode === 'json' ? document.getElementById('bpjson').value : ''),
+          blueprintUrl: first.blueprintUrl,
+          blueprintJson: first.blueprintJson,
+          versions: versions,
           password: document.getElementById('password').value,
           webhook: document.getElementById('webhook').value.trim(),
         }),
@@ -2026,6 +2196,7 @@ const HOME = `<!doctype html>
           '<p style="margin-bottom:4px"><strong>Read the results here</strong>, with the password you chose</p><code>' + res.d.results + '</code>' +
           ((res.d.checks || []).length ? '<p style="margin-bottom:4px"><strong>How each task is checked</strong></p><ul class="soft" style="margin-top:0">' +
             res.d.checks.map(function (c) { return '<li>' + esc(c.title) + ' \u2014 ' + esc(c.check || 'not checked: only their word for it') + '</li>'; }).join('') + '</ul>' : '') +
+          (res.d.versions ? '<p class="soft">One link for both: testers are shared out between ' + res.d.versions.map(function (v) { return '<strong>' + esc(v.label) + '</strong>'; }).join(' and ') + ', and the results come back side by side.</p>' : '') +
           (res.d.webhook ? '<p class="soft">Each tester who finishes will be posted to your ' + (res.d.webhook === 'json' ? 'webhook' : res.d.webhook.charAt(0).toUpperCase() + res.d.webhook.slice(1) + ' channel') + '.</p>' : '') +
           '<p class="soft" style="margin:0">Keep both. Neither can be looked up again, and the test keeps itself for ninety days after the last tester.</p></div>';
         window.scrollTo(0, document.body.scrollHeight);
@@ -2157,14 +2328,37 @@ const RESULTS = `<!doctype html>
       rows.forEach(function (r) { done += r.done || 0; skipped += r.skipped || 0; });
       sum.textContent = rows.length + ' tester(s), ' + done + ' tasks done, ' + skipped + ' not managed.';
       if (!rows.length) { out.innerHTML = '<p class="soft">Nobody has started yet.</p>'; return; }
-      out.innerHTML = '<table><tr><th>When</th><th>Who</th><th>Done</th><th>Couldn\\u2019t</th><th>Wrap-up</th></tr>' +
+      // a compared test: the versions side by side, task by task, first
+      var vs = d.versions || null, labelOf = {};
+      if (vs) vs.forEach(function (v) { labelOf[v.key] = v.key.toUpperCase(); });
+      var cmp = '';
+      if (vs) {
+        var fewest = Math.min.apply(null, vs.map(function (v) { return v.testers; }));
+        cmp = '<h2>Side by side</h2><p class="soft">' + vs.map(function (v) { return '<strong>' + v.key.toUpperCase() + '</strong> ' + esc(v.label) + ': ' + v.testers + ' tester(s), ' + v.finished + ' finished'; }).join(' \\u00b7 ') + '</p>' +
+          (fewest < 8 ? '<p class="soft">With this few testers, a difference of one or two people is noise. Read the notes before deciding anything.</p>' : '') +
+          '<table><tr><th>Task</th>' + vs.map(function (v) { return '<th>' + v.key.toUpperCase() + '</th>'; }).join('') + '</tr>' +
+          (d.tasks || []).map(function (t, i) {
+            return '<tr><td>' + esc(t.title) + '</td>' + vs.map(function (v) {
+              var x = v.tasks[i] || {};
+              var bits = [x.done + ' done', x.couldnt + ' couldn\\u2019t'];
+              if (x.hintOpened) bits.push(x.hintOpened + ' hint');
+              if (x.medianSecs != null) bits.push(mins(x.medianSecs));
+              if (x.notShown) bits.push('<span class="bad">' + x.notShown + ' unchanged</span>');
+              return '<td>' + bits.join(' \\u00b7 ') + '</td>';
+            }).join('') + '</tr>';
+          }).join('') +
+          '<tr><td>Happy with the site</td>' + vs.map(function (v) { return '<td>' + (v.happyAvg == null ? '\\u2013' : v.happyAvg + ' / 5') + '</td>'; }).join('') + '</tr>' +
+          '<tr><td>Could finish with more time</td>' + vs.map(function (v) { var c = v.couldFinish || {}; return '<td>' + (c.yes || 0) + ' yes \\u00b7 ' + (c.maybe || 0) + ' maybe \\u00b7 ' + (c.no || 0) + ' no</td>'; }).join('') + '</tr>' +
+          '</table><h2>Each tester</h2>';
+      }
+      out.innerHTML = cmp + '<table><tr><th>When</th><th>Who</th>' + (vs ? '<th>Version</th>' : '') + '<th>Done</th><th>Couldn\\u2019t</th><th>Wrap-up</th></tr>' +
         rows.map(function (r) {
           return '<tr class="s" data-id="' + esc(r.id) + '"><td>' + esc(when(r.first)) + '</td>' +
-            '<td>' + esc(r.name || r.id) + '</td>' +
+            '<td>' + esc(r.name || r.id) + '</td>' + (vs ? '<td>' + esc(labelOf[r.version] || '') + '</td>' : '') +
             '<td><span class="bar" style="width:' + (r.done * 14) + 'px"></span> ' + r.done + '</td>' +
             '<td><span class="bar b" style="width:' + (r.skipped * 14) + 'px"></span> ' + r.skipped + '</td>' +
             '<td>' + (r.wrapped ? 'yes' : '') + '</td></tr>' +
-            '<tr><td colspan="5" id="d-' + esc(r.id) + '"></td></tr>';
+            '<tr><td colspan="' + (vs ? 6 : 5) + '" id="d-' + esc(r.id) + '"></td></tr>';
         }).join('') + '</table>';
       [].slice.call(out.querySelectorAll('tr.s')).forEach(function (tr) {
         tr.addEventListener('click', function () {
@@ -2255,7 +2449,15 @@ export default {
       if (env.DB) await ensureSchema(env);
       const test = await getTest(env, id);
       if (!test) return html(NOT_FOUND, { 'cache-control': 'no-store' }, 404);
-      return html(introPage(test, publicOrigin(req)), { 'cache-control': 'public, max-age=300' });
+      if (!test.versions) return html(introPage(test, publicOrigin(req)), { 'cache-control': 'public, max-age=300' });
+      // a compared test: this visitor keeps the version they were first given
+      // (a cookie on this test's path), and a new visitor gets whichever
+      // version has had fewer testers start
+      const v = await versionFor(env, test, req);
+      return html(introPage(test, publicOrigin(req), v), {
+        'cache-control': 'private, no-store',
+        'set-cookie': `pgut_v_${test.id}=${v}; Path=/t/${test.id}; Max-Age=${30 * 24 * 60 * 60}; Secure; SameSite=Lax`,
+      });
     }
 
     return html(NOT_FOUND, { 'cache-control': 'no-store' }, 404);

@@ -596,6 +596,59 @@ await call(eHook, '/api/events', { method: 'POST', body: { test: jk.id, session:
 check(posted.length === 3 && posted[2].body.type === 'tester_finished' && Array.isArray(posted[2].body.tasks), 'anything else gets the whole thing as JSON');
 globalThis.fetch = realFetch;
 
+
+/* ---------------------------------------------------------------- compare */
+// Two or three versions of the site, the same tasks, one link: testers shared
+// out evenly and kept on their version, results side by side.
+
+const eCmp = env();
+const CMPB = Object.assign({}, GOOD, { password: 'compare-pw-1' });
+delete CMPB.boot; delete CMPB.blueprintUrl; delete CMPB.blueprintJson;
+r = await call(eCmp, '/api/tests', { method: 'POST', body: Object.assign({}, CMPB, { versions: [{ label: 'Only one', boot: { title: 'Demo A' } }] }) });
+check(r.status === 400, 'comparing needs at least two versions');
+r = await call(eCmp, '/api/tests', { method: 'POST', body: Object.assign({}, CMPB, { versions: [{ label: 'Today', boot: { title: 'Demo A' } }, { label: 'New', blueprintJson: 'not json' }] }) });
+check(r.status === 400 && /New/.test((await r.json()).error), 'a broken version is named in the error');
+r = await call(eCmp, '/api/tests', { method: 'POST', body: Object.assign({}, CMPB, { versions: [{ label: 'Today', boot: { title: 'Demo A' } }, { label: 'New', boot: { title: 'Demo B' } }] }) });
+const cmpT = await r.json();
+check(r.status === 200 && cmpT.versions && cmpT.versions.map((v) => v.key + ':' + v.label).join() === 'a:Today,b:New', 'making a compared test names its versions');
+
+const intro = async (cookie) => {
+  const res = await call(eCmp, '/t/' + cmpT.id, { headers: cookie ? { cookie } : {} });
+  const page = await res.text();
+  const v = (/blueprint\.json%3Fv%3D([a-c])/.exec(page) || [])[1];
+  return { v, set: res.headers.get('set-cookie') || '', cache: res.headers.get('cache-control') || '' };
+};
+const first = await intro();
+check(first.v === 'a' && /pgut_v_/.test(first.set) && /no-store/.test(first.cache), 'the first visitor gets A, remembered in a cookie, and the page is not cached');
+const again = await intro(`pgut_v_${cmpT.id}=a`);
+check(again.v === 'a', 'coming back keeps the same version');
+const second = await intro();
+check(second.v === 'b', 'the next new visitor gets B');
+
+r = await call(eCmp, '/t/' + cmpT.id + '/blueprint.json?v=b');
+const bpB = await r.json();
+const optB = JSON.parse(bpB.steps.slice(-1)[0].options.playground_user_test);
+check(/Demo B/.test(JSON.stringify(bpB.steps)) && /\/api\/events\?v=b$/.test(optB.report), 'B’s blueprint builds B, and its card reports under B');
+const tB = optB.tasks;
+await call(eCmp, '/api/events?v=b', { method: 'POST', body: { test: cmpT.id, session: 'cmpb11112222', events: [{ type: 'start' }, { type: 'task_done', task: tB[0].id, data: { secs: 10 } }, { type: 'wrap', task: 'wrap', data: { happy: '5', confident: 'yes' } }] } });
+await call(eCmp, '/api/events?v=a', { method: 'POST', body: { test: cmpT.id, session: 'cmpa11112222', events: [{ type: 'start' }, { type: 'task_skip', task: tB[0].id, note: 'lost', data: { secs: 50 } }, { type: 'wrap', task: 'wrap', data: { happy: '2', confident: 'no' } }] } });
+await call(eCmp, '/api/events?v=z', { method: 'POST', body: { test: cmpT.id, session: 'cmpz11112222', events: [{ type: 'start' }] } });
+r = await call(eCmp, '/api/results?test=' + cmpT.id + '&digest=1', { headers: { 'x-test-password': 'compare-pw-1' } });
+const cdig = await r.json();
+const va = cdig.versions[0], vb = cdig.versions[1];
+check(va.testers === 1 && vb.testers === 1, 'each version counts its own testers (an unknown version counts for neither)');
+check(va.tasks[0].couldnt === 1 && vb.tasks[0].done === 1, 'per task, per version');
+check(va.happyAvg === 2 && vb.happyAvg === 5 && vb.couldFinish.yes === 1, 'the end answers are summed up per version');
+check(/noise/.test(cdig.caution), 'and it says plainly that two testers prove nothing');
+r = await call(eCmp, '/api/results?test=' + cmpT.id, { headers: { 'x-test-password': 'compare-pw-1' } });
+const cres = await r.json();
+check(cres.versions && cres.sessions.some((x) => x.version === 'b'), 'the results page gets the versions and each tester’s version');
+const rpcC = (body) => call(eCmp, '/mcp', { method: 'POST', body, headers: { accept: 'application/json, text/event-stream' } }).then((x) => x.json());
+let mc = await rpcC({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'usertest_results', arguments: { test: cmpT.id, password: 'compare-pw-1' } } });
+check(/Comparing A \(Today\)/.test(mc.result.content[0].text) && /  B: 1 done/.test(mc.result.content[0].text), 'an agent reads the versions side by side');
+r = await call(e1, '/t/' + ID);
+check(/public, max-age=300/.test(r.headers.get('cache-control') || '') && !r.headers.get('set-cookie'), 'a test with one site is unchanged: cached, no cookie');
+
 /* -------------------------------------------------------------------- misc */
 
 r = await call(e1, '/nope');
