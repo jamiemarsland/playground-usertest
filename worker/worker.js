@@ -1561,7 +1561,9 @@ const PAGE_CSS = `
 // and Start. It never says how long it takes: that is what puts people off.
 function introPage(test, origin) {
   const playground = 'https://playground.wordpress.net/?blueprint-url=' +
-    encodeURIComponent(`${origin}/t/${test.id}/blueprint.json`) + '&storage=temp';
+    encodeURIComponent(`${origin}/t/${test.id}/blueprint.json`) + '&storage=temp&mode=seamless';
+  // seamless: Playground's own toolbar stays out of the way, so the tester
+  // sees a website and the card, nothing about the machinery underneath
   const paras = test.persona
     .split(/\n{2,}/)
     .map((p) => `<p>${esc(p)}</p>`)
