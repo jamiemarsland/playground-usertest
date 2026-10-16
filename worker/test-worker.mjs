@@ -551,6 +551,51 @@ check(cd.tasks[0].check === CHECKS.site_name && cd.tasks[2].check === '', 'each 
 r = await call(eChk, '/api/results?test=' + chk.id, { headers: { 'x-test-password': GOOD.password } });
 check((await r.json()).tasks[1].checkLabel === CHECKS.new_page, 'the results page gets the check in words');
 
+
+/* ---------------------------------------------------------------- webhooks */
+// Each tester who finishes is posted to the owner's channel, once, without the
+// password; a webhook that is not public https is refused when the test is made.
+
+const posted = [];
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, opts) => {
+  if (/hooks\.slack\.com|discord\.com|example\.org\/hook/.test(String(url))) { posted.push({ url: String(url), body: JSON.parse(opts.body) }); return new Response('ok'); }
+  return realFetch(url, opts);
+};
+const eHook = env();
+r = await call(eHook, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { webhook: 'http://hooks.slack.com/services/x' }) });
+check(r.status === 400, 'a webhook has to be https');
+r = await call(eHook, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { webhook: 'https://127.0.0.1/hook' }) });
+check(r.status === 400, 'and somewhere public');
+r = await call(eHook, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { password: 'hook-pass-123', webhook: 'https://hooks.slack.com/services/T0/B0/xyz', tasks: [{ title: 'Give the site your own name', hint: 'Settings' }, { title: 'Add a page about your prices', hint: 'Pages' }] }) });
+const hk = await r.json();
+check(hk.webhook === 'slack', 'making the test says where finishes will be posted');
+r = await call(eHook, '/t/' + hk.id + '/blueprint.json');
+const hkTasks = JSON.parse((await r.json()).steps.slice(-1)[0].options.playground_user_test).tasks;
+const postHk = (session, events) => call(eHook, '/api/events', { method: 'POST', body: { test: hk.id, session, events } });
+await postHk('hook11112222', [{ type: 'start' },
+  { type: 'task_done', task: hkTasks[0].id, data: { secs: 30, check: 'no' } },
+  { type: 'hint', task: hkTasks[1].id },
+  { type: 'task_skip', task: hkTasks[1].id, note: 'could not find Pages', data: { secs: 90, check: 'no' } }]);
+check(posted.length === 0, 'nothing is posted before the tester finishes');
+await postHk('hook11112222', [{ type: 'wrap', task: 'wrap', data: { happy: '3', confident: 'maybe', feel: 'ok', confused: 'menus', name: 'Sam', minutes: 9 } }]);
+check(posted.length === 1 && /^https:\/\/hooks\.slack\.com/.test(posted[0].url), 'a finish is posted to the channel');
+const said = posted[0] && posted[0].body.text || '';
+check(/Sam finished/.test(said) && /said done, but the site did not change/.test(said) && /could not find Pages/.test(said) && /opened the hint/.test(said), 'the post says who, what the site showed, the hint and the note');
+check(/happy with the site: 3\/5/.test(said) && /\/t\/[a-z0-9]+\/results/.test(said), 'and the answers and the results link');
+check(!/hook-pass-123/.test(JSON.stringify(posted)), 'never the password');
+await postHk('hook11112222', [{ type: 'wrap', task: 'wrap', data: { happy: '4' } }]);
+check(posted.length === 1, 'a second wrap-up from the same tester does not post again');
+r = await call(eHook, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { webhook: 'https://discord.com/api/webhooks/1/abc' }) });
+const dk = await r.json();
+await call(eHook, '/api/events', { method: 'POST', body: { test: dk.id, session: 'disc11112222', events: [{ type: 'start' }, { type: 'wrap', task: 'wrap', data: { happy: '5' } }] } });
+check(posted.length === 2 && typeof posted[1].body.content === 'string' && !posted[1].body.text, 'Discord gets its own shape');
+r = await call(eHook, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { webhook: 'https://example.org/hook' }) });
+const jk = await r.json();
+await call(eHook, '/api/events', { method: 'POST', body: { test: jk.id, session: 'json11112222', events: [{ type: 'start' }, { type: 'wrap', task: 'wrap', data: {} }] } });
+check(posted.length === 3 && posted[2].body.type === 'tester_finished' && Array.isArray(posted[2].body.tasks), 'anything else gets the whole thing as JSON');
+globalThis.fetch = realFetch;
+
 /* -------------------------------------------------------------------- misc */
 
 r = await call(e1, '/nope');

@@ -159,7 +159,8 @@ const SCHEMA = [
      blueprint_boot TEXT,
      pw_salt        VARCHAR(64)  NOT NULL,
      pw_hash        VARCHAR(64)  NOT NULL,
-     creator        VARCHAR(64)
+     creator        VARCHAR(64),
+     webhook        VARCHAR(600)
    )`,
   `CREATE TABLE IF NOT EXISTS sessions (
      test_id  VARCHAR(16) NOT NULL,
@@ -191,7 +192,7 @@ const SCHEMA = [
    )`,
 ];
 
-const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)'];
+const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)'];
 
 // Once per database, not once per request — and keyed on the binding rather
 // than kept in one module-level variable, so a second database in the same
@@ -325,6 +326,7 @@ async function getTest(env, id) {
     blueprintBoot: parse(row.blueprint_boot, null),
     pwSalt: row.pw_salt,
     pwHash: row.pw_hash,
+    webhook: row.webhook || '',
   };
 }
 
@@ -883,6 +885,13 @@ async function makeTest(env, req, body) {
   if (password.length < LIMITS.passwordMin || password.length > LIMITS.passwordMax) {
     return json({ error: `The results password has to be at least ${LIMITS.passwordMin} characters.` }, 400, CORS);
   }
+  let webhook = '';
+  const rawHook = trim(body.webhook, 600);
+  if (rawHook) {
+    const checked = checkPublicUrl(rawHook, 'webhook');
+    if (checked.error) return json({ error: checked.error }, 400, CORS);
+    webhook = checked.url;
+  }
 
   // Three ways to say what the tester's site should be: a URL to fetch each
   // time, JSON pasted once, or a description of what to boot that the service
@@ -926,19 +935,20 @@ async function makeTest(env, req, body) {
   await run(
     env,
     `INSERT INTO tests (id, created, touched, expires, subject, persona, tasks,
-                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator, webhook)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id, now, now, now + NINETY_DAYS * 1000, subject, persona, JSON.stringify(tasks),
     blueprintUrl || null,
     blueprintJson ? JSON.stringify(blueprintJson) : null,
     blueprintBoot ? JSON.stringify(blueprintBoot) : null,
-    salt, hash, creator
+    salt, hash, creator, webhook || null
   );
 
   const origin = publicOrigin(req);
   return json({
     id, tester: `${origin}/t/${id}`, results: `${origin}/t/${id}/results`,
     checks: tasks.map((t) => ({ title: t.title, check: t.check ? CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') : '' })),
+    webhook: webhook ? hookKind(webhook) : '',
   }, 200, CORS);
 }
 
@@ -1066,7 +1076,7 @@ function cleanEvent(e) {
   return out;
 }
 
-async function appendEvents(env, req) {
+async function appendEvents(env, req, ctx) {
   if (!env.DB) return json({ error: 'The store is not set up yet.' }, 503, CORS);
   await ensureSchema(env);
 
@@ -1110,6 +1120,11 @@ async function appendEvents(env, req) {
   const viewport = start && start.data ? String(start.data.viewport || '').slice(0, 40) : '';
   const name = wrapped && wrapped.data ? String(wrapped.data.name || '').slice(0, 120) : '';
 
+  // the wrap-up is the finish line: tell the owner's channel, once per tester
+  const wasWrapped = wrapped && test.webhook
+    ? Number(((await one(env, "SELECT COUNT(*) AS n FROM events WHERE test_id = ? AND session_id = ? AND type = 'wrap'", id, session)) || {}).n || 0) > 0
+    : true;
+
   const writes = room.map((e) => q(
     env,
     'INSERT INTO events (test_id, session_id, seq, t, type, task, path, note, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -1139,7 +1154,75 @@ async function appendEvents(env, req) {
     await run(env, 'UPDATE tests SET touched = ?, expires = ? WHERE id = ?', now, now + NINETY_DAYS * 1000, id);
   }
 
+  if (wrapped && test.webhook && !wasWrapped) {
+    const posting = announceFinish(env, test, session, publicOrigin(req));
+    if (ctx && ctx.waitUntil) ctx.waitUntil(posting); else await posting;
+  }
+
   return json({ ok: true, n: have + room.length }, 200, CORS);
+}
+
+/* ------------------------------------------------------------------ webhooks */
+// The owner can leave a Slack or Discord channel (or any address that takes a
+// JSON POST) when they make a test, and each tester who finishes is posted
+// there: who, what they managed, what the site showed, the four answers, and
+// the results link. Never the password. A webhook that fails is let go: the
+// results page is the record, the post is only a nudge.
+
+function hookKind(url) {
+  const host = new URL(url).hostname;
+  if (host === 'hooks.slack.com') return 'slack';
+  if (/(^|\.)discord(app)?\.com$/.test(host)) return 'discord';
+  return 'json';
+}
+
+function finishSummary(test, events, origin) {
+  const titles = new Map(test.tasks.map((t) => [t.id, t.title]));
+  const wrap = (events.filter((e) => e.type === 'wrap').slice(-1)[0] || {}).data || {};
+  const lines = [];
+  const tasks = [];
+  for (const t of test.tasks) {
+    const ends = events.filter((e) => e.task === t.id && (e.type === 'task_done' || e.type === 'task_skip'));
+    const last = ends.slice(-1)[0];
+    const hint = events.some((e) => e.task === t.id && e.type === 'hint');
+    const site = last && last.data && (last.data.check === 'yes' || last.data.check === 'no') ? last.data.check : '';
+    const got = !last ? 'not reached' : last.type === 'task_done' ? 'done' : 'couldn’t';
+    tasks.push({ title: t.title, result: got, site, hint, note: last && last.note ? last.note : '' });
+    let mark = got === 'done' ? '✓' : got === 'couldn’t' ? '✗' : '·';
+    let tail = '';
+    if (site === 'no' && got === 'done') tail = ' (said done, but the site did not change)';
+    if (site === 'yes' && got === 'couldn’t') tail = ' (but the site changed)';
+    if (hint) tail += ' · opened the hint';
+    lines.push(`${mark} ${titles.get(t.id)}${tail}`);
+    if (last && last.note) lines.push(`    “${String(last.note).slice(0, 200)}”`);
+  }
+  const who = String(wrap.name || '').trim() || 'A tester';
+  const results = `${origin}/t/${test.id}/results`;
+  const answers = [
+    wrap.happy ? `happy with the site: ${wrap.happy}/5` : '',
+    wrap.confident ? `could finish with more time: ${wrap.confident}` : '',
+    wrap.feel ? `felt: “${String(wrap.feel).slice(0, 200)}”` : '',
+    wrap.confused ? `confused by: “${String(wrap.confused).slice(0, 200)}”` : '',
+    wrap.minutes ? `${wrap.minutes} min` : '',
+  ].filter(Boolean);
+  const head = `${who} finished the ${test.subject} test.`;
+  const text = [head, '', ...lines, '', ...answers, '', `Results: ${results}`].join('\n');
+  return { head, text, tasks, wrap: { name: wrap.name || '', happy: wrap.happy || '', confident: wrap.confident || '', feel: wrap.feel || '', confused: wrap.confused || '', minutes: wrap.minutes || 0 }, results };
+}
+
+async function announceFinish(env, test, session, origin) {
+  try {
+    const events = await sessionEvents(env, test.id, session);
+    const s = finishSummary(test, events, origin);
+    const kind = hookKind(test.webhook);
+    const body = kind === 'slack' ? { text: s.text }
+      : kind === 'discord' ? { content: s.text.slice(0, 1990) }
+      : { type: 'tester_finished', test: test.id, subject: test.subject, session, text: s.text, tasks: s.tasks, wrap: s.wrap, results: s.results };
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
+    await fetch(test.webhook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: ctl ? ctl.signal : undefined, redirect: 'manual' });
+    if (timer) clearTimeout(timer);
+  } catch (e) {}
 }
 
 // Clearing a test is part of running one. Every dry run is a row, and the
@@ -1396,6 +1479,7 @@ const TOOLS = [
         blueprint_url: { type: 'string', description: 'An https URL to an existing Playground blueprint. Re-read each time a tester starts, so it can keep changing.' },
         blueprint_json: { type: 'string', description: 'A Playground blueprint as a JSON string, kept as-is.' },
         password: { type: 'string', description: 'For the results page. One is made for you if you leave it out.' },
+        webhook: { type: 'string', description: 'Optional. A Slack or Discord webhook URL (or any https address that takes a JSON POST). Each tester who finishes is posted there: what they managed, what the site showed, their answers and the results link. Never the password.' },
       },
       required: ['subject', 'persona', 'tasks'],
     },
@@ -1456,6 +1540,7 @@ async function mcpCall(env, req, name, args) {
       blueprintUrl: args && args.blueprint_url,
       blueprintJson: args && args.blueprint_json,
       password,
+      webhook: args && args.webhook,
     });
     const made = await res.json();
     if (!res.ok) return mcpText(made.error || 'That did not work.', { isError: true, structuredContent: made });
@@ -1465,7 +1550,8 @@ async function mcpCall(env, req, name, args) {
       `Made. Send this to a tester:\n${made.tester}\n\n` +
       `Read the results here:\n${made.results}\n\nPassword: ${password}\n\n` +
       'Give the person both links and the password — none of it can be looked up again. ' +
-      'The test keeps itself for ninety days after the last tester.',
+      'The test keeps itself for ninety days after the last tester.' +
+      (made.webhook ? `\n\nEach tester who finishes will be posted to the ${made.webhook === 'json' ? 'webhook' : made.webhook[0].toUpperCase() + made.webhook.slice(1) + ' channel'}.` : ''),
       { structuredContent: out }
     );
   }
@@ -1598,9 +1684,16 @@ usertest_results.
 ## As HTTP
 
 POST ${origin}/api/tests
-  { subject, persona, tasks: [{ title, hint }], password,
-    boot: { title, tagline, theme, plugins: [], images: [] } }
-  -> { id, tester, results }
+  { subject, persona, tasks: [{ title, hint, check }], password,
+    boot: { title, tagline, theme, plugins: [], images: [] },
+    webhook }
+  -> { id, tester, results, checks, webhook }
+
+  check (optional): how the site can show the task happened, read when the
+  tester presses Done: ${Object.keys(CHECKS).join(', ')}, or none;
+  text takes { type: "text", text: "the words" }. Left out, it is guessed.
+  webhook (optional): a Slack or Discord webhook (or any https JSON endpoint);
+  each tester who finishes is posted there. Never the password.
 
   Say what the tester gets with ONE of: boot (the service builds the blueprint),
   blueprintUrl (re-read each time), blueprintJson (kept as-is).
@@ -1772,6 +1865,12 @@ const HOME = `<!doctype html>
   <input type="password" id="password" minlength="6" maxlength="200" required>
 </fieldset>
 
+<fieldset>
+  <label for="webhook">Tell a channel when someone finishes <span class="soft">(optional)</span></label>
+  <p class="hint">Paste a Slack or Discord webhook link and each tester who finishes is posted there: what they managed, what the site showed, and their answers. Never the password.</p>
+  <input type="url" id="webhook" maxlength="600" placeholder="https://hooks.slack.com/services/…">
+</fieldset>
+
 <p id="msg" class="err" role="alert"></p>
 <button type="submit" class="go" id="submit">Make the test</button>
 </form>
@@ -1897,6 +1996,7 @@ const HOME = `<!doctype html>
           blueprintUrl: text ? '' : url,
           blueprintJson: text || (mode === 'json' ? document.getElementById('bpjson').value : ''),
           password: document.getElementById('password').value,
+          webhook: document.getElementById('webhook').value.trim(),
         }),
       });
     }).then(function (r) {
@@ -1926,6 +2026,7 @@ const HOME = `<!doctype html>
           '<p style="margin-bottom:4px"><strong>Read the results here</strong>, with the password you chose</p><code>' + res.d.results + '</code>' +
           ((res.d.checks || []).length ? '<p style="margin-bottom:4px"><strong>How each task is checked</strong></p><ul class="soft" style="margin-top:0">' +
             res.d.checks.map(function (c) { return '<li>' + esc(c.title) + ' \u2014 ' + esc(c.check || 'not checked: only their word for it') + '</li>'; }).join('') + '</ul>' : '') +
+          (res.d.webhook ? '<p class="soft">Each tester who finishes will be posted to your ' + (res.d.webhook === 'json' ? 'webhook' : res.d.webhook.charAt(0).toUpperCase() + res.d.webhook.slice(1) + ' channel') + '.</p>' : '') +
           '<p class="soft" style="margin:0">Keep both. Neither can be looked up again, and the test keeps itself for ninety days after the last tester.</p></div>';
         window.scrollTo(0, document.body.scrollHeight);
       })
@@ -2104,7 +2205,7 @@ const RESULTS = `<!doctype html>
 const TEST_PATH = new RegExp(`^/t/([${ID_ALPHABET}]{6,16})(/blueprint\\.json|/results)?/?$`);
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
 
     if (url.pathname === '/' || url.pathname === '') {
@@ -2128,7 +2229,7 @@ export default {
     if (url.pathname === '/api/events') {
       if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
       if (req.method !== 'POST') return json({ error: 'POST only' }, 405, CORS);
-      return appendEvents(env, req);
+      return appendEvents(env, req, ctx);
     }
 
     if (url.pathname === '/api/results') {
