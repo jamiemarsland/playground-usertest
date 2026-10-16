@@ -35,6 +35,9 @@ function wp_localize_script( $h, $n, $d ) { $GLOBALS['loc'] = $d; }
 function plugins_url( $f, $b ) { return 'http://example.test/' . $f; }
 function sanitize_text_field( $s ) { return trim( strip_tags( (string) $s ) ); }
 function esc_url_raw( $u ) { return $u; }
+function rest_url( $p = '' ) { return 'http://example.test/wp-json/' . $p; }
+function home_url( $p = '' ) { return 'http://example.test' . $p; }
+function wp_create_nonce( $a ) { return 'nonce'; }
 function wp_generate_password( $l, $s ) { return substr( str_shuffle( str_repeat( 'abcdefghijklmnopqrstuvwxyz0123456789', 3 ) ), 0, $l ); }
 function ok( $cond, $msg ) { echo $cond ? "ok   $msg\n" : "FAIL $msg\n"; }
 STUBS;

@@ -410,6 +410,57 @@ function taskId(title, i) {
   return slug ? `${i + 1}-${slug}` : `task-${i + 1}`;
 }
 
+// How the service can tell a task really happened, by reading the tester's
+// site rather than taking the Done button's word for it. People press Done on
+// things they did not manage more often than anyone expects; the site keeps
+// count honestly. The card asks the plugin on Done and on Couldn't, and the
+// answer rides along with the result.
+const CHECKS = {
+  site_name: 'The site name changed',
+  tagline: 'The tagline changed',
+  site_icon: 'A site icon was set',
+  logo: 'A logo was set',
+  new_page: 'A new page was published',
+  new_post: 'A new post was published',
+  styles: 'The colours or fonts changed',
+  menu: 'The menu changed',
+  home: 'The home page changed',
+  text: 'Some words appear on the home page',
+};
+
+// A first guess from the task's own words, so most tests are checked without
+// anyone choosing anything. Order matters: "tagline" before "name", "menu"
+// before "page" (putting a page in the menu is a menu task).
+function guessCheck(title) {
+  const t = String(title || '').toLowerCase();
+  if (/\b(tagline|slogan|strapline|subtitle)\b/.test(t)) return 'tagline';
+  if (/\b(site icon|favicon|browser tab icon)\b/.test(t)) return 'site_icon';
+  if (/\blogo\b/.test(t)) return 'logo';
+  if (/\bsite\b.*\bname\b|\bname\b.*\bsite\b|\bsite title\b|\brename\b/.test(t)) return 'site_name';
+  if (/\b(menu|navigation|nav bar)\b/.test(t)) return 'menu';
+  if (/\b(colou?rs?|fonts?|typeface|palette|style|look and feel|warmer|cooler|brighter|darker)\b|\b(new|different|fresh|another) look\b/.test(t)) return 'styles';
+  if (/\b(blog post|post|article|news)\b/.test(t) && /\b(write|publish|add|post)\b/.test(t)) return 'new_post';
+  if (/\bpage\b/.test(t) && /\b(add|create|make|new|build)\b/.test(t) && !/\b(home ?page|front page|this page)\b/.test(t)) return 'new_page';
+  if (/\b(home ?page|front page|headline|heading|hero|photos?|photographs?|pictures?|images?|opening hours|button)\b/.test(t)) return 'home';
+  return '';
+}
+
+// A check as an owner or an agent gave it: a type name, or { type, text }.
+// Absent means "guess from the title"; 'none' means "do not check this one".
+function cleanCheck(raw, title) {
+  if (raw === undefined || raw === null || raw === '') {
+    const g = guessCheck(title);
+    return g ? { type: g } : null;
+  }
+  const type = typeof raw === 'string' ? raw : raw && raw.type;
+  if (!type || type === 'none' || !CHECKS[type]) return null;
+  if (type === 'text') {
+    const text = trim(typeof raw === 'object' ? raw.text : '', 120);
+    return text ? { type, text } : null;
+  }
+  return { type };
+}
+
 function cleanTasks(input) {
   const list = Array.isArray(input) ? input : [];
   const out = [];
@@ -421,6 +472,8 @@ function cleanTasks(input) {
     const hint = trim(raw && raw.hint, LIMITS.taskHint);
     if (why) task.why = why;
     if (hint) task.hint = hint;
+    const check = cleanCheck(raw && raw.check, title);
+    if (check) task.check = check;
     out.push(task);
   }
   return out;
@@ -544,8 +597,19 @@ function lintTest(input) {
   if (persona && persona.length < 120) notes.push('The persona is short. Give them a reason to want the site, not just a job title — people put more care into a site they believe in.');
   if (persona && !/\byou\b/i.test(persona)) notes.push('The persona does not address them as “you”. It reads better in the second person.');
 
+  (Array.isArray(input && input.tasks) ? input.tasks : []).forEach((raw, i) => {
+    const c = raw && raw.check;
+    const type = typeof c === 'string' ? c : c && c.type;
+    if (type && type !== 'none' && !CHECKS[type]) problems.push(`Task ${i + 1} asks for a check called “${type}”, which there is not. The checks are: ${Object.keys(CHECKS).join(', ')}, or none.`);
+    if (type === 'text' && !(c && c.text)) problems.push(`Task ${i + 1} checks for words on the home page but does not say which words.`);
+  });
+  const unchecked = tasks.filter((t) => !t.check).length;
+  // only worth saying when nothing at all is checked: a task like "write a
+  // few sentences about yourself" has nothing the site can show, and that is fine
+  if (tasks.length && unchecked === tasks.length) notes.push('No task has a check, so you only have the tester’s word that they managed. Where the site can show it (a name, a page, the colours), give it a check.');
+
   const summary = tasks.length
-    ? `${tasks.length} task(s) for someone testing ${subject || 'something'}:\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.hint ? '' : '  (no hint)'}`).join('\n')
+    ? `${tasks.length} task(s) for someone testing ${subject || 'something'}:\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.hint ? '' : '  (no hint)'}${t.check ? `  [checked: ${CHECKS[t.check.type].toLowerCase()}${t.check.text ? ` “${t.check.text}”` : ''}]` : '  [not checked]'}`).join('\n')
     : '';
 
   return { ok: problems.length === 0, problems, notes, summary };
@@ -872,7 +936,10 @@ async function makeTest(env, req, body) {
   );
 
   const origin = publicOrigin(req);
-  return json({ id, tester: `${origin}/t/${id}`, results: `${origin}/t/${id}/results` }, 200, CORS);
+  return json({
+    id, tester: `${origin}/t/${id}`, results: `${origin}/t/${id}/results`,
+    checks: tasks.map((t) => ({ title: t.title, check: t.check ? CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') : '' })),
+  }, 200, CORS);
 }
 
 /* ------------------------------------------------------- the wrapped blueprint */
@@ -1112,6 +1179,8 @@ async function buildDigest(env, id, test) {
       id: task.id, title: task.title,
       done: 0, couldnt: 0, notReached: 0,
       hintOpened: 0, secs: [], notes: [],
+      check: task.check ? CHECKS[task.check.type] + (task.check.text ? ` (“${task.check.text}”)` : '') : '',
+      shown: 0, notShown: 0, didAnyway: 0,
     });
   }
 
@@ -1162,8 +1231,13 @@ async function buildDigest(env, id, test) {
       if (e.type === 'hint') t.hintOpened++;
       if (e.type === 'task_done' || e.type === 'task_skip') {
         if (e.type === 'task_done') t.done++; else t.couldnt++;
+        // what the site said, when the task had a check: yes, no or unknown
+        const seen = e.data && e.data.check;
+        if (e.type === 'task_done' && seen === 'yes') t.shown++;
+        if (e.type === 'task_done' && seen === 'no') t.notShown++;
+        if (e.type === 'task_skip' && seen === 'yes') t.didAnyway++;
         if (e.data && typeof e.data.secs === 'number') t.secs.push(e.data.secs);
-        if (e.note) t.notes.push({ who, note: e.note, got: e.type === 'task_done' ? 'done' : 'couldn’t', path: e.path || '' });
+        if (e.note) t.notes.push({ who, note: e.note, got: e.type === 'task_done' ? 'done' : 'couldn’t', site: seen === 'yes' || seen === 'no' ? seen : '', path: e.path || '' });
       }
     }
 
@@ -1179,6 +1253,8 @@ async function buildDigest(env, id, test) {
     done: t.done, couldnt: t.couldnt, notReached: t.notReached,
     hintOpened: t.hintOpened,
     medianSecs: median(t.secs),
+    check: t.check,
+    shown: t.shown, notShown: t.notShown, didAnyway: t.didAnyway,
     notes: t.notes,
   }));
 
@@ -1231,7 +1307,7 @@ async function readResults(env, req, url) {
     {
       subject: test.subject,
       created: test.created,
-      tasks: test.tasks,
+      tasks: test.tasks.map((t) => (t.check ? Object.assign({}, t, { checkLabel: CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') }) : t)),
       sessions: await sessionIndex(env, id),
     },
     200,
@@ -1264,6 +1340,15 @@ const TASKS_SCHEMA = {
       title: { type: 'string', description: 'What they are trying to get done, in their words. "Give the site your own name", not "click Settings".' },
       hint: { type: 'string', description: 'Shown only if they ask for it. This is where a control may be named.' },
       why: { type: 'string', description: 'Optional one line of context under the task.' },
+      check: {
+        description: 'How the service can see the task really happened, by reading the tester\'s site when they press Done or Couldn\'t do it. One of: ' +
+          Object.keys(CHECKS).map((k) => `${k} (${CHECKS[k].toLowerCase()})`).join(', ') +
+          '. For text, pass { "type": "text", "text": "the words" }. Leave it out and the service guesses from the title; pass "none" to check nothing.',
+        oneOf: [
+          { type: 'string', enum: Object.keys(CHECKS).concat(['none']) },
+          { type: 'object', properties: { type: { type: 'string', enum: Object.keys(CHECKS) }, text: { type: 'string' } }, required: ['type'] },
+        ],
+      },
     },
     required: ['title'],
   },
@@ -1329,7 +1414,7 @@ const TOOLS = [
   },
   {
     name: 'usertest_results',
-    description: 'Read what testers did. Returns, per task: how many managed it, how many could not, how many never reached it, the median time, how many opened the hint, and every note anyone typed — plus the wrap-up answers. Testing is slow; expect nothing for a day.',
+    description: 'Read what testers did. Returns, per task: how many managed it, how many could not, how many never reached it, the median time, how many opened the hint, what the site itself showed for checked tasks (done and visible, said done but unchanged, said couldn\'t but changed), and every note anyone typed — plus the wrap-up answers. Testing is slow; expect nothing for a day.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1412,7 +1497,14 @@ async function mcpCall(env, req, name, args) {
       if (t.hintOpened) bits.push(`${t.hintOpened} opened the hint`);
       if (t.medianSecs != null) bits.push(`${t.medianSecs}s median`);
       lines.push(`${t.title} — ${bits.join(', ')}`);
-      t.notes.forEach((n) => lines.push(`    "${n.note}" — ${n.who} (${n.got})`));
+      if (t.check && (t.shown || t.notShown || t.didAnyway)) {
+        const seen = [];
+        if (t.shown) seen.push(`${t.shown} done and the site shows it`);
+        if (t.notShown) seen.push(`${t.notShown} said done but the site did not change`);
+        if (t.didAnyway) seen.push(`${t.didAnyway} said they couldn’t but the site changed`);
+        lines.push(`    checked (${t.check.toLowerCase()}): ${seen.join('; ')}`);
+      }
+      t.notes.forEach((n) => lines.push(`    "${n.note}" — ${n.who} (${n.got}${n.site === 'no' && n.got === 'done' ? ', site unchanged' : ''})`));
     }
     if (d.wrapUps.length) {
       lines.push('', 'At the end:');
@@ -1605,6 +1697,9 @@ const HOME = `<!doctype html>
   .task { display:grid; gap:8px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:#fff; margin:0 0 10px; }
   .task .top { display:flex; gap:10px; align-items:center; }
   .task .top input { flex:1; }
+  .task .chk { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:14px; color:var(--soft); }
+  .task .chk select { font:inherit; font-size:14px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:#fff; color:inherit; max-width:100%; }
+  .task .chk .t-words { flex:1; min-width:160px; }
   .drop { all:unset; cursor:pointer; color:var(--soft); font-size:20px; line-height:1; padding:2px 8px; border-radius:8px; }
   .drop:hover { background:rgba(22,24,28,.06); }
   .add { all:unset; cursor:pointer; font-weight:600; text-decoration:underline; text-underline-offset:3px; }
@@ -1726,12 +1821,20 @@ const HOME = `<!doctype html>
     }
   });
 
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var CHECK_OPTIONS = ${JSON.stringify(Object.keys(CHECKS).map((k) => `<option value="${k}">${CHECKS[k]}</option>`).join(''))};
   function addTask(title, hint) {
     var d = document.createElement('div');
     d.className = 'task';
     d.innerHTML =
       '<div class="top"><input type="text" class="t-title" maxlength="140" placeholder="Give the site your own name"></div>' +
-      '<input type="text" class="t-hint" maxlength="300" placeholder="Hint, shown only if they ask (optional)">';
+      '<input type="text" class="t-hint" maxlength="300" placeholder="Hint, shown only if they ask (optional)">' +
+      // how the site can show it happened: read off the tester\u2019s site when
+      // they press Done, so the results are not only their word for it
+      '<label class="chk">How we\u2019ll know they did it <select class="t-check">' +
+        '<option value="">Work it out from the task</option>' + CHECK_OPTIONS +
+        '<option value="none">Don\u2019t check this one</option></select>' +
+        '<input type="text" class="t-words" maxlength="120" placeholder="The words to look for" hidden></label>';
     var drop = document.createElement('button');
     drop.type = 'button';
     drop.className = 'drop';
@@ -1741,6 +1844,8 @@ const HOME = `<!doctype html>
     d.querySelector('.top').appendChild(drop);
     if (title) d.querySelector('.t-title').value = title;
     if (hint) d.querySelector('.t-hint').value = hint;
+    var sel = d.querySelector('.t-check');
+    sel.addEventListener('change', function () { d.querySelector('.t-words').hidden = sel.value !== 'text'; });
     tasksEl.appendChild(d);
   }
   for (var i = 0; i < 5; i++) addTask();
@@ -1760,7 +1865,9 @@ const HOME = `<!doctype html>
     ev.preventDefault();
     msg.textContent = '';
     var tasks = [].slice.call(tasksEl.querySelectorAll('.task')).map(function (d) {
-      return { title: d.querySelector('.t-title').value, hint: d.querySelector('.t-hint').value };
+      var c = d.querySelector('.t-check').value;
+      var check = c === 'text' ? { type: 'text', text: d.querySelector('.t-words').value } : (c || undefined);
+      return { title: d.querySelector('.t-title').value, hint: d.querySelector('.t-hint').value, check: check };
     }).filter(function (t) { return t.title.trim(); });
     if (!tasks.length) { msg.textContent = 'Give the tester at least one thing to try.'; return; }
 
@@ -1817,6 +1924,8 @@ const HOME = `<!doctype html>
           '<div class="out"><h2 style="margin-top:0">Two links</h2>' +
           '<p style="margin-bottom:4px"><strong>Send this to a tester</strong></p><code>' + res.d.tester + '</code>' +
           '<p style="margin-bottom:4px"><strong>Read the results here</strong>, with the password you chose</p><code>' + res.d.results + '</code>' +
+          ((res.d.checks || []).length ? '<p style="margin-bottom:4px"><strong>How each task is checked</strong></p><ul class="soft" style="margin-top:0">' +
+            res.d.checks.map(function (c) { return '<li>' + esc(c.title) + ' \u2014 ' + esc(c.check || 'not checked: only their word for it') + '</li>'; }).join('') + '</ul>' : '') +
           '<p class="soft" style="margin:0">Keep both. Neither can be looked up again, and the test keeps itself for ninety days after the last tester.</p></div>';
         window.scrollTo(0, document.body.scrollHeight);
       })
@@ -1866,7 +1975,7 @@ const RESULTS = `<!doctype html>
   var pw = sessionStorage.getItem(key) || '';
   var out = document.getElementById('out'), auth = document.getElementById('auth');
   var sum = document.getElementById('sum'), msg = document.getElementById('msg');
-  var titles = {};
+  var titles = {}, checks = {};
 
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
@@ -1888,11 +1997,12 @@ const RESULTS = `<!doctype html>
     var order = [], by = {};
     events.forEach(function (e) {
       if (!e.task || e.task === 'wrap') return;
-      if (!by[e.task]) { by[e.task] = { id: e.task, status: '', secs: null, note: '', hint: false, errors: 0, path: '' }; order.push(e.task); }
+      if (!by[e.task]) { by[e.task] = { id: e.task, status: '', secs: null, note: '', hint: false, errors: 0, path: '', site: '' }; order.push(e.task); }
       var t = by[e.task];
       if (e.type === 'task_done' || e.type === 'task_skip') {
         t.status = e.type === 'task_done' ? 'done' : 'couldn\\u2019t';
         t.secs = e.data && e.data.secs;
+        t.site = (e.data && e.data.check) || '';
         if (e.note) t.note = e.note;
         if (e.path) t.path = e.path;
       }
@@ -1909,10 +2019,15 @@ const RESULTS = `<!doctype html>
     var errs = events.filter(function (e) { return e.type === 'error'; });
     var h = '<div class="detail"><h2>' + esc(row.name || row.id) + ' <span class="soft">\\u00b7 ' +
       esc(when(row.first)) + ' \\u00b7 ' + esc((start.data || {}).viewport || '') + '</span></h2>';
-    h += '<table><tr><th>Task</th><th>Result</th><th>Time</th><th>Hint</th><th>Ended on</th><th>Note</th></tr>' +
+    h += '<table><tr><th>Task</th><th>Result</th><th>The site</th><th>Time</th><th>Hint</th><th>Ended on</th><th>Note</th></tr>' +
       tasks.map(function (t) {
+        // what the site itself showed, for a task with a check
+        var site = t.site === 'yes' ? (t.status === 'done' ? 'shows it' : 'changed anyway') :
+          t.site === 'no' ? (t.status === 'done' ? 'unchanged' : 'unchanged') : '';
+        var siteCls = t.site === 'yes' ? 'ok' : (t.site === 'no' && t.status === 'done' ? 'bad' : 'soft');
         return '<tr><td>' + esc(titles[t.id] || t.id) + '</td>' +
           '<td class="' + (t.status === 'done' ? 'ok' : (t.status ? 'bad' : 'soft')) + '">' + esc(t.status || 'not reached') + '</td>' +
+          '<td class="' + siteCls + '" title="' + esc(checks[t.id] || '') + '">' + esc(site) + '</td>' +
           '<td>' + mins(t.secs) + '</td><td>' + (t.hint ? 'yes' : '') + '</td>' +
           '<td class="soft">' + esc(t.path) + '</td><td class="note">' + esc(t.note) + '</td></tr>';
       }).join('') + '</table>';
@@ -1936,7 +2051,7 @@ const RESULTS = `<!doctype html>
       msg.textContent = '';
       sessionStorage.setItem(key, pw);
       document.getElementById('title').textContent = d.subject ? d.subject + ' \\u2014 results' : 'Results';
-      (d.tasks || []).forEach(function (t) { titles[t.id] = t.title; });
+      (d.tasks || []).forEach(function (t) { titles[t.id] = t.title; if (t.checkLabel) checks[t.id] = t.checkLabel; });
       var rows = d.sessions || [], done = 0, skipped = 0;
       rows.forEach(function (r) { done += r.done || 0; skipped += r.skipped || 0; });
       sum.textContent = rows.length + ' tester(s), ' + done + ' tasks done, ' + skipped + ' not managed.';
@@ -2055,4 +2170,4 @@ const NOT_FOUND = `<!doctype html>
 </div></body></html>`;
 
 // exported for the tests
-export { lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };
+export { guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };

@@ -3,7 +3,7 @@
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
 import { DatabaseSync } from 'node:sqlite';
-import worker, { cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
+import worker, { guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 
 // A real SQL engine rather than a mock. The worker talks to a D1-shaped
 // binding, which is what both Spacefast Functions and Cloudflare D1 hand it, so
@@ -502,6 +502,54 @@ await call(eWipe, '/api/events', { method: 'POST', body: { test: keeper.id, sess
 r = await call(eWipe, '/api/results?test=' + doomed.id, { method: 'DELETE', headers: { 'x-test-password': GOOD.password } });
 r = await call(eWipe, '/api/results?test=' + keeper.id, { headers: { 'x-test-password': 'keep-this-one' } });
 check(r.status === 200 && (await r.json()).sessions.length === 1, 'deleting one test leaves the others alone');
+
+
+/* ---------------------------------------------------------------- the checks */
+// A task can be checked against the tester's site; the service guesses one from
+// the task's own words, an owner or agent can pick one, or say none.
+
+check(guessCheck("Give the site your bakery's name") === 'site_name', 'a name task is checked by the site name');
+check(guessCheck('Change the tagline under the name') === 'tagline', 'tagline wins over name');
+check(guessCheck('Add a Prices page and put it in the menu') === 'menu', 'a page put in the menu is a menu task');
+check(guessCheck('Add a page about your prices') === 'new_page', 'a new page');
+check(guessCheck('Make the site colours feel warmer') === 'styles', 'colours are styles');
+check(guessCheck('Change the main headline on the home page') === 'home', 'the home page');
+check(guessCheck('Check how it looks on a phone') === '', 'a phone check cannot be read off the site, so none');
+let ct = cleanTasks([
+  { title: 'Give the site your own name' },
+  { title: 'Add your opening hours', check: { type: 'text', text: '  Open 9 to 5 ' } },
+  { title: 'Make it warmer', check: 'none' },
+  { title: 'Something odd', check: 'nonsense' },
+  { title: 'Words with no words', check: { type: 'text' } },
+]);
+check(ct[0].check && ct[0].check.type === 'site_name', 'left out, a check is guessed');
+check(ct[1].check && ct[1].check.type === 'text' && ct[1].check.text === 'Open 9 to 5', 'text keeps its words, trimmed');
+check(!ct[2].check && !ct[3].check && !ct[4].check, 'none, an unknown kind, and text with no words all mean no check');
+let lt = lintTest({ subject: 's', persona: 'You run a bakery and want a site your neighbours will like, with the hours on it.', tasks: [{ title: 'a', check: 'bogus' }, { title: 'b', check: { type: 'text' } }] });
+check(lt.problems.some((x) => /no check called|there is not/.test(x)) && lt.problems.some((x) => /which words/.test(x)), 'the check tool names a made-up check and text without words');
+check(Object.keys(CHECKS).length === 10, 'ten kinds of check');
+
+const eChk = env();
+r = await call(eChk, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { tasks: [{ title: 'Give the site your own name', hint: 'Settings' }, { title: 'Add a page about your prices', hint: 'Pages' }, { title: 'Say hello', hint: 'x', check: 'none' }] }) });
+const chk = await r.json();
+check(chk.checks && chk.checks[0].check === CHECKS.site_name && chk.checks[2].check === '', 'making a test says how each task will be checked');
+r = await call(eChk, '/t/' + chk.id + '/blueprint.json');
+const chkTasks = JSON.parse((await r.json()).steps.slice(-1)[0].options.playground_user_test).tasks;
+check(chkTasks[0].check.type === 'site_name' && chkTasks[1].check.type === 'new_page' && !chkTasks[2].check, 'the card is handed each task’s check');
+const postChk = (session, events) => call(eChk, '/api/events', { method: 'POST', body: { test: chk.id, session, events } });
+await postChk('chka11112222', [{ type: 'start' },
+  { type: 'task_done', task: chkTasks[0].id, data: { secs: 30, check: 'yes' } },
+  { type: 'task_done', task: chkTasks[1].id, note: 'made it I think', data: { secs: 90, check: 'no' } }]);
+await postChk('chkb11112222', [{ type: 'start' },
+  { type: 'task_done', task: chkTasks[0].id, data: { secs: 20, check: 'no' } },
+  { type: 'task_skip', task: chkTasks[1].id, data: { secs: 120, check: 'yes' } }]);
+r = await call(eChk, '/api/results?test=' + chk.id + '&digest=1', { headers: { 'x-test-password': GOOD.password } });
+const cd = await r.json();
+check(cd.tasks[0].shown === 1 && cd.tasks[0].notShown === 1, 'the digest tells done-and-shown from said-done-but-unchanged');
+check(cd.tasks[1].didAnyway === 1 && cd.tasks[1].notes[0].site === 'no', 'and said-couldn’t-but-did-it, with the site’s answer on each note');
+check(cd.tasks[0].check === CHECKS.site_name && cd.tasks[2].check === '', 'each task says what it was checked by');
+r = await call(eChk, '/api/results?test=' + chk.id, { headers: { 'x-test-password': GOOD.password } });
+check((await r.json()).tasks[1].checkLabel === CHECKS.new_page, 'the results page gets the check in words');
 
 /* -------------------------------------------------------------------- misc */
 

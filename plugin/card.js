@@ -39,6 +39,10 @@
 
   function flush() {
     if (sending || !state.queue.length || !window.fetch) return;
+    // a result whose site check is still out waits a moment, so the answer
+    // travels with it; past seven seconds it goes as it is
+    var waiting = state.queue.some(function (e) { return e.data && e.data.check === 'pending' && Date.now() - e.t < 7000; });
+    if (waiting) { setTimeout(flush, 800); return; }
     var batch = state.queue.slice(0, 40);
     sending = true;
     fetch(cfg.report, {
@@ -235,11 +239,54 @@
     if (!state.taskStart) { state.taskStart = Date.now(); save(); send('task_start', t.id); }
   }
 
+  /* ---- did the site change? ------------------------------------------- */
+  // A task can carry a check: something the site itself can show (the name
+  // changed, a page was published, the colours moved). The plugin answers from
+  // the test's own copy of the check, so nothing here can steer it. For words
+  // on the home page the card reads the page as a visitor would.
+  function checkSite(t) {
+    if (!t.check || !cfg.rest || !window.fetch) return Promise.resolve('');
+    var ask = fetch(cfg.rest + (cfg.rest.indexOf('?') === -1 ? '?' : '&') + 'task=' + encodeURIComponent(t.id), {
+      credentials: 'same-origin', cache: 'no-store', headers: { 'X-WP-Nonce': cfg.nonce || '' },
+    })
+      .then(function (r) { return r.ok ? r.json() : { result: 'unknown' }; })
+      .then(function (d) {
+        if (!d || d.result !== 'client') return (d && d.result) || 'unknown';
+        return fetch(cfg.home || '/', { credentials: 'same-origin', cache: 'no-store' })
+          .then(function (r) { return r.text(); })
+          .then(function (html) {
+            var words = String(t.check.text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+            var doc = new DOMParser().parseFromString(html, 'text/html');
+            var bar = doc.getElementById('wpadminbar');
+            if (bar) bar.remove();
+            [].slice.call(doc.querySelectorAll('script,style,.pgut')).forEach(function (n) { n.remove(); });
+            var text = (doc.body ? doc.body.textContent : '').toLowerCase().replace(/\s+/g, ' ');
+            return words && text.indexOf(words) !== -1 ? 'yes' : 'no';
+          });
+      })
+      .then(null, function () { return 'unknown'; });
+    var late = new Promise(function (resolve) { setTimeout(function () { resolve('unknown'); }, 6000); });
+    return Promise.race([ask, late]);
+  }
+
   function finish(type) {
     var t = tasks[state.i];
     var note = (card.querySelector('.pgut-note') || {}).value || '';
-    state.results[t.id] = { type: type, secs: secs(), note: note };
-    send(type, t.id, note, { secs: secs() });
+    var took = secs();
+    state.results[t.id] = { type: type, secs: took, note: note };
+    // queued at once (a tester who walks away loses nothing), sent once the
+    // site has said whether it changed
+    var data = { secs: took };
+    if (t.check) data.check = 'pending';
+    send(type, t.id, note, data);
+    var queued = state.queue[state.queue.length - 1];
+    if (t.check) {
+      checkSite(t).then(function (seen) {
+        state.queue.forEach(function (e) { if (e === queued || (e.t === queued.t && e.task === queued.task && e.type === queued.type)) e.data.check = seen || 'unknown'; });
+        save();
+        flush();
+      });
+    }
     state.i += 1;
     state.taskStart = 0;
     save();
