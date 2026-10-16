@@ -2015,9 +2015,10 @@ ${paras}
 </div></body></html>`;
 }
 
-// The owner's whole flow: one form, two links back. No account, nothing to host.
-// Above the form, a tester's-eye demo: the card working on a pretend site, so
-// you see what you are sending people before you read a word about it.
+// The owner's whole flow. Most people arrive with an assistant to hand, so the
+// page leads with the one sentence to give it; the form is right underneath for
+// anyone who would rather type. Between them, a tester's-eye demo: the card
+// working on a pretend site, so you see what you are sending people.
 const DEMO = TASK_SETS.find((x) => x.key === 'make-it-yours');
 const HOME = `<!doctype html>
 <html lang="en"><head>
@@ -2025,53 +2026,75 @@ const HOME = `<!doctype html>
 <title>User-test a WordPress thing with anyone</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>${PAGE_CSS}
-  :root { --paper:#ffffff; --ink:#111216; --soft:#4a4c55; --line:#d5d7de; --mist:#f3f4f7; --blue:#2448e0; --blue-dark:#1a35a8; --bad:#b23a1e; --ok:#1f7a4d; }
-  body { background:var(--paper); }
-  a { color:var(--blue); } a:hover { color:var(--blue-dark); }
-  .display { font-family:"Bricolage Grotesque",Georgia,serif; letter-spacing:-.025em; }
-  .mono { font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
-  .shell { max-width:1200px; margin:0 auto; padding:0 24px; }
-  .band { background:var(--mist); }
-  .dark { background:var(--ink); color:#fff; }
+  :root { --night:#0e0f12; --panel:#17191e; --rule:#2a2d35; --text:#f2f2f0; --muted:#b9bcc6; --dim:#9da1ab; --mint:#7cf2b0; --mint-hi:#b5f8d3; --amber:#ffb86b; }
+  body { background:var(--night); color:var(--text); font-family:"Instrument Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  a { color:var(--mint); } a:hover { color:var(--mint-hi); }
+  .mono { font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .shell { max-width:1160px; margin:0 auto; padding:0 24px; }
   section { padding:88px 0; }
-  h2.big { font:800 44px/1.1 "Bricolage Grotesque",Georgia,serif; letter-spacing:-.02em; margin:0 0 16px; }
-  .lede { color:var(--soft); max-width:640px; }
-  .eyebrow { font:500 13px/1.4 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.08em; text-transform:uppercase; color:var(--blue); margin:0 0 18px; }
-  .pill { display:inline-block; padding:15px 24px; border-radius:999px; font-weight:600; text-decoration:none; border:1px solid transparent; cursor:pointer; font:inherit; font-weight:600; }
-  .pill.solid { background:var(--blue); color:#fff; } .pill.solid:hover { background:var(--blue-dark); color:#fff; }
-  .pill.line { background:#fff; color:var(--ink); border-color:var(--line); } .pill.line:hover { border-color:var(--ink); color:var(--ink); }
-  .row { display:flex; flex-wrap:wrap; gap:12px; }
+  h2.big { font-weight:700; font-size:40px; line-height:1.1; letter-spacing:-.025em; margin:0 0 16px; }
+  .lede { color:var(--muted); max-width:640px; }
+  .label { font:500 12px/1.4 "JetBrains Mono",ui-monospace,monospace; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin:0 0 8px; }
+  :focus-visible { outline:2px solid var(--mint); outline-offset:2px; }
 
   .topbar { display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between; padding-top:22px; padding-bottom:22px; }
-  .brand { display:flex; gap:10px; align-items:center; font:700 19px/1 "Bricolage Grotesque",Georgia,serif; color:var(--ink); text-decoration:none; }
+  .brand { font:700 16px/1 "JetBrains Mono",ui-monospace,monospace; color:var(--text); text-decoration:none; }
+  .brand b { color:var(--mint); }
   .topbar nav { display:flex; flex-wrap:wrap; gap:22px; align-items:center; font-size:15px; }
-  .topbar nav a { color:var(--ink); text-decoration:none; } .topbar nav a:hover { text-decoration:underline; }
-  .topbar nav a.cta { background:var(--ink); color:#fff; padding:10px 18px; border-radius:999px; font-weight:600; } .topbar nav a.cta:hover { text-decoration:none; background:#2a2c33; }
+  .topbar nav a { color:var(--text); text-decoration:none; } .topbar nav a:hover { color:var(--mint); }
+  .topbar nav .mono { font-size:14px; }
 
-  .hero { padding:48px 0 24px; }
-  .hero-row { display:flex; flex-wrap:wrap; gap:32px 56px; align-items:flex-end; justify-content:space-between; }
-  .hero h1 { flex:1 1 620px; margin:0; font:800 72px/1 "Bricolage Grotesque",Georgia,serif; letter-spacing:-.03em; }
-  .hero-side { flex:1 1 340px; min-width:0; }
-  .hero-side p { font-size:19px; color:var(--soft); margin:0 0 24px; }
-  @media (max-width:640px) { .hero h1 { font-size:46px; } h2.big { font-size:34px; } section { padding:64px 0; } }
+  .hero { padding:64px 0 40px; text-align:center; }
+  .hero .eyebrow { margin:0 0 20px; font:13px/1.4 "JetBrains Mono",ui-monospace,monospace; color:var(--dim); letter-spacing:.06em; }
+  .hero h1 { margin:0 auto 22px; font-family:"Instrument Sans",sans-serif; font-weight:700; font-size:76px; line-height:1; letter-spacing:-.035em; max-width:960px; }
+  .hero .sub { margin:0 auto 40px; font-size:20px; color:var(--muted); max-width:640px; }
+  .prompt { position:relative; max-width:820px; margin:0 auto; text-align:left; background:var(--panel); border:1px solid var(--rule); border-radius:16px; padding:24px 24px 20px; box-shadow:0 0 0 6px rgba(124,242,176,.08); }
+  .prompt p { margin:0 0 18px; font:17px/1.7 "JetBrains Mono",ui-monospace,monospace; color:var(--text); }
+  .prompt p::before { content:"› "; color:var(--mint); }
+  .prompt .under { display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; font-size:14px; color:var(--dim); }
+  .addr { font:13px/1.7 "JetBrains Mono",ui-monospace,monospace; word-break:break-all; color:var(--text); }
+  .copy { font:inherit; font-weight:700; font-size:15px; padding:12px 22px; border-radius:999px; border:0; background:var(--mint); color:var(--night); cursor:pointer; }
+  .copy:hover { background:var(--mint-hi); }
+  .or { margin:24px 0 0; font-size:15px; color:var(--dim); }
+  @media (max-width:640px) { .hero h1 { font-size:46px; } h2.big { font-size:32px; } section { padding:64px 0; } .prompt p { font-size:15px; } }
 
-  .demo { padding:40px 0 96px; }
-  .demo-intro { font-size:15px; color:var(--soft); margin:0 0 14px; }
-  .browser { border:1px solid var(--line); border-radius:18px; overflow:hidden; background:var(--mist); box-shadow:0 40px 80px -40px rgba(17,18,22,.4); }
+  .warn { display:flex; flex-wrap:wrap; gap:20px; align-items:center; border:1px solid var(--amber); border-radius:16px; padding:24px 28px; }
+  .warn svg { flex:none; }
+  .warn div { flex:1 1 420px; min-width:0; }
+  .warn h3 { margin:0 0 6px; font-size:20px; }
+  .warn p { margin:0; color:var(--muted); }
+
+  .split { display:flex; flex-wrap:wrap; gap:48px; align-items:flex-start; }
+  .split > .words { flex:1 1 320px; min-width:0; }
+  .split > .words p { color:var(--muted); }
+  .chat { flex:1 1 560px; min-width:0; display:flex; flex-direction:column; gap:14px; }
+  .bubble { max-width:88%; border-radius:14px; padding:16px 18px; font-size:15px; }
+  .bubble p { margin:0 0 10px; } .bubble p:last-child { margin:0; }
+  .bubble.you { align-self:flex-end; max-width:80%; background:var(--rule); border-radius:14px 14px 4px 14px; padding:14px 18px; }
+  .bubble.it { background:var(--panel); border:1px solid var(--rule); border-radius:14px 14px 14px 4px; }
+  .bubble .tool { font:12px/1.4 "JetBrains Mono",ui-monospace,monospace; color:var(--amber); }
+  .bubble .fix { font:14px/1.5 "JetBrains Mono",ui-monospace,monospace; color:var(--mint); }
+  .bubble .hintline { font:14px/1.5 "JetBrains Mono",ui-monospace,monospace; color:var(--dim); }
+  .handover { display:grid; grid-template-columns:96px minmax(0,1fr); gap:8px 12px; font:13px/1.5 "JetBrains Mono",ui-monospace,monospace; }
+  .handover dt { color:var(--dim); } .handover dd { margin:0; }
+  .handover .key { color:var(--mint); }
+
+  .demo-intro { color:var(--muted); margin:0 0 24px; max-width:640px; }
+  .browser { border:1px solid var(--rule); border-radius:18px; overflow:hidden; background:#f3f4f7; box-shadow:0 40px 80px -40px rgba(0,0,0,.8); color:#111216; }
   .chrome { display:flex; gap:8px; align-items:center; padding:12px 14px; background:#fff; border-bottom:1px solid #e4e6eb; }
-  .chrome i { width:11px; height:11px; border-radius:50%; background:var(--line); flex:none; }
-  .chrome span { flex:1; min-width:0; margin-left:10px; padding:5px 12px; border-radius:8px; background:var(--mist); font:12px/1.4 "IBM Plex Mono",ui-monospace,monospace; color:#5b5e68; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chrome i { width:11px; height:11px; border-radius:50%; background:#d5d7de; flex:none; }
+  .chrome span { flex:1; min-width:0; margin-left:10px; padding:5px 12px; border-radius:8px; background:#f3f4f7; font:12px/1.4 "JetBrains Mono",ui-monospace,monospace; color:#5b5e68; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .stage { display:flex; flex-wrap:wrap; gap:20px; padding:20px; align-items:flex-start; }
-  .site { --site-ink:#2e3440; --site-wash:#f3f4f7; flex:1 1 520px; min-width:0; background:#fff; border-radius:12px; overflow:hidden; border:1px solid #e4e6eb; transition:all .4s; }
+  .site { --site-ink:#2e3440; --site-wash:#f3f4f7; flex:1 1 520px; min-width:0; background:#fff; border-radius:12px; overflow:hidden; border:1px solid #e4e6eb; }
   .site.styled { --site-ink:#8a3b17; --site-wash:#f6ebdd; }
   .site-head { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:16px 22px; border-bottom:1px solid #eef0f3; }
-  .site-name { font:700 20px/1.2 "Bricolage Grotesque",Georgia,serif; color:var(--site-ink); transition:color .4s; }
-  .site-menu { display:flex; gap:16px; font-size:14px; color:var(--soft); }
+  .site-name { font-weight:700; font-size:20px; color:var(--site-ink); transition:color .4s; }
+  .site-menu { display:flex; gap:16px; font-size:14px; color:#4a4c55; }
   .site-menu .new { color:var(--site-ink); font-weight:600; }
   .site-hero { padding:36px 22px 28px; background:var(--site-wash); transition:background .4s; }
-  .site-hero p { margin:0 0 18px; font:700 36px/1.1 "Bricolage Grotesque",Georgia,serif; color:var(--site-ink); max-width:460px; transition:color .4s; }
+  .site-hero p { margin:0 0 18px; font-weight:700; font-size:36px; line-height:1.1; letter-spacing:-.02em; color:var(--site-ink); max-width:460px; transition:color .4s; }
   .site-hero span { display:inline-block; padding:10px 18px; border-radius:999px; background:var(--site-ink); color:#fff; font-size:14px; font-weight:600; transition:background .4s; }
   .site-body { padding:22px; display:flex; gap:16px; flex-wrap:wrap; }
   .photo { flex:2 1 220px; height:170px; border-radius:10px; background:#dce0e8; display:flex; align-items:center; justify-content:center; transition:background .4s; }
@@ -2079,69 +2102,64 @@ const HOME = `<!doctype html>
   .lines { flex:1 1 160px; display:flex; flex-direction:column; gap:10px; padding-top:4px; }
   .lines i { height:10px; border-radius:4px; background:#eef0f3; }
   .flash { animation:flash 1s ease-out; }
-  @keyframes flash { from { box-shadow:0 0 0 4px rgba(36,72,224,.45); } to { box-shadow:0 0 0 0 rgba(36,72,224,0); } }
+  @keyframes flash { from { box-shadow:0 0 0 4px rgba(31,122,77,.5); } to { box-shadow:0 0 0 0 rgba(31,122,77,0); } }
   @media (prefers-reduced-motion:reduce) { .flash { animation:none; } .site, .site * { transition:none !important; } }
 
-  .tcard { flex:0 1 330px; min-width:260px; background:#fff; border-radius:16px; padding:20px; border:1px solid var(--line); box-shadow:0 20px 40px -20px rgba(17,18,22,.35); }
+  .tcard { flex:0 1 330px; min-width:260px; background:#fff; border-radius:16px; padding:20px; border:1px solid #d5d7de; box-shadow:0 20px 40px -20px rgba(17,18,22,.35); }
   .tcard .who { margin:0 0 12px; font-size:13px; color:#5b5e68; }
   .tcard .head { display:flex; justify-content:space-between; align-items:baseline; margin:0 0 12px; }
-  .tcard .head strong { font:700 18px/1.2 "Bricolage Grotesque",Georgia,serif; }
-  .tcard .head span { font:12px/1 "IBM Plex Mono",ui-monospace,monospace; color:#5b5e68; }
+  .tcard .head strong { font-size:18px; }
+  .tcard .head span { font:12px/1 "JetBrains Mono",ui-monospace,monospace; color:#5b5e68; }
   .tlist { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; font-size:14px; line-height:1.4; }
   .tlist li { display:flex; gap:10px; padding:8px 10px; margin:0; border-radius:10px; color:#5b5e68; }
   .tlist li svg { flex:none; }
-  .tlist li.now { background:#eef1ff; color:var(--ink); font-weight:600; }
+  .tlist li.now { background:#e6f8ee; color:#111216; font-weight:600; }
   .tlist li.done span { text-decoration:line-through; }
   .thint { margin:12px 0 0; padding:10px 12px; border-radius:10px; background:#fff6e0; font-size:13px; color:#5c4300; }
   .tbtns { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 0; }
-  .tbtns button { font:inherit; font-size:14px; padding:10px 16px; border-radius:999px; border:1px solid var(--line); background:#fff; color:var(--ink); cursor:pointer; }
-  .tbtns button.primary { background:var(--ink); color:#fff; border-color:var(--ink); font-weight:600; }
+  .tbtns button { font:inherit; font-size:14px; padding:10px 16px; border-radius:999px; border:1px solid #d5d7de; background:#fff; color:#111216; cursor:pointer; }
+  .tbtns button.primary { background:#111216; color:#fff; border-color:#111216; font-weight:600; }
+  .tbtns button:focus-visible { outline:2px solid #1f7a4d; }
   .tdone { margin:16px 0 0; padding:14px; border-radius:12px; background:#e8f6ee; }
   .tdone p { margin:0 0 10px; font-size:14px; color:#2c4a3a; }
   .tdone strong { color:#145a37; }
+  .tdone a { color:#145a37; }
 
-  .steps { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px; margin-top:40px; }
-  .step { background:#fff; border-radius:16px; padding:28px; }
-  .step .n { font:14px/1 "IBM Plex Mono",ui-monospace,monospace; color:var(--blue); margin:0 0 14px; }
-  .step h3 { margin:0 0 8px; font-size:21px; }
-  .step p { margin:0; color:var(--soft); }
+  .table { margin-top:20px; background:var(--panel); border:1px solid var(--rule); border-radius:16px; overflow-x:auto; }
+  .table table { width:100%; min-width:520px; border-collapse:collapse; font-size:15px; }
+  .table caption { text-align:left; padding:14px 20px; border-bottom:1px solid var(--rule); font:13px/1.4 "JetBrains Mono",ui-monospace,monospace; color:var(--dim); }
+  .table th { text-align:left; font-weight:400; font-size:13px; color:var(--dim); padding:12px 20px; border-bottom:1px solid var(--rule); }
+  .table td { padding:13px 20px; border-bottom:1px solid var(--rule); }
+  .table td.y { color:var(--mint); font-weight:600; } .table td.n { color:#ff9b85; font-weight:600; }
+  .table tr.now td { background:rgba(124,242,176,.08); }
+  .table .foot { padding:16px 20px; font-size:15px; color:var(--muted); margin:0; }
 
   .chips { display:flex; flex-wrap:wrap; gap:10px; margin:32px 0 24px; }
-  .chip { font:inherit; font-size:15px; font-weight:600; padding:11px 18px; border-radius:999px; cursor:pointer; background:#fff; color:var(--ink); border:1px solid var(--line); }
-  .chip[aria-pressed="true"] { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .chip { font:inherit; font-size:15px; font-weight:600; padding:11px 18px; border-radius:999px; cursor:pointer; background:transparent; color:var(--text); border:1px solid var(--rule); }
+  .chip:hover { border-color:var(--dim); }
+  .chip[aria-pressed="true"] { background:var(--mint); color:var(--night); border-color:var(--mint); }
   .setview { display:flex; flex-wrap:wrap; gap:20px; align-items:stretch; }
-  .setview > div { flex:1 1 380px; min-width:0; border-radius:16px; padding:28px; }
-  .setview .about { border:1px solid var(--line); }
-  .setview .list { background:var(--mist); }
-  .label { font:500 12px/1.4 "IBM Plex Mono",ui-monospace,monospace; letter-spacing:.06em; text-transform:uppercase; color:#5b5e68; margin:0 0 8px; }
-  .setview ol { padding-left:22px; } .setview li { margin:0 0 8px; }
+  .setview > div { flex:1 1 380px; min-width:0; border-radius:16px; padding:28px; background:var(--panel); border:1px solid var(--rule); }
+  .setview ol { padding-left:22px; margin:0; } .setview li { margin:0 0 8px; }
+  .ghost { font:inherit; font-weight:700; font-size:15px; margin-top:8px; padding:12px 20px; border-radius:999px; border:1px solid var(--mint); background:transparent; color:var(--mint); cursor:pointer; }
+  .ghost:hover { background:rgba(124,242,176,.1); }
 
-  .split { display:flex; flex-wrap:wrap; gap:56px; align-items:flex-start; }
-  .split > .words { flex:1 1 340px; min-width:0; }
-  .split > .words p { color:var(--soft); }
-  .table { flex:1 1 560px; min-width:0; background:#fff; border:1px solid var(--line); border-radius:16px; overflow-x:auto; }
-  .table table { width:100%; min-width:520px; border-collapse:collapse; font-size:15px; }
-  .table caption { text-align:left; padding:14px 20px; border-bottom:1px solid #e4e6eb; font:13px/1.4 "IBM Plex Mono",ui-monospace,monospace; color:#5b5e68; }
-  .table th { text-align:left; font-weight:400; font-size:13px; color:#5b5e68; padding:12px 20px; border-bottom:1px solid #e4e6eb; }
-  .table td { padding:13px 20px; border-bottom:1px solid #eef0f3; }
-  .table td.y { color:var(--ok); font-weight:600; } .table td.n { color:var(--bad); font-weight:600; }
-  .table tr.now td { background:#eef1ff; }
-  .table .foot { padding:16px 20px; background:#f8f9fb; font-size:15px; color:var(--soft); margin:0; }
+  .features { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:20px; }
+  .features > div { background:var(--panel); border-radius:16px; padding:28px; }
+  .features .label { color:var(--mint); text-transform:none; letter-spacing:0; font-size:13px; }
+  .features h3 { margin:0 0 8px; font-size:22px; }
+  .features p { margin:0; color:var(--muted); }
 
-  .mistakes { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:20px; margin-top:40px; }
-  .mistakes > div { border:1px solid #33363f; border-radius:16px; padding:28px; }
-  .mistakes h3 { margin:0 0 16px; font-size:20px; }
-  .mistakes p { color:#b9bcc6; font-size:15px; margin:0 0 10px; }
-  .mistakes .no { font:15px/1.5 "IBM Plex Mono",ui-monospace,monospace; color:#ff9b85; text-decoration:line-through; }
-  .mistakes .yes { font:15px/1.5 "IBM Plex Mono",ui-monospace,monospace; color:#7ee2a8; }
+  #start { border-top:1px solid var(--rule); }
+  #start .head { text-align:center; margin:0 0 32px; }
+  #start .head .lede { margin:0 auto; }
+  .panel { --ink:#111216; --soft:#4a4c55; --line:#d5d7de; --mist:#f3f4f7; --bad:#b23a1e; max-width:760px; margin:0 auto; background:#fff; color:var(--ink); border-radius:20px; padding:36px; }
+  .panel a { color:#1f6b45; }
+  .panel :focus-visible { outline-color:#1f7a4d; }
+  @media (max-width:640px) { .panel { padding:22px; } }
+  .foot-note { border-top:1px solid var(--rule); padding:28px 24px 48px; font-size:14px; color:var(--dim); }
 
-  #start .wrap { max-width:720px; padding:0 0 40px; }
-  #start h2.big { text-align:center; font-size:56px; }
-  #start .lede { text-align:center; margin:0 auto 32px; }
-  @media (max-width:640px) { #start h2.big { font-size:38px; } }
-  .foot-note { border-top:1px solid #e4e6eb; padding:28px 0 48px; font-size:14px; color:#5b5e68; }
-
-  label { display:block; font-weight:600; margin:0 0 6px; }
+  .panel label { display:block; font-weight:600; margin:0 0 6px; }
   .hint { font-size:14px; color:var(--soft); margin:0 0 8px; font-weight:400; }
   input[type=text], input[type=password], input[type=url], textarea {
     width:100%; font:inherit; padding:10px 12px; border:1px solid var(--line);
@@ -2151,7 +2169,7 @@ const HOME = `<!doctype html>
   .task { display:grid; gap:8px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:#fff; margin:0 0 10px; }
   .task .top { display:flex; gap:10px; align-items:center; }
   .task .top input { flex:1; }
-  .task .chk { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:14px; color:var(--soft); }
+  .task .chk { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:14px; color:var(--soft); font-weight:400; }
   .task .chk select { font:inherit; font-size:14px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:#fff; color:inherit; max-width:100%; }
   .task .chk .t-words { flex:1; min-width:160px; }
   .drop { all:unset; cursor:pointer; color:var(--soft); font-size:20px; line-height:1; padding:2px 8px; border-radius:8px; }
@@ -2164,112 +2182,136 @@ const HOME = `<!doctype html>
   @media (max-width:560px) { .names { grid-template-columns:1fr; } }
   .tabs button { all:unset; cursor:pointer; padding:7px 14px; border-radius:999px; border:1px solid var(--line); background:#fff; font-size:15px; }
   .tabs button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .add:focus-visible, .drop:focus-visible, .tabs button:focus-visible { outline:2px solid #1f7a4d; outline-offset:2px; }
   .err { color:var(--bad); font-weight:600; }
+  .panel .go { background:var(--ink); color:#fff; }
+  .panel .go:hover { background:#2a2c33; }
   .out { margin:26px 0 0; padding:20px 22px; border:1px solid var(--line); border-radius:16px; background:#fff; }
   .out code { display:block; font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; padding:8px 10px; background:var(--mist); border-radius:8px; margin:4px 0 14px; }
   /* Spelled out because the controls here use all:unset, which throws away the
      browser's own rule for the hidden attribute. */
   [hidden] { display:none !important; }
-  .doors { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 28px; justify-content:center; }
-  .door { all:unset; cursor:pointer; padding:12px 22px; border-radius:999px; border:1px solid var(--line); background:#fff; font-size:16px; font-weight:600; }
-  .door.on { background:var(--ink); color:#fff; border-color:var(--ink); }
-  .door:focus-visible, .tabs button:focus-visible, .add:focus-visible, .drop:focus-visible, .copy:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
-  .go { background:var(--blue); } .go:hover { background:var(--blue-dark); }
-  .prompt { position:relative; border:1px solid var(--line); border-radius:12px; background:#fff; padding:16px 18px; margin:0 0 18px; }
-  .prompt p { font:14px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; white-space:pre-wrap; padding-right:72px; }
-  .copy { all:unset; cursor:pointer; position:absolute; top:10px; right:10px; font-size:13px; padding:5px 12px; border-radius:999px; border:1px solid var(--line); background:var(--mist); }
-  .copy:hover { background:#e4e6eb; }
-  .addr { font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; }
-  .warn { display:flex; gap:14px; align-items:flex-start; padding:16px 18px; border-radius:14px; background:#fff4ec; color:#5a2615; margin:18px 0 0; }
-  .warn svg { flex:none; margin-top:2px; }
 </style></head><body>
 
 <header class="shell topbar">
-  <a class="brand" href="/"><svg aria-hidden="true" width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="#2448e0" stroke-width="2.2"><rect x="3" y="5" width="22" height="17" rx="3"/><path d="M9 12l3 3 6-6"/></svg>Playground user testing</a>
+  <a class="brand" href="/"><b aria-hidden="true">▍</b>playground/usertest</a>
   <nav aria-label="On this page">
-    <a href="#how">How it works</a>
+    <a href="#start">Use the form</a>
     <a href="#sets">Ready-made sets</a>
-    <a href="#results">What comes back</a>
-    <a class="cta" href="#start">Make a test</a>
+    <a class="mono" href="/llms.txt">/llms.txt</a>
+    <a class="mono" href="/mcp">/mcp</a>
   </nav>
 </header>
 
 <div class="shell hero">
-  <p class="eyebrow">For WordPress themes, plugins and sites</p>
-  <div class="hero-row">
-    <h1>Find out where people get stuck. Before your users do.</h1>
-    <div class="hero-side">
-      <p>Send someone a link. They get a throwaway WordPress site in their browser and a little card of things to try. You read exactly what happened. Nothing to install, at either end.</p>
-      <div class="row">
-        <a class="pill solid" href="#start" data-go-door="form">I’ll fill it in</a>
-        <a class="pill line" href="#start" data-go-door="agent">My assistant will</a>
-      </div>
+  <p class="eyebrow">USER TESTING FOR WORDPRESS · NO INSTALL · NO ACCOUNTS</p>
+  <h1>One sentence, and your plugin has testers.</h1>
+  <p class="sub">Paste this into Claude, ChatGPT, Cursor, anything that can fetch a URL. It drafts the persona and tasks with you, checks them, and hands you the links.</p>
+  <div class="prompt">
+    <p id="promptText">Fetch https://playground-usertest.view.fast/llms.txt and set up a user test for my plugin. Draft the persona and tasks with me, check them, then give me both links and the password.</p>
+    <div class="under">
+      <span>Rather connect it properly? It is an MCP server too: <span class="addr" id="mcpAddr">https://playground-usertest.view.fast/mcp</span></span>
+      <button type="button" class="copy" id="copy">Copy prompt</button>
+    </div>
+  </div>
+  <p class="or">Rather type it yourself? <a href="#start">Fill in the form</a>. It takes about half a minute.</p>
+</div>
+
+<div class="shell">
+  <div class="warn">
+    <svg aria-hidden="true" width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="#ffb86b" stroke-width="2.4"><rect x="9" y="18" width="22" height="16" rx="3"/><path d="M14 18v-5a6 6 0 0 1 12 0v5"/></svg>
+    <div>
+      <h3>Ask it for the password.</h3>
+      <p>There are no accounts, so the results password is the only key, and it cannot be looked up again by anyone, including us. If your assistant makes a test and does not pass the password on, nothing your testers write can ever be read.</p>
     </div>
   </div>
 </div>
 
-<div class="shell demo" aria-labelledby="demo-intro">
-  <p class="demo-intro" id="demo-intro"><strong style="color:var(--ink)">Try it as a tester.</strong> This is what they see. Press Done and watch the site change.</p>
-  <div class="browser">
-    <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span>A fresh WordPress, just for this tester</span></div>
-    <div class="stage">
-      <div class="site" id="dSite" aria-label="The pretend site" role="img">
-        <div class="site-head">
-          <span class="site-name" id="dName">My Starter Site</span>
-          <span class="site-menu"><span>Home</span><span>Shop</span><span>About</span><span class="new" id="dContact" hidden>Contact</span></span>
-        </div>
-        <div class="site-hero"><p id="dHeadline">Welcome to your new site</p><span>See the work</span></div>
-        <div class="site-body">
-          <div class="photo" id="dPhoto">
-            <svg id="dPlain" aria-hidden="true" width="56" height="44" viewBox="0 0 56 44" fill="none" stroke="#8a90a0" stroke-width="2.5"><rect x="2" y="2" width="52" height="40" rx="4"/><path d="M2 34l16-14 12 10 8-6 16 12"/><circle cx="40" cy="13" r="4"/></svg>
-            <svg id="dPot" hidden aria-hidden="true" width="90" height="110" viewBox="0 0 90 110" fill="none" stroke="#6e3a1e" stroke-width="3"><path d="M28 10h34M32 10c0 14-22 24-22 52 0 22 16 38 35 38s35-16 35-38c0-28-22-38-22-52"/><path d="M14 60h62"/></svg>
-          </div>
-          <div class="lines" aria-hidden="true"><i style="width:70%;height:12px;background:#e4e6eb"></i><i></i><i style="width:90%"></i><i style="width:60%"></i></div>
-        </div>
-      </div>
-      <div class="tcard">
-        <p class="who">You make pots in a small studio called Ash &amp; Clay. Make this site feel like yours.</p>
-        <div class="head"><strong>Things to try</strong><span id="dProgress" aria-live="polite">1 of ${DEMO.tasks.length}</span></div>
-        <ol class="tlist" id="dList">${DEMO.tasks.map((t, i) => `<li${i === 0 ? ' class="now"' : ''}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke-width="2"></svg><span>${esc(t.title)}</span></li>`).join('')}</ol>
-        <p class="thint" id="dHint" hidden></p>
-        <div class="tbtns" id="dBtns">
-          <button type="button" class="primary" id="dDone">Done</button>
-          <button type="button" id="dCouldnt">I couldn’t</button>
-          <button type="button" id="dHintBtn" aria-expanded="false" aria-controls="dHint">Hint</button>
-        </div>
-        <div class="tdone" id="dFinished" hidden>
-          <p><strong>That’s everything. Thank you.</strong></p>
-          <p>Your run just landed in <a href="#results">the results below</a>.</p>
-          <div class="tbtns" style="margin:0"><button type="button" id="dReset">Start again</button></div>
-        </div>
-      </div>
+<section aria-labelledby="catch">
+  <div class="shell split">
+    <div class="words">
+      <h2 class="big" id="catch">It catches the mistakes for you.</h2>
+      <p>Two things quietly ruin a test: a task that names the button, and a persona named after the demo site. Your assistant runs the check before anything goes out.</p>
+      <p>Then it hands over a link for testers, a link for results, and the password.</p>
     </div>
-  </div>
-</div>
-
-<section class="band" id="how">
-  <div class="shell">
-    <h2 class="big">Three steps. About half a minute.</h2>
-    <div class="steps">
-      <div class="step"><p class="n">01</p><h3>Give them a reason</h3><p>A persona with a reason to want the site, and five to seven things to try. Or start from a ready-made set.</p></div>
-      <div class="step"><p class="n">02</p><h3>Send one link</h3><p>To a friend, a customer, a Slack channel. Each tester gets their own fresh WordPress, set up from your blueprint.</p></div>
-      <div class="step"><p class="n">03</p><h3>Read what happened</h3><p>What they managed, where they gave up, who needed a hint. Checked against the site itself, not just their word.</p></div>
+    <div class="chat" aria-label="What the conversation looks like">
+      <div class="bubble you">Tasks look good? “Click Appearance → Editor → Styles to change the colours.”</div>
+      <div class="bubble it">
+        <p class="tool">usertest_check · 1 issue</p>
+        <p>That one names the control, so it tests whether they can follow instructions, not whether they can find it. Try:</p>
+        <p class="fix">“Give the site colours that feel like your studio”</p>
+        <p class="hintline">hint: Appearance → Editor → Styles</p>
+      </div>
+      <div class="bubble it">
+        <p>Your test is ready.</p>
+        <dl class="handover"><dt>testers</dt><dd>the link to send people</dd><dt>results</dt><dd>the link to read what happened</dd><dt>password</dt><dd class="key">shown once, so save it now</dd></dl>
+      </div>
     </div>
   </div>
 </section>
 
-<section id="sets">
+<section aria-labelledby="see" style="padding-top:0">
   <div class="shell">
-    <h2 class="big">Not sure what to ask? Start from a set.</h2>
-    <p class="lede">A persona and tasks for the tests most people run, with hints and checks already in. Change anything you like.</p>
+    <h2 class="big" id="see">What your testers get.</h2>
+    <p class="demo-intro">A real WordPress in their browser, and a card of things to try. Have a go: press Done and watch the site change.</p>
+    <div class="browser">
+      <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span>A fresh WordPress, just for this tester</span></div>
+      <div class="stage">
+        <div class="site" id="dSite" aria-label="The pretend site" role="img">
+          <div class="site-head">
+            <span class="site-name" id="dName">My Starter Site</span>
+            <span class="site-menu"><span>Home</span><span>Shop</span><span>About</span><span class="new" id="dContact" hidden>Contact</span></span>
+          </div>
+          <div class="site-hero"><p id="dHeadline">Welcome to your new site</p><span>See the work</span></div>
+          <div class="site-body">
+            <div class="photo" id="dPhoto">
+              <svg id="dPlain" aria-hidden="true" width="56" height="44" viewBox="0 0 56 44" fill="none" stroke="#8a90a0" stroke-width="2.5"><rect x="2" y="2" width="52" height="40" rx="4"/><path d="M2 34l16-14 12 10 8-6 16 12"/><circle cx="40" cy="13" r="4"/></svg>
+              <svg id="dPot" hidden aria-hidden="true" width="90" height="110" viewBox="0 0 90 110" fill="none" stroke="#6e3a1e" stroke-width="3"><path d="M28 10h34M32 10c0 14-22 24-22 52 0 22 16 38 35 38s35-16 35-38c0-28-22-38-22-52"/><path d="M14 60h62"/></svg>
+            </div>
+            <div class="lines" aria-hidden="true"><i style="width:70%;height:12px;background:#e4e6eb"></i><i></i><i style="width:90%"></i><i style="width:60%"></i></div>
+          </div>
+        </div>
+        <div class="tcard">
+          <p class="who">You make pots in a small studio called Ash &amp; Clay. Make this site feel like yours.</p>
+          <div class="head"><strong>Things to try</strong><span id="dProgress" aria-live="polite">1 of ${DEMO.tasks.length}</span></div>
+          <ol class="tlist" id="dList">${DEMO.tasks.map((t, i) => `<li${i === 0 ? ' class="now"' : ''}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke-width="2"></svg><span>${esc(t.title)}</span></li>`).join('')}</ol>
+          <p class="thint" id="dHint" hidden></p>
+          <div class="tbtns" id="dBtns">
+            <button type="button" class="primary" id="dDone">Done</button>
+            <button type="button" id="dCouldnt">I couldn’t</button>
+            <button type="button" id="dHintBtn" aria-expanded="false" aria-controls="dHint">Hint</button>
+          </div>
+          <div class="tdone" id="dFinished" hidden>
+            <p><strong>That’s everything. Thank you.</strong></p>
+            <p>Your run just landed in <a href="#results">the results below</a>.</p>
+            <div class="tbtns" style="margin:0"><button type="button" id="dReset">Start again</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="table" id="results">
+      <table>
+        <caption id="rCaption">Results · ${esc(DEMO.name)} · try the demo above and your run shows up here</caption>
+        <thead><tr><th scope="col">Task</th><th scope="col">Done</th><th scope="col">Couldn’t</th><th scope="col">Hint</th></tr></thead>
+        <tbody id="rBody">${DEMO.tasks.map((t) => `<tr><td>${esc(t.title)}</td><td>–</td><td>–</td><td>–</td></tr>`).join('')}</tbody>
+      </table>
+      <p class="foot">What you read back: who finished each task, who couldn’t, who never got there and who opened the hint, checked against the site itself. Plus their notes and four quick questions at the end.</p>
+    </div>
+  </div>
+</section>
+
+<section id="sets" aria-labelledby="sets-h" style="padding-top:0">
+  <div class="shell">
+    <h2 class="big" id="sets-h">Not sure what to ask? Start from a set.</h2>
+    <p class="lede">A persona and tasks for the tests most people run, with hints and checks already in. Tell your assistant the set’s name, or use it in the form.</p>
     <div class="chips" role="group" aria-label="Ready-made sets">${TASK_SETS.map((x, i) => `<button type="button" class="chip" data-set="${x.key}" aria-pressed="${i === 0}">${esc(x.name)}</button>`).join('')}</div>
     <div class="setview">
-      <div class="about">
+      <div>
         <p class="label">Good for</p><p id="sFor" style="font-weight:600">${esc(DEMO.for)}</p>
-        <p class="label">The tester is</p><p id="sPersona" class="soft">${esc(DEMO.persona)}</p>
-        <button type="button" class="pill solid" id="sUse" style="margin-top:8px">Use this set</button>
+        <p class="label">The tester is</p><p id="sPersona" style="color:var(--muted)">${esc(DEMO.persona)}</p>
+        <button type="button" class="ghost" id="sUse">Use this set in the form</button>
       </div>
-      <div class="list">
+      <div>
         <p class="label">Things to try</p>
         <ol id="sTasks">${DEMO.tasks.map((t) => `<li>${esc(t.title)}</li>`).join('')}</ol>
       </div>
@@ -2277,53 +2319,21 @@ const HOME = `<!doctype html>
   </div>
 </section>
 
-<section class="band" id="results">
-  <div class="shell split">
-    <div class="words">
-      <h2 class="big">The bit you’ve been guessing at.</h2>
-      <p>Every task comes back with who finished it, who couldn’t, who never got there and who opened the hint. Plus their notes, in their own words, and four quick questions at the end.</p>
-      <p>Comparing two onboarding flows? One link shares testers out evenly, and the results sit side by side.</p>
-      <p>Want it as it happens? Paste a Slack or Discord webhook and each tester who finishes is posted there. Never the password.</p>
-    </div>
-    <div class="table">
-      <table>
-        <caption id="rCaption">Results · ${esc(DEMO.name)} · try the demo above and your run shows up here</caption>
-        <thead><tr><th scope="col">Task</th><th scope="col">Done</th><th scope="col">Couldn’t</th><th scope="col">Hint</th></tr></thead>
-        <tbody id="rBody">${DEMO.tasks.map((t) => `<tr><td>${esc(t.title)}</td><td>–</td><td>–</td><td>–</td></tr>`).join('')}</tbody>
-      </table>
-      <p class="foot">Each tester is a row of their own, too: open one for their notes and how long each task took.</p>
-    </div>
-  </div>
-</section>
-
-<section class="dark">
-  <div class="shell">
-    <h2 class="big">Two things that quietly ruin a test</h2>
-    <p class="lede" style="color:#b9bcc6">Both get caught before you send anything.</p>
-    <div class="mistakes">
-      <div><h3>Naming the button</h3><p class="no">Click Settings → General</p><p class="yes">Give the site your studio’s name</p><p style="margin:0">Say what they want to end up with. The control goes in the hint, which tells you who needed it.</p></div>
-      <div><h3>A persona named after the demo</h3><p>If the demo site is already called what they are, “make it yours” has nothing to change.</p><p style="margin:0">Give them a life of their own: a pottery studio, a yoga class, a bike workshop.</p></div>
-    </div>
+<section style="padding-top:0">
+  <div class="shell features">
+    <div><p class="label">→ compare</p><h3>Test two versions</h3><p>Same tasks, two or three sites. One link shares testers out evenly, and the results come back side by side.</p></div>
+    <div><p class="label">→ webhook</p><h3>Hear when they finish</h3><p>Each tester who finishes is posted to Slack, Discord or any HTTPS endpoint. Never the password.</p></div>
+    <div><p class="label">→ nothing to install</p><h3>At either end</h3><p>Testers need a browser and nothing else. You need a blueprint, the one you already demo with.</p></div>
   </div>
 </section>
 
 <section id="start">
 <div class="shell">
-<h2 class="big">User-test it with anyone</h2>
-<p class="lede">Two ways in. Same test either way.</p>
-<div class="wrap">
-<div class="doors">
-  <button type="button" class="door on" data-door="form">I'll fill this in</button>
-  <button type="button" class="door" data-door="agent">My assistant will</button>
+<div class="head">
+  <h2 class="big">Or fill it in yourself.</h2>
+  <p class="lede">The same test, made by hand. About half a minute.</p>
 </div>
-
-<div id="agent" hidden>
-  <p>Paste this at Claude, ChatGPT, Cursor, or anything else that can fetch a URL. There is nothing to install and no account to make.</p>
-  <div class="prompt"><button type="button" class="copy" id="copy">Copy</button><p id="promptText"></p></div>
-  <p>It will read <a href="/llms.txt">/llms.txt</a> — the routes, and the two mistakes that quietly ruin a test — then draft the persona and tasks with you and make the test.</p>
-  <p class="soft">Rather connect it properly? It is an MCP server too: <span class="addr" id="mcpAddr"></span></p>
-  <div class="warn"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#b23a1e" stroke-width="2"><rect x="4" y="10" width="14" height="10" rx="2"/><path d="M7 10V7a4 4 0 0 1 8 0v3"/></svg><p style="margin:0"><strong>Ask it for the password.</strong> The results password cannot be looked up again by anyone, including us. If your assistant makes a test and does not pass the password on, nothing your testers write can ever be read.</p></div>
-</div>
+<div class="panel">
 <form id="f">
 <fieldset>
   <label for="set">Start from a ready-made set <span class="soft">(optional)</span></label>
@@ -2391,40 +2401,24 @@ const HOME = `<!doctype html>
 </div>
 </section>
 
-<footer class="shell foot-note">Every tester gets a throwaway site in their own browser. The only thing kept is what the card learns. <a href="/llms.txt">llms.txt</a> · <a href="/mcp">MCP</a></footer>
+<footer class="foot-note"><div class="shell" style="padding:0">Every tester gets a throwaway site in their own browser. The only thing kept is what the card learns. <a href="/llms.txt">llms.txt</a> · <a href="/mcp">MCP</a></div></footer>
 <script>
 (function () {
   var tasksEl = document.getElementById('tasks');
   var mode = 'url';
 
-  // The two doors. The form is the default because it is the product: you can
-  // make a test in half a minute without reading anything.
-  var form = document.getElementById('f');
-  var agent = document.getElementById('agent');
+  // The prompt leads the page; it names this address, so a copy of the
+  // service answers for itself rather than sending people to someone else's.
   var origin = location.origin;
   document.getElementById('promptText').textContent =
     'Fetch ' + origin + '/llms.txt and set up a user test for my plugin. ' +
     'Draft the persona and tasks with me, check them, then give me both links and the password.';
   document.getElementById('mcpAddr').textContent = origin + '/mcp';
 
-  [].slice.call(document.querySelectorAll('[data-door]')).forEach(function (b) {
-    b.addEventListener('click', function () {
-      var wantAgent = b.dataset.door === 'agent';
-      [].slice.call(document.querySelectorAll('[data-door]')).forEach(function (o) { o.classList.toggle('on', o === b); });
-      agent.hidden = !wantAgent;
-      form.hidden = wantAgent;
-      document.getElementById('out').hidden = wantAgent;
-      try { localStorage.setItem('pgut:door', b.dataset.door); } catch (e) {}
-    });
-  });
-  try {
-    if (localStorage.getItem('pgut:door') === 'agent') document.querySelector('[data-door=agent]').click();
-  } catch (e) {}
-
   document.getElementById('copy').addEventListener('click', function () {
     var btn = this;
     var text = document.getElementById('promptText').textContent;
-    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
+    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy prompt'; }, 1600); };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
     else {
       // Older browsers, and any page not served over https.
@@ -2592,21 +2586,13 @@ const HOME = `<!doctype html>
 })();
 </script>
 <script>
-// The demo, the set browser, and the links that open a door. None of it talks
-// to the service: it is all for looking at before you make anything.
+// The demo and the set browser. None of it talks to the service: it is all
+// for looking at before you make anything.
 (function () {
   var SETS = ${JSON.stringify(TASK_SETS)};
   var demo = SETS.filter(function (x) { return x.key === 'make-it-yours'; })[0];
   var $ = function (id) { return document.getElementById(id); };
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
-
-  function openDoor(which) {
-    var b = document.querySelector('[data-door=' + which + ']');
-    if (b) b.click();
-  }
-  [].slice.call(document.querySelectorAll('[data-go-door]')).forEach(function (a) {
-    a.addEventListener('click', function () { openDoor(a.dataset.goDoor); });
-  });
 
   // What each finished task does to the pretend site, in the set's own order.
   var effects = [
@@ -2681,7 +2667,6 @@ const HOME = `<!doctype html>
     });
   });
   $('sUse').addEventListener('click', function () {
-    openDoor('form');
     var sel = $('set');
     sel.value = picked;
     sel.dispatchEvent(new Event('change'));

@@ -173,13 +173,12 @@ const e1 = env();
 
 let r = await call(e1, '/');
 const home = await r.text();
-check(r.status === 200 && home.includes('User-test it with anyone'), 'the front page is the create form');
-// An agent arriving at the front page should not have to guess. The form stays
-// the default, because it is the product; the other door is one click away.
-check(home.includes('data-door="form"') && home.includes('data-door="agent"'), 'and there is a door for someone whose assistant is doing it');
-check(home.includes('id="agent" hidden'), 'the form is what you get first');
+// Most people arrive with an assistant to hand, so the front page leads with
+// the sentence to give it; the form is underneath for anyone who would rather type.
+check(r.status === 200 && home.includes('id="promptText"') && home.includes('/llms.txt and set up a user test'), 'the front page leads with the prompt for an assistant');
+check(home.includes('<form id="f">') && home.indexOf('id="promptText"') < home.indexOf('<form id="f">'), 'and the create form is underneath it');
 check(/\[hidden\] \{ display:none !important; \}/.test(home), 'hidden is spelled out, since the controls throw away the browser rule for it');
-check(/cannot be looked up again/.test(home), 'and the agent door warns that the password cannot be recovered');
+check(/cannot be looked up again/.test(home) && home.indexOf('cannot be looked up again') < home.indexOf('<form id="f">'), 'and it warns, before anything else, that the password cannot be recovered');
 
 r = await call(e1, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { persona: '' }) });
 check(r.status === 400 && (await r.json()).error.includes('pretend to be'), 'a test with no persona is refused');
