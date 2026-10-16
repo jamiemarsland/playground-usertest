@@ -1502,7 +1502,7 @@ async function mcpCall(env, req, name, args) {
         if (t.shown) seen.push(`${t.shown} done and the site shows it`);
         if (t.notShown) seen.push(`${t.notShown} said done but the site did not change`);
         if (t.didAnyway) seen.push(`${t.didAnyway} said they couldn’t but the site changed`);
-        lines.push(`    checked (${t.check.toLowerCase()}): ${seen.join('; ')}`);
+        lines.push(`    checked — ${t.check.charAt(0).toLowerCase() + t.check.slice(1)}: ${seen.join('; ')}`);
       }
       t.notes.forEach((n) => lines.push(`    "${n.note}" — ${n.who} (${n.got}${n.site === 'no' && n.got === 'done' ? ', site unchanged' : ''})`));
     }
