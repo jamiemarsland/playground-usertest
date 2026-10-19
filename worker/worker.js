@@ -1927,6 +1927,8 @@ GET ${origin}/api/results?test=<id>&digest=1
   -> per task: done, couldnt, notReached, hintOpened, medianSecs, notes[]
      plus wrapUps[]. Drop &digest=1 for one row per tester, add
      &session=<id> for one tester's raw events.
+  If you cannot send a header, ask the person to open the results page and
+  press Copy prompt: it copies this same digest for them to paste to you.
 
 DELETE ${origin}/api/results?test=<id>
   header: x-test-password: <the password>
@@ -2295,7 +2297,7 @@ const HOME = `<!doctype html>
         <thead><tr><th scope="col">Task</th><th scope="col">Done</th><th scope="col">Couldn’t</th><th scope="col">Hint</th></tr></thead>
         <tbody id="rBody">${DEMO.tasks.map((t) => `<tr><td>${esc(t.title)}</td><td>–</td><td>–</td><td>–</td></tr>`).join('')}</tbody>
       </table>
-      <p class="foot">What you read back: who finished each task, who couldn’t, who never got there and who opened the hint, checked against the site itself. Plus their notes and four quick questions at the end.</p>
+      <p class="foot">What you read back: who finished each task, who couldn’t, who never got there and who opened the hint, checked against the site itself. Plus their notes and four quick questions at the end. Then one button copies the lot for Claude or ChatGPT to tell you what to fix first.</p>
     </div>
   </div>
 </section>
@@ -2700,10 +2702,20 @@ const RESULTS = `<!doctype html>
   .detail h2 { font-size:16px; margin:0 0 8px; } .note { white-space:pre-wrap; }
   .wrapq { display:grid; grid-template-columns:170px 1fr; gap:6px 14px; margin:10px 0 0; }
   .err { color:var(--bad); }
+  .ask { margin:18px 0; padding:16px 18px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+  .ask h2 { font-size:16px; margin:0 0 4px; }
+  .ask p { margin:0; }
+  .ask pre { white-space:pre-wrap; font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; background:#f6f3ee; padding:12px 14px; border-radius:8px; margin:12px 0; }
 </style></head><body><div class="wrap">
 <h1 id="title">Results</h1>
 <p class="soft">Each row is one tester. Click a row for the tasks and notes. <span id="sum"></span></p>
 <div id="auth"><input id="pw" type="password" placeholder="password" autocomplete="current-password"> <button id="go">Show</button> <span id="msg" class="err"></span></div>
+<div id="ask" class="ask" hidden>
+  <h2>Let your assistant read it</h2>
+  <p class="soft">Copy this and paste it into Claude, ChatGPT or any assistant. It copies the question with every tester&rsquo;s results attached, so there is nothing for it to look up.</p>
+  <pre id="askText"></pre>
+  <button type="button" id="askCopy">Copy prompt</button>
+</div>
 <div id="out"></div>
 <script>
 (function () {
@@ -2796,6 +2808,7 @@ const RESULTS = `<!doctype html>
       // a compared test: the versions side by side, task by task, first
       var vs = d.versions || null, labelOf = {};
       if (vs) vs.forEach(function (v) { labelOf[v.key] = v.key.toUpperCase(); });
+      showAsk(!!vs);
       var cmp = '';
       if (vs) {
         var fewest = Math.min.apply(null, vs.map(function (v) { return v.testers; }));
@@ -2845,6 +2858,37 @@ const RESULTS = `<!doctype html>
       sessionStorage.removeItem(key);
       msg.textContent = e.message;
     });
+  }
+
+  // Reading a pile of rows is the assistant's job as much as the table's. A
+  // chat assistant cannot send the password header, so rather than hand it a
+  // link and a password, the button copies the question with the digest (one
+  // answer per task, every note) attached. Any assistant can read that, and
+  // the password never leaves this page.
+  function askQuestion(compare) {
+    return 'These are the results of a user test of a WordPress site. Tell me where people got stuck, ' +
+      'which hints they needed most, what they said in their notes, and the three changes that would help most.' +
+      (compare ? ' The test compares versions, so tell me which did better and why.' : '');
+  }
+  // The digest is fetched up front: a clipboard write has to happen inside the
+  // click, and Safari refuses one that waits on the network first.
+  function showAsk(compare) {
+    var btn = document.getElementById('askCopy');
+    get('&digest=1').then(function (d) {
+      var text = askQuestion(compare) + '\\n\\n' + JSON.stringify(d, null, 1);
+      document.getElementById('askText').textContent = askQuestion(compare) + '\\n\\n[every tester\\u2019s results are attached when you copy]';
+      document.getElementById('ask').hidden = false;
+      btn.onclick = function () {
+        var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy prompt'; }, 1600); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
+        else {
+          var ta = document.createElement('textarea');
+          ta.value = text; document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); done(); } catch (e) {}
+          ta.remove();
+        }
+      };
+    }).catch(function () {});
   }
 
   document.getElementById('go').addEventListener('click', function () {
