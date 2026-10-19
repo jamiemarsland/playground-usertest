@@ -130,21 +130,40 @@
     return Math.min(Math.round(lowest) + 16, 320);
   }
 
+  // The block editor and the Site Editor keep Save, Publish and the settings
+  // sidebar along the top and down the right, which is exactly where the card
+  // would land. There it starts at the bottom left instead, a little above the
+  // editor's breadcrumb bar.
+  function inEditor() {
+    var b = document.body.classList;
+    return b.contains('block-editor-page') || b.contains('site-editor-php') ||
+      !!document.querySelector('.interface-interface-skeleton, .edit-site');
+  }
+
   function place() {
     var el = state.hidden ? pill : card;
     var other = state.hidden ? card : pill;
-    other.style.left = other.style.top = other.style.right = '';
+    other.style.left = other.style.top = other.style.right = other.style.bottom = '';
     if (state.pos) {
       el.style.left = state.pos.x + 'px';
       el.style.top = state.pos.y + 'px';
-      el.style.right = 'auto';
+      el.style.right = el.style.bottom = 'auto';
+    } else if (inEditor()) {
+      el.style.left = '16px';
+      el.style.bottom = '60px';
+      el.style.right = el.style.top = 'auto';
     } else {
-      el.style.left = 'auto';
+      el.style.left = el.style.bottom = 'auto';
       el.style.right = '16px';
       el.style.top = headerBottom() + 'px';
     }
   }
   window.addEventListener('resize', function () { if (!state.pos) place(); });
+  // The editors draw themselves a moment after the page loads, so a card placed
+  // on first paint has not seen them yet. Look again while they arrive.
+  [400, 1200, 3000, 6000].forEach(function (t) {
+    setTimeout(function () { if (!state.pos) place(); }, t);
+  });
 
   function draggable(handle, el) {
     handle.addEventListener('pointerdown', function (ev) {
@@ -162,7 +181,7 @@
         var y = Math.max(8, Math.min(e.clientY - dy, window.innerHeight - 60));
         el.style.left = x + 'px';
         el.style.top = y + 'px';
-        el.style.right = 'auto';
+        el.style.right = el.style.bottom = 'auto';
         state.pos = { x: x, y: y };
       }
       function up() {

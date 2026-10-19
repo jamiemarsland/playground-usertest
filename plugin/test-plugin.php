@@ -93,5 +93,14 @@ case_run(
 	ok( empty( $GLOBALS["enqueued"] ), "an option with no tasks and nowhere to report is ignored" );'
 );
 
+case_run(
+	'the colours check',
+	'$GLOBALS["opts"] = array();
+	require "' . $plugin . '";
+	ok( pgut_styles_content( "{\"version\":3,\"isGlobalStylesUserThemeJSON\":true}" ) === "", "the empty record opening the Site Editor makes is not a change" );
+	ok( pgut_styles_content( "{\"version\":3,\"isGlobalStylesUserThemeJSON\":true,\"settings\":[],\"styles\":[]}" ) === "", "nor is one with empty settings and styles" );
+	ok( pgut_styles_content( "{\"version\":3,\"isGlobalStylesUserThemeJSON\":true,\"styles\":{\"color\":{\"background\":\"#000\"}}}" ) !== "", "a saved colour is a change" );'
+);
+
 echo $fails ? "\n$fails case(s) failed\n" : "\nall good\n";
 exit( $fails ? 1 : 0 );

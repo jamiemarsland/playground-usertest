@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Playground user testing
  * Description:       Shows a tester a small card of things to try, and sends what happens back to the test that sent them.
- * Version:           1.1.0
+ * Version:           1.1.1
  * Requires at least: 6.5
  * Requires PHP:      7.4
  * License:           GPL-2.0-or-later
@@ -23,7 +23,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'PGUT_VERSION', '1.1.0' );
+define( 'PGUT_VERSION', '1.1.1' );
 
 /**
  * The test this site was booted for, or nothing.
@@ -178,6 +178,45 @@ function pgut_fingerprint( $where ) {
 }
 
 /**
+ * What a saved global styles record actually changes, or '' when it changes
+ * nothing.
+ *
+ * Opening the Site Editor makes WordPress create the user's styles record
+ * before anyone touches a colour: {"version":3,"isGlobalStylesUserThemeJSON":true}.
+ * A new row is not a new look, so the bookkeeping keys are dropped and an
+ * empty record counts as no record.
+ *
+ * @param string $content A wp_global_styles post_content.
+ * @return string
+ */
+function pgut_styles_content( $content ) {
+	$data = json_decode( (string) $content, true );
+	if ( ! is_array( $data ) ) {
+		return trim( (string) $content );
+	}
+	unset( $data['version'], $data['isGlobalStylesUserThemeJSON'] );
+	$data = array_filter(
+		$data,
+		function ( $v ) {
+			return array() !== $v && '' !== $v && null !== $v;
+		}
+	);
+	return $data ? (string) json_encode( $data ) : '';
+}
+
+/**
+ * A fingerprint of the looks the tester has saved, ignoring empty records.
+ *
+ * @return string
+ */
+function pgut_styles_fingerprint() {
+	global $wpdb;
+	$rows  = $wpdb->get_col( "SELECT post_content FROM {$wpdb->posts} WHERE post_type = 'wp_global_styles' AND post_status = 'publish' ORDER BY ID" );
+	$parts = array_filter( array_map( 'pgut_styles_content', (array) $rows ) );
+	return md5( implode( "\n", $parts ) );
+}
+
+/**
  * The site right now, in the few ways a check can ask about.
  *
  * @return array
@@ -190,7 +229,7 @@ function pgut_snapshot() {
 		'tagline'   => (string) get_option( 'blogdescription' ),
 		'site_icon' => (int) get_option( 'site_icon' ),
 		'logo'      => (int) get_theme_mod( 'custom_logo' ) . ':' . (int) get_option( 'site_logo' ),
-		'styles'    => pgut_fingerprint( "post_type = 'wp_global_styles'" ),
+		'styles'    => pgut_styles_fingerprint(),
 		'menu'      => pgut_fingerprint( "post_type IN ('wp_navigation', 'nav_menu_item')" ),
 		// the front page's own words, and any template or template part the
 		// tester has saved (a block theme's home lives in its templates)

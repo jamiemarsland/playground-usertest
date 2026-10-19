@@ -159,9 +159,10 @@ Two things it does that are worth knowing:
 - **It measures rather than guesses where to sit.** A fixed offset lands on the
   site's own menu for some themes and floats in space for others, so it takes
   the lowest edge of whatever is stacked at the top of the page — admin bar,
-  header, editor chrome — and starts below that. If the measurement is still
-  wrong, the tester can drag it by its top bar, and where they put it is
-  remembered.
+  header — and starts below that. In the block editor and the Site Editor,
+  where Save and the settings sidebar live along the top and the right, it
+  starts at the bottom left instead. If that is still wrong, the tester can
+  drag it by its top bar, and where they put it is remembered.
 - **It keeps its place.** The session id is a site option, not something the
   browser makes, so a reload does not turn one tester into two rows, and the
   list follows them between the editor and the published site.
