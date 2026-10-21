@@ -57,6 +57,7 @@ reaches everybody's next tester without redeploying the Worker.
 |---|---|
 | `GET /` | the create form |
 | `POST /api/tests` | make a test → `{ id, tester, results }` |
+| `PATCH /api/tests?test=<id>` | change its wording, same links and password (`x-test-password` header) |
 | `GET /t/<id>` | the tester's intro page |
 | `GET /t/<id>/blueprint.json` | the owner's blueprint plus the card |
 | `GET /t/<id>/results` | the results page (asks for the password) |
@@ -79,6 +80,7 @@ curl. No accounts either way: the results password is the key, and
 | `usertest_check` | Check a draft. Returns problems and softer notes. |
 | `usertest_create` | Make the test. Returns both links and the password. |
 | `usertest_results` | The digest: per task, how it went, and everything anyone typed. |
+| `usertest_update` | Fixes a typo or rewords a test, keeping its links and password. |
 | `usertest_delete` | Clears a test. Use it on dry runs before the real invitations. |
 
 Three things make this usable by an agent rather than merely callable.
@@ -151,8 +153,20 @@ they choose to type it. The intro page says so.
 ## The card
 
 It shows one task at a time, with a note box, a hint the tester has to ask for,
-and Done / Couldn't do it. Then the wrap-up: happy 1–5, could you finish, how it
-felt, what confused you, and a name if they want to give one.
+and Done / Couldn't do it. Then the wrap-up: happy 1–5, could you have finished,
+how it felt, what confused you, and a name if they want to give one. The
+questions are worded for any test, not only one about making a site, and a test
+can put any of them its own way (`questions`), along with a line of its own on
+the intro page (`intro`).
+
+Text over a limit is refused with a message saying which field and by how much,
+never cut short: a task title trimmed mid-sentence reads as a finished
+instruction. The limits are in `llms.txt` and the tool schemas.
+
+A test can be edited after it is made, keeping its links and password. Once
+anyone has started, tasks can be reworded but not added, removed or reordered,
+because answers are kept per task. The results page shows each tester as
+finished, in progress, or stopped (quiet for half an hour without finishing).
 
 Two things it does that are worth knowing:
 

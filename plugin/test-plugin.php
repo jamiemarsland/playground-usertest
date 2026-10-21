@@ -102,5 +102,20 @@ case_run(
 	ok( pgut_styles_content( "{\"version\":3,\"isGlobalStylesUserThemeJSON\":true,\"styles\":{\"color\":{\"background\":\"#000\"}}}" ) !== "", "a saved colour is a change" );'
 );
 
+case_run(
+	'the closing questions',
+	'$GLOBALS["opts"] = array( "playground_user_test" => json_encode( array(
+		"test" => "abc123defg", "report" => "https://example.test/api/events",
+		"tasks" => array( array( "title" => "Try the settings" ) ),
+		"questions" => array( "happy" => " How happy are you with the settings? ", "feel" => "", "nonsense" => "x" ),
+	) ) );
+	require "' . $plugin . '";
+	pgut_enqueue();
+	$q = (array) $GLOBALS["loc"]["questions"];
+	ok( "How happy are you with the settings?" === $q["happy"], "a test can put a closing question its own way" );
+	ok( ! isset( $q["feel"] ) && ! isset( $q["nonsense"] ), "an empty question or one the card does not ask is dropped" );
+	$GLOBALS["opts"]["playground_user_test"] = json_encode( array( "test" => "abc123defg", "report" => "https://example.test/api/events", "tasks" => array( array( "title" => "x" ) ) ) );'
+);
+
 echo $fails ? "\n$fails case(s) failed\n" : "\nall good\n";
 exit( $fails ? 1 : 0 );

@@ -354,7 +354,7 @@ m = await rpc({ jsonrpc: '2.0', method: 'notifications/initialized' });
 check(m.status === 202 && m.body === null, 'a notification gets 202 and no body');
 
 m = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-check(m.body.result.tools.map((t) => t.name).join() === 'usertest_task_sets,usertest_check,usertest_create,usertest_delete,usertest_results', 'five tools: the ready-made sets, then check first');
+check(m.body.result.tools.map((t) => t.name).join() === 'usertest_task_sets,usertest_check,usertest_create,usertest_update,usertest_delete,usertest_results', 'six tools: the ready-made sets, then check first');
 
 m = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'nonsense', arguments: {} } });
 check(m.body.error && m.body.error.code === -32602, 'a tool nobody has is an error, not a shrug');
@@ -581,7 +581,7 @@ await postHk('hook11112222', [{ type: 'wrap', task: 'wrap', data: { happy: '3', 
 check(posted.length === 1 && /^https:\/\/hooks\.slack\.com/.test(posted[0].url), 'a finish is posted to the channel');
 const said = posted[0] && posted[0].body.text || '';
 check(/Sam finished/.test(said) && /said done, but the site did not change/.test(said) && /could not find Pages/.test(said) && /opened the hint/.test(said), 'the post says who, what the site showed, the hint and the note');
-check(/happy with the site: 3\/5/.test(said) && /\/t\/[a-z0-9]+\/results/.test(said), 'and the answers and the results link');
+check(/happy with how it went: 3\/5/.test(said) && /\/t\/[a-z0-9]+\/results/.test(said), 'and the answers and the results link');
 check(!/hook-pass-123/.test(JSON.stringify(posted)), 'never the password');
 await postHk('hook11112222', [{ type: 'wrap', task: 'wrap', data: { happy: '4' } }]);
 check(posted.length === 1, 'a second wrap-up from the same tester does not post again');
@@ -670,6 +670,62 @@ r = await call(eSet, '/api/tests', { method: 'POST', body: { subject: 'my theme'
 check(r.status === 200 && (await r.json()).checks.length === 1, 'tasks of your own win over the set’s');
 r = await call(eSet, '/');
 check(/Start from a ready-made set/.test(await r.text()), 'the form offers the sets');
+
+/* ------------------------------------------- limits, wording, edits, status */
+
+const eEd = env();
+const long = 'x'.repeat(201);
+r = await call(eEd, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { tasks: [{ title: long }] }) });
+let j = await r.json();
+check(r.status === 400 && /Task 1’s title is 201 characters; the most is 200/.test(j.error), 'an over-long title is refused and says which and by how much: ' + j.error);
+check(lintTest(Object.assign({}, GOOD, { tasks: [{ title: long }] })).problems.some((x) => /Task 1’s title/.test(x)), 'the check catches it before anything is made');
+r = await call(eEd, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { tasks: [{ title: 'y'.repeat(200), hint: 'h' }] }) });
+check(r.status === 200, 'two hundred characters is fine');
+r = await call(eEd, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { questions: { feel: 'z'.repeat(121) } }) });
+check(r.status === 400 && /feel question/.test((await r.json()).error), 'a closing question has a limit too');
+
+r = await call(eEd, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { password: 'edit-pass-1', intro: 'This is a settings screen, not a site.', questions: { happy: 'How happy are you with the settings?', feel: 'How did the settings feel?' } }) });
+const ed = await r.json();
+check(r.status === 200, 'a test can be made with its own intro and questions');
+const edPage = await (await call(eEd, '/t/' + ed.id)).text();
+check(edPage.includes('This is a settings screen, not a site.') && !edPage.includes('Make it yours') && !/WordPress website/.test(edPage), 'the intro page carries the test’s own line and no website wording');
+let edBp = await (await call(eEd, '/t/' + ed.id + '/blueprint.json')).json();
+let edOpt = JSON.parse(edBp.steps[edBp.steps.length - 1].options.playground_user_test);
+check(edOpt.questions.happy === 'How happy are you with the settings?' && !edOpt.questions.finish, 'the card is given only the questions the test changed');
+r = await call(eSet, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { password: 'plain-pass-1' }) });
+edBp = await (await call(eSet, '/t/' + (await r.json()).id + '/blueprint.json')).json();
+check(JSON.parse(edBp.steps[edBp.steps.length - 1].options.playground_user_test).questions === undefined, 'a test with no questions of its own leaves the card to its defaults');
+
+const PW = { 'x-test-password': 'edit-pass-1' };
+r = await call(eEd, '/api/tests?test=' + ed.id, { method: 'PATCH', body: { subject: 'x' } });
+check(r.status === 401, 'an edit needs the password');
+const before = await (await call(eEd, '/api/results?test=' + ed.id, { headers: PW })).json();
+r = await call(eEd, '/api/tests?test=' + ed.id, { method: 'PATCH', headers: PW, body: { tasks: [{ title: 'Give the site your own name, please' }, { title: 'Write two lines about yourself' }] } });
+check(r.status === 200, 'before anyone starts, the tasks can be replaced outright');
+let edAfter = await (await call(eEd, '/api/results?test=' + ed.id, { headers: PW })).json();
+check(edAfter.tasks.length === 2 && edAfter.tasks[0].title === 'Give the site your own name, please', 'the new tasks are what the test now has');
+check(edAfter.tasks[0].check && edAfter.tasks[0].check.type === before.tasks[0].check.type, 'a task sent with no check keeps the check it had');
+
+// somebody starts: from now on the shape is fixed, the words are not
+const idsBefore = edAfter.tasks.map((t) => t.id).join();
+await call(eEd, '/api/events', { method: 'POST', body: { test: ed.id, session: 'starteredit1', events: [{ type: 'start', task: edAfter.tasks[0].id }] } });
+r = await call(eEd, '/api/tests?test=' + ed.id, { method: 'PATCH', headers: PW, body: { tasks: [{ title: 'Only one now' }] } });
+check(r.status === 409 && /already started/.test((await r.json()).error), 'once a tester has started, tasks cannot be added or removed');
+r = await call(eEd, '/api/tests?test=' + ed.id, { method: 'PATCH', headers: PW, body: { subject: 'my settings screen', tasks: [{ title: 'Give the site your own name' }, { title: 'Write two lines about you' }], intro: '' } });
+check(r.status === 200, 'but they can be reworded');
+edAfter = await (await call(eEd, '/api/results?test=' + ed.id, { headers: PW })).json();
+check(edAfter.subject === 'my settings screen' && edAfter.tasks[1].title === 'Write two lines about you', 'the rewording took');
+check(edAfter.tasks.map((t) => t.id).join() === idsBefore, 'reworded tasks keep their ids, so earlier answers stay with them');
+check(edAfter.intro === '' && edAfter.questions.happy === 'How happy are you with the settings?' && edAfter.questions.finish === 'If you had kept going, could you have finished?', 'an emptied intro goes away; questions not sent stay as they were');
+r = await call(eEd, '/api/tests?test=' + ed.id, { method: 'PATCH', headers: PW, body: { persona: 'p'.repeat(2001) } });
+check(r.status === 400, 'an edit is held to the same limits');
+
+// the digest says who is still going and who stopped
+const dg = await (await call(eEd, '/api/results?test=' + ed.id + '&digest=1', { headers: PW })).json();
+check(dg.status && dg.status.working === 1 && dg.status.finished === 0 && dg.status.stopped === 0, 'a tester heard from just now is still going');
+await eEd.DB.prepare('UPDATE sessions SET last_at = ? WHERE test_id = ?').bind(Date.now() - 2 * 60 * 60 * 1000, ed.id).run();
+const dg2 = await (await call(eEd, '/api/results?test=' + ed.id + '&digest=1', { headers: PW })).json();
+check(dg2.status.stopped === 1 && dg2.status.working === 0, 'one not heard from for two hours, and not finished, has stopped');
 
 /* -------------------------------------------------------------------- misc */
 

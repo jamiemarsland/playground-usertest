@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Playground user testing
  * Description:       Shows a tester a small card of things to try, and sends what happens back to the test that sent them.
- * Version:           1.1.1
+ * Version:           1.2.0
  * Requires at least: 6.5
  * Requires PHP:      7.4
  * License:           GPL-2.0-or-later
@@ -23,7 +23,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'PGUT_VERSION', '1.1.1' );
+define( 'PGUT_VERSION', '1.2.0' );
 
 /**
  * The test this site was booted for, or nothing.
@@ -138,8 +138,31 @@ function pgut_enqueue() {
 			'rest'    => esc_url_raw( rest_url( 'pgut/v1/check' ) ),
 			'nonce'   => wp_create_nonce( 'wp_rest' ),
 			'home'    => esc_url_raw( home_url( '/' ) ),
+			// the test's own closing questions, if it has any; the card has defaults
+			'questions' => pgut_questions( $test ),
 		)
 	);
+}
+
+/**
+ * The closing questions a test put in its own words, cleaned. Only the four
+ * the card asks are kept, and only when there is something to say.
+ *
+ * @param array $test The test option.
+ * @return array
+ */
+function pgut_questions( $test ) {
+	$out = array();
+	$raw = isset( $test['questions'] ) && is_array( $test['questions'] ) ? $test['questions'] : array();
+	foreach ( array( 'happy', 'finish', 'feel', 'confused' ) as $key ) {
+		if ( isset( $raw[ $key ] ) && is_string( $raw[ $key ] ) ) {
+			$text = sanitize_text_field( $raw[ $key ] );
+			if ( '' !== $text ) {
+				$out[ $key ] = $text;
+			}
+		}
+	}
+	return (object) $out;
 }
 add_action( 'wp_enqueue_scripts', 'pgut_enqueue', 20 );
 add_action( 'admin_enqueue_scripts', 'pgut_enqueue', 20 );

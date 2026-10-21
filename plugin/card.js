@@ -312,18 +312,29 @@
     render();
   }
 
+  // The closing questions suit any test, not only one about building a site;
+  // a test that wants its own words for any of them sends those instead.
+  var QUESTIONS = {
+    happy: 'How happy are you with how it went?',
+    finish: 'If you had kept going, could you have finished?',
+    feel: 'How did it feel to use?',
+    confused: 'What confused you, if anything?'
+  };
+  var own = (window.PGUT && PGUT.questions) || {};
+  Object.keys(QUESTIONS).forEach(function (k) { if (typeof own[k] === 'string' && own[k]) QUESTIONS[k] = own[k]; });
+
   function renderWrap() {
     card.innerHTML =
       head('Last few questions') +
       '<div class="pgut-body">' +
         '<p class="pgut-title">Thank you. Four quick questions.</p>' +
-        '<div class="pgut-q">Are you happy with the site you made?</div>' +
+        '<div class="pgut-q">' + esc(QUESTIONS.happy) + '</div>' +
         '<div class="pgut-scale" data-q="happy"><button type="button" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="3">3</button><button type="button" data-v="4">4</button><button type="button" data-v="5">5</button></div>' +
-        '<div class="pgut-q">Could you finish it with a bit more time?</div>' +
+        '<div class="pgut-q">' + esc(QUESTIONS.finish) + '</div>' +
         '<div class="pgut-scale" data-q="confident"><button type="button" data-v="yes">Yes</button><button type="button" data-v="maybe">Maybe</button><button type="button" data-v="no">No</button></div>' +
-        '<div class="pgut-q">How did editing make you feel?</div>' +
+        '<div class="pgut-q">' + esc(QUESTIONS.feel) + '</div>' +
         '<textarea data-q="feel"></textarea>' +
-        '<div class="pgut-q">What confused you, if anything?</div>' +
+        '<div class="pgut-q">' + esc(QUESTIONS.confused) + '</div>' +
         '<textarea data-q="confused"></textarea>' +
         '<div class="pgut-q">Your name, if you like</div>' +
         '<input type="text" data-q="name" placeholder="optional">' +

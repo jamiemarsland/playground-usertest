@@ -161,7 +161,8 @@ const SCHEMA = [
      pw_hash        VARCHAR(64)  NOT NULL,
      creator        VARCHAR(64),
      webhook        VARCHAR(600),
-     versions       TEXT
+     versions       TEXT,
+     wording        TEXT
    )`,
   `CREATE TABLE IF NOT EXISTS sessions (
      test_id  VARCHAR(16) NOT NULL,
@@ -194,7 +195,7 @@ const SCHEMA = [
    )`,
 ];
 
-const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN versions TEXT', 'ALTER TABLE sessions ADD COLUMN version VARCHAR(4)'];
+const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN versions TEXT', 'ALTER TABLE sessions ADD COLUMN version VARCHAR(4)', 'ALTER TABLE tests ADD COLUMN wording TEXT'];
 
 // Once per database, not once per request — and keyed on the binding rather
 // than kept in one module-level variable, so a second database in the same
@@ -330,6 +331,7 @@ async function getTest(env, id) {
     pwHash: row.pw_hash,
     webhook: row.webhook || '',
     versions: parse(row.versions, null),
+    wording: parse(row.wording, null),
   };
 }
 
@@ -395,15 +397,67 @@ function trimMultiline(v, max) {
 const LIMITS = {
   subject: 80,      // what is being tested: "gogh", "my theme"
   persona: 2000,    // who the tester pretends to be
-  taskTitle: 140,
+  taskTitle: 200,
   taskWhy: 300,
   taskHint: 300,
+  intro: 300,       // one line of the test's own under the persona
+  question: 120,    // a closing question in the test's own words
   tasksMin: 1,
   tasksMax: 12,
   blueprintBytes: 256 * 1024,
   passwordMin: 6,
   passwordMax: 200,
 };
+
+// The four closing questions, in words that suit any test rather than only one
+// about building a site. A test can put any of them its own way.
+const QUESTION_KEYS = ['happy', 'finish', 'feel', 'confused'];
+const DEFAULT_QUESTIONS = {
+  happy: 'How happy are you with how it went?',
+  finish: 'If you had kept going, could you have finished?',
+  feel: 'How did it feel to use?',
+  confused: 'What confused you, if anything?',
+};
+
+// Text over a limit is refused, not cut. A title trimmed mid-sentence reads to
+// the tester as a finished instruction, and nobody finds out until the results.
+function overLimits(body) {
+  const out = [];
+  const len = (v) => String(v == null ? '' : v).trim().length;
+  const over = (v, max, what) => {
+    if (len(v) > max) out.push(`${what} is ${len(v)} characters; the most is ${max}. Shorten it rather than have it cut off.`);
+  };
+  if (!body || typeof body !== 'object') return out;
+  over(body.subject, LIMITS.subject, 'What is being tested');
+  over(body.persona, LIMITS.persona, 'The persona');
+  over(body.intro, LIMITS.intro, 'The intro line');
+  (Array.isArray(body.tasks) ? body.tasks : []).forEach((t, i) => {
+    over(t && t.title, LIMITS.taskTitle, `Task ${i + 1}’s title`);
+    over(t && t.hint, LIMITS.taskHint, `Task ${i + 1}’s hint`);
+    over(t && t.why, LIMITS.taskWhy, `Task ${i + 1}’s note`);
+  });
+  const qs = body.questions && typeof body.questions === 'object' ? body.questions : {};
+  QUESTION_KEYS.forEach((k) => over(qs[k], LIMITS.question, `The ${k} question`));
+  if (Array.isArray(body.tasks) && body.tasks.length > LIMITS.tasksMax) {
+    out.push(`That is ${body.tasks.length} tasks; the most is ${LIMITS.tasksMax}.`);
+  }
+  return out;
+}
+
+// A test's own words for the intro and the closing questions. Only what was
+// given is kept, so the defaults above stay the defaults.
+function cleanWording(body) {
+  const w = {};
+  const intro = trim(body && body.intro, LIMITS.intro);
+  if (intro) w.intro = intro;
+  const raw = body && body.questions && typeof body.questions === 'object' ? body.questions : {};
+  const questions = {};
+  // a question left as its default is not kept as the test's own, so a
+  // better default later reaches it too
+  QUESTION_KEYS.forEach((k) => { const v = trim(raw[k], LIMITS.question); if (v && v !== DEFAULT_QUESTIONS[k]) questions[k] = v; });
+  if (Object.keys(questions).length) w.questions = questions;
+  return Object.keys(w).length ? w : null;
+}
 
 // Task ids go into the results table and into the card's localStorage key, so
 // they are derived from the title rather than asked for: the owner never sees them.
@@ -659,6 +713,7 @@ function lintTest(input) {
   const boot = input && input.boot && typeof input.boot === 'object' ? input.boot : null;
   const siteName = boot ? trim(boot.title, 60) : '';
 
+  overLimits(input).forEach((x) => problems.push(x));
   if (!subject) problems.push('Say what is being tested — it is the tester’s first line: “Thank you for helping make X better”.');
   if (!persona) problems.push('There is no persona. The tester needs to know who they are meant to be.');
   if (!tasks.length) problems.push('There is nothing for them to try.');
@@ -1008,7 +1063,11 @@ async function makeTest(env, req, body) {
     return json({ error: 'The service has made as many tests as it will today. Try again tomorrow.' }, 429, CORS);
   }
 
+  const tooLong = overLimits(body);
+  if (tooLong.length) return json({ error: tooLong.join(' '), problems: tooLong }, 400, CORS);
+
   const subject = trim(body.subject, LIMITS.subject);
+  const wording = cleanWording(body);
   // a ready-made set fills whatever was left out: the tasks, the persona
   const set = TASK_SETS.find((x) => x.key === body.taskSet);
   const persona = trimMultiline(body.persona, LIMITS.persona) || (set ? set.persona : '');
@@ -1061,14 +1120,15 @@ async function makeTest(env, req, body) {
   await run(
     env,
     `INSERT INTO tests (id, created, touched, expires, subject, persona, tasks,
-                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator, webhook, versions)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator, webhook, versions, wording)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id, now, now, now + NINETY_DAYS * 1000, subject, persona, JSON.stringify(tasks),
     blueprintUrl || null,
     blueprintJson ? JSON.stringify(blueprintJson) : null,
     blueprintBoot ? JSON.stringify(blueprintBoot) : null,
     salt, hash, creator, webhook || null,
-    versions ? JSON.stringify(versions) : null
+    versions ? JSON.stringify(versions) : null,
+    wording ? JSON.stringify(wording) : null
   );
 
   const origin = publicOrigin(req);
@@ -1108,6 +1168,8 @@ function wrapBlueprint(base, test, origin, pluginZipUrl, version) {
         report: `${origin}/api/events${version ? `?v=${version}` : ''}`,
         subject: test.subject,
         tasks: test.tasks,
+        // only a test's own closing questions; the card has neutral defaults
+        questions: (test.wording && test.wording.questions) || undefined,
       }),
     },
   });
@@ -1337,8 +1399,8 @@ function finishSummary(test, events, origin) {
   const who = String(wrap.name || '').trim() || 'A tester';
   const results = `${origin}/t/${test.id}/results`;
   const answers = [
-    wrap.happy ? `happy with the site: ${wrap.happy}/5` : '',
-    wrap.confident ? `could finish with more time: ${wrap.confident}` : '',
+    wrap.happy ? `happy with how it went: ${wrap.happy}/5` : '',
+    wrap.confident ? `could have finished: ${wrap.confident}` : '',
     wrap.feel ? `felt: “${String(wrap.feel).slice(0, 200)}”` : '',
     wrap.confused ? `confused by: “${String(wrap.confused).slice(0, 200)}”` : '',
     wrap.minutes ? `${wrap.minutes} min` : '',
@@ -1382,6 +1444,16 @@ async function deleteTest(env, id) {
 // anyone typed.
 
 const DIGEST_MAX_SESSIONS = 100;
+
+// A tester who has not been heard from in this long, and has not answered the
+// closing questions, has most likely stopped. The card reports on every task
+// and hint, so half an hour of silence is a long time on one task.
+const STILL_WORKING_MS = 30 * 60 * 1000;
+
+function testerStatus(row, now) {
+  if (row.wrapped) return 'finished';
+  return now - row.last < STILL_WORKING_MS ? 'working' : 'stopped';
+}
 
 function median(nums) {
   const xs = nums.filter((n) => typeof n === 'number' && isFinite(n)).sort((a, b) => a - b);
@@ -1488,6 +1560,8 @@ async function buildDigest(env, id, test, only) {
     couldFinish: { yes: wrapUps.filter((w) => w.confident === 'yes').length, maybe: wrapUps.filter((w) => w.confident === 'maybe').length, no: wrapUps.filter((w) => w.confident === 'no').length },
     testers: everyone.length,
     counted: rows.length,
+    // finished, still going, or gone quiet before the end: the drop-off
+    status: everyone.reduce((acc, r) => { acc[testerStatus(r, Date.now())]++; return acc; }, { finished: 0, working: 0, stopped: 0 }),
     truncated: everyone.length > DIGEST_MAX_SESSIONS,
     lastEventAt,
     finished: wrapUps.length,
@@ -1528,6 +1602,77 @@ async function openTest(env, id, given) {
   return test;
 }
 
+// Fixing a typo should not cost new links and a new password. Wording can
+// always change; the shape of the test only until somebody has started it,
+// because results are kept per task and a task that moved would take another
+// task's answers with it. Tasks are matched by position, and keep their ids.
+async function updateTest(env, test, body) {
+  const tooLong = overLimits(body);
+  if (tooLong.length) return { status: 400, body: { error: tooLong.join(' '), problems: tooLong } };
+
+  const has = (k) => body && Object.prototype.hasOwnProperty.call(body, k);
+  const subject = has('subject') ? trim(body.subject, LIMITS.subject) : test.subject;
+  const persona = has('persona') ? trimMultiline(body.persona, LIMITS.persona) : test.persona;
+  if (!subject) return { status: 400, body: { error: 'Say what is being tested — it goes in the tester’s thank-you line.' } };
+  if (!persona) return { status: 400, body: { error: 'The persona cannot be empty.' } };
+
+  const counted = await one(env, 'SELECT COUNT(*) AS n FROM sessions WHERE test_id = ?', test.id);
+  const started = Number((counted && counted.n) || 0);
+
+  let tasks = test.tasks;
+  if (has('tasks')) {
+    // an edit that leaves a task's check out keeps the check it had, rather
+    // than having one guessed afresh from the new wording
+    const given = (Array.isArray(body.tasks) ? body.tasks : []).map((raw, i) => {
+      const old = test.tasks[i];
+      return raw && raw.check === undefined && old ? Object.assign({}, raw, { check: old.check || 'none' }) : raw;
+    });
+    const fresh = cleanTasks(given);
+    if (fresh.length < LIMITS.tasksMin) return { status: 400, body: { error: 'Give the tester at least one thing to try.' } };
+    if (started) {
+      if (fresh.length !== test.tasks.length) {
+        return {
+          status: 409,
+          body: { error: `${started} tester(s) have already started, so the tasks can be reworded but not added, removed or reordered — their answers are kept per task. Make a new test for a different set of tasks.` },
+        };
+      }
+      fresh.forEach((t, i) => { t.id = test.tasks[i].id; });
+    }
+    tasks = fresh;
+  }
+
+  const before = test.wording || {};
+  const wording = cleanWording({
+    intro: has('intro') ? body.intro : before.intro,
+    questions: has('questions') ? body.questions : before.questions,
+  });
+
+  await run(
+    env,
+    'UPDATE tests SET subject = ?, persona = ?, tasks = ?, wording = ?, touched = ? WHERE id = ?',
+    subject, persona, JSON.stringify(tasks), wording ? JSON.stringify(wording) : null, Date.now(), test.id
+  );
+  return {
+    status: 200,
+    body: {
+      ok: true, id: test.id, started,
+      subject, tasks: tasks.map((t) => ({ title: t.title, hint: t.hint || '' })),
+      intro: (wording && wording.intro) || '',
+      questions: Object.assign({}, DEFAULT_QUESTIONS, (wording && wording.questions) || {}),
+    },
+  };
+}
+
+async function editTest(env, req, url) {
+  const id = url.searchParams.get('test') || '';
+  const test = await openTest(env, id, req.headers.get('x-test-password') || '');
+  if (!test) return json({ error: 'That password is not right.' }, 401, { 'cache-control': 'no-store' });
+  let body;
+  try { body = await req.json(); } catch (e) { return json({ error: 'Send the changes as JSON.' }, 400); }
+  const r = await updateTest(env, test, body);
+  return json(r.body, r.status, { 'cache-control': 'no-store' });
+}
+
 async function readResults(env, req, url) {
   const id = url.searchParams.get('test') || '';
   const test = await openTest(env, id, req.headers.get('x-test-password') || '');
@@ -1555,6 +1700,11 @@ async function readResults(env, req, url) {
     {
       subject: test.subject,
       created: test.created,
+      now: Date.now(),
+      // the wording as it stands, for the results page's Edit form
+      persona: test.persona,
+      intro: (test.wording && test.wording.intro) || '',
+      questions: Object.assign({}, DEFAULT_QUESTIONS, (test.wording && test.wording.questions) || {}),
       tasks: test.tasks.map((t) => (t.check ? Object.assign({}, t, { checkLabel: CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') }) : t)),
       sessions: await sessionIndex(env, id),
       versions: test.versions ? await compareDigest(env, id, test) : undefined,
@@ -1586,9 +1736,9 @@ const TASKS_SCHEMA = {
   items: {
     type: 'object',
     properties: {
-      title: { type: 'string', description: 'What they are trying to get done, in their words. "Give the site your own name", not "click Settings".' },
-      hint: { type: 'string', description: 'Shown only if they ask for it. This is where a control may be named.' },
-      why: { type: 'string', description: 'Optional one line of context under the task.' },
+      title: { type: 'string', maxLength: LIMITS.taskTitle, description: `What they are trying to get done, in their words. "Give the site your own name", not "click Settings". At most ${LIMITS.taskTitle} characters — longer is refused, not cut.` },
+      hint: { type: 'string', maxLength: LIMITS.taskHint, description: `Shown only if they ask for it. This is where a control may be named. At most ${LIMITS.taskHint} characters.` },
+      why: { type: 'string', maxLength: LIMITS.taskWhy, description: `Optional one line of context under the task. At most ${LIMITS.taskWhy} characters.` },
       check: {
         description: 'How the service can see the task really happened, by reading the tester\'s site when they press Done or Couldn\'t do it. One of: ' +
           Object.keys(CHECKS).map((k) => `${k} (${CHECKS[k].toLowerCase()})`).join(', ') +
@@ -1617,6 +1767,19 @@ const BOOT_SCHEMA = {
   },
 };
 
+// A test is not always about building a website — a plugin's settings screen,
+// an app inside wp-admin — so the intro line and the closing questions can be
+// the test's own. Left out, the tester gets neutral defaults.
+const WORDING_SCHEMA = {
+  intro: { type: 'string', maxLength: LIMITS.intro, description: `Optional line under the persona on the tester's intro page, e.g. "The site you get is a start someone made for you. Make it yours." At most ${LIMITS.intro} characters.` },
+  questions: {
+    type: 'object',
+    description: 'Optional: the four closing questions in your own words, for a test that is not about making a site. Leave any out to keep its default. ' +
+      QUESTION_KEYS.map((k) => `${k} (default "${DEFAULT_QUESTIONS[k]}")`).join('; ') + `. At most ${LIMITS.question} characters each.`,
+    properties: Object.fromEntries(QUESTION_KEYS.map((k) => [k, { type: 'string', maxLength: LIMITS.question }])),
+  },
+};
+
 const TOOLS = [
   {
     name: 'usertest_task_sets',
@@ -1629,11 +1792,13 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        subject: { type: 'string', description: 'What is being tested. It becomes the tester\'s first line: "Thank you for helping make X better".' },
+        subject: { type: 'string', maxLength: LIMITS.subject, description: 'What is being tested. It becomes the tester\'s first line: "Thank you for helping make X better".' },
         task_set: { type: 'string', enum: TASK_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
-        persona: { type: 'string', description: 'A paragraph, second person, giving them a reason to want the site — not just a job title.' },
+        persona: { type: 'string', maxLength: LIMITS.persona, description: 'A paragraph, second person, giving them a reason to want the site — not just a job title.' },
         tasks: TASKS_SCHEMA,
         boot: BOOT_SCHEMA,
+        intro: WORDING_SCHEMA.intro,
+        questions: WORDING_SCHEMA.questions,
       },
       required: ['subject'],
     },
@@ -1644,11 +1809,13 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        subject: { type: 'string' },
+        subject: { type: 'string', maxLength: LIMITS.subject },
         task_set: { type: 'string', enum: TASK_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
-        persona: { type: 'string' },
+        persona: { type: 'string', maxLength: LIMITS.persona },
         tasks: TASKS_SCHEMA,
         boot: BOOT_SCHEMA,
+        intro: WORDING_SCHEMA.intro,
+        questions: WORDING_SCHEMA.questions,
         blueprint_url: { type: 'string', description: 'An https URL to an existing Playground blueprint. Re-read each time a tester starts, so it can keep changing.' },
         blueprint_json: { type: 'string', description: 'A Playground blueprint as a JSON string, kept as-is.' },
         password: { type: 'string', description: 'For the results page. One is made for you if you leave it out.' },
@@ -1660,6 +1827,23 @@ const TOOLS = [
         webhook: { type: 'string', description: 'Optional. A Slack or Discord webhook URL (or any https address that takes a JSON POST). Each tester who finishes is posted there: what they managed, what the site showed, their answers and the results link. Never the password.' },
       },
       required: ['subject'],
+    },
+  },
+  {
+    name: 'usertest_update',
+    description: 'Change a test that already exists — fix a typo, reword a task, a hint, the persona, the intro line or the closing questions — keeping the same links and password. Send only what changes. Tasks are matched by position: once anyone has started the test they can be reworded but not added, removed or reordered, because answers are kept per task. A task sent without a check keeps the check it had.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        test: { type: 'string', description: 'The test id from usertest_create.' },
+        password: { type: 'string', description: 'The results password from usertest_create.' },
+        subject: { type: 'string', maxLength: LIMITS.subject },
+        persona: { type: 'string', maxLength: LIMITS.persona },
+        tasks: TASKS_SCHEMA,
+        intro: WORDING_SCHEMA.intro,
+        questions: WORDING_SCHEMA.questions,
+      },
+      required: ['test', 'password'],
     },
   },
   {
@@ -1720,6 +1904,8 @@ async function mcpCall(env, req, name, args) {
       persona: args && args.persona,
       tasks: args && args.tasks,
       taskSet: args && args.task_set,
+      intro: args && args.intro,
+      questions: args && args.questions,
       boot: args && args.boot,
       blueprintUrl: args && args.blueprint_url,
       blueprintJson: args && args.blueprint_json,
@@ -1741,6 +1927,25 @@ async function mcpCall(env, req, name, args) {
       (made.versions ? `\n\nOne link for all ${made.versions.length} versions (${made.versions.map((v) => v.label).join(', ')}): testers are shared out evenly, and usertest_results compares them.` : '') +
       (made.webhook ? `\n\nEach tester who finishes will be posted to the ${made.webhook === 'json' ? 'webhook' : made.webhook[0].toUpperCase() + made.webhook.slice(1) + ' channel'}.` : ''),
       { structuredContent: out }
+    );
+  }
+
+  if (name === 'usertest_update') {
+    const id = String((args && args.test) || '');
+    const test = await openTest(env, id, (args && args.password) || '');
+    if (!test) return mcpText('That test id and password do not go together.', { isError: true });
+    const changes = {};
+    ['subject', 'persona', 'tasks', 'intro', 'questions'].forEach((k) => { if (args && args[k] !== undefined) changes[k] = args[k]; });
+    if (!Object.keys(changes).length) return mcpText('Nothing to change: send the fields that should be different.', { isError: true });
+    const r = await updateTest(env, test, changes);
+    if (r.status !== 200) return mcpText(r.body.error, { isError: true, structuredContent: r.body });
+    const b = r.body;
+    return mcpText(
+      `Updated ${id}. Same links, same password; testers who start from now on see this.\n\n` +
+      `${b.subject}\n` + b.tasks.map((t, i) => `  ${i + 1}. ${t.title}`).join('\n') +
+      (b.intro ? `\n\nIntro line: ${b.intro}` : '') +
+      '\n\nClosing questions:\n' + QUESTION_KEYS.map((k) => `  ${b.questions[k]}`).join('\n'),
+      { structuredContent: b }
     );
   }
 
@@ -1788,13 +1993,13 @@ async function mcpCall(env, req, name, args) {
       L.push('', 'At the end:');
       vs.forEach((v) => {
         const c = v.couldFinish;
-        L.push(`  ${v.key.toUpperCase()}: happy ${v.happyAvg == null ? '–' : v.happyAvg + '/5 on average'}; could finish with more time: ${c.yes} yes, ${c.maybe} maybe, ${c.no} no`);
+        L.push(`  ${v.key.toUpperCase()}: happy ${v.happyAvg == null ? '–' : v.happyAvg + '/5 on average'}; could have finished: ${c.yes} yes, ${c.maybe} maybe, ${c.no} no`);
         v.wrapUps.forEach((w) => { if (w.confused) L.push(`      confused ${w.who}: "${w.confused}"`); });
       });
       return mcpText(L.join('\n'), { structuredContent: d });
     }
 
-    const lines = [`${d.testers} tester(s), ${d.finished} of them finished.`, ''];
+    const lines = [`${d.testers} tester(s): ${d.status.finished} finished, ${d.status.working} still going, ${d.status.stopped} stopped before the end.`, ''];
     for (const t of d.tasks) {
       const bits = [`${t.done} done`, `${t.couldnt} couldn’t`];
       if (t.notReached) bits.push(`${t.notReached} never got there`);
@@ -1812,7 +2017,7 @@ async function mcpCall(env, req, name, args) {
     }
     if (d.wrapUps.length) {
       lines.push('', 'At the end:');
-      d.wrapUps.forEach((w) => lines.push(`  ${w.who}: ${w.happy}/5, could finish: ${w.confident}${w.feel ? `, felt "${w.feel}"` : ''}${w.confused ? `, confused by "${w.confused}"` : ''}`));
+      d.wrapUps.forEach((w) => lines.push(`  ${w.who}: ${w.happy}/5, could have finished: ${w.confident}${w.feel ? `, felt "${w.feel}"` : ''}${w.confused ? `, confused by "${w.confused}"` : ''}`));
     }
     if (d.truncated) lines.push('', `Only the most recent ${DIGEST_MAX_SESSIONS} testers are counted here.`);
     return mcpText(lines.join('\n'), { structuredContent: d });
@@ -1896,16 +2101,25 @@ nobody can ever read.
 
 ## As MCP
 
-POST ${origin}/mcp — tools: usertest_check, usertest_create, usertest_delete,
-usertest_results.
+POST ${origin}/mcp — tools: usertest_task_sets, usertest_check, usertest_create,
+usertest_update, usertest_delete, usertest_results.
 
 ## As HTTP
 
 POST ${origin}/api/tests
   { subject, persona, tasks: [{ title, hint, check }], password,
     boot: { title, tagline, theme, plugins: [], images: [] },
-    webhook }
+    intro, questions, webhook }
   -> { id, tester, results, checks, webhook }
+
+  Limits, in characters: subject ${LIMITS.subject}, persona ${LIMITS.persona}, task title
+  ${LIMITS.taskTitle}, hint ${LIMITS.taskHint}, intro ${LIMITS.intro}, each question ${LIMITS.question};
+  up to ${LIMITS.tasksMax} tasks. Anything longer is refused with a 400 that says
+  which field, never cut short — shorten it and send again.
+  intro (optional): one line under the persona on the tester's intro page.
+  questions (optional): the closing questions in your own words, for a test
+  that is not about making a site: { ${QUESTION_KEYS.join(', ')} }. Any left out
+  keep their defaults: ${QUESTION_KEYS.map((k) => `${k} "${DEFAULT_QUESTIONS[k]}"`).join('; ')}.
 
   check (optional): how the site can show the task happened, read when the
   tester presses Done: ${Object.keys(CHECKS).join(', ')}, or none;
@@ -1925,10 +2139,19 @@ POST ${origin}/api/tests
 GET ${origin}/api/results?test=<id>&digest=1
   header: x-test-password: <the password>
   -> per task: done, couldnt, notReached, hintOpened, medianSecs, notes[]
-     plus wrapUps[]. Drop &digest=1 for one row per tester, add
+     plus wrapUps[], and status { finished, working, stopped }: a tester
+     quiet for half an hour without finishing counts as stopped. Drop &digest=1 for one row per tester, add
      &session=<id> for one tester's raw events.
   If you cannot send a header, ask the person to open the results page and
   press Copy prompt: it copies this same digest for them to paste to you.
+
+PATCH ${origin}/api/tests?test=<id>
+  header: x-test-password: <the password>
+  { subject?, persona?, tasks?, intro?, questions? } — only what changes.
+  Same links, same password; testers who start afterwards see the new words.
+  Tasks are matched by position. Once anyone has started, they can be
+  reworded but not added, removed or reordered (a 409 says so), because
+  answers are kept per task. A task sent without a check keeps its check.
 
 DELETE ${origin}/api/results?test=<id>
   header: x-test-password: <the password>
@@ -2004,16 +2227,16 @@ function introPage(test, origin, version) {
 <title>Thank you for helping make ${esc(test.subject)} better</title>
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
 <h1>Thank you for helping make ${esc(test.subject)} better</h1>
-<p>You are about to get a real WordPress website in your browser, already set up, with a small card of things to try. Nobody is watching. There are no wrong answers.</p>
+<p>You are about to get a real WordPress in your browser, already set up, with a small card of things to try. Nobody is watching. There are no wrong answers.</p>
 <div class="card"><h2>Who you are while you try it</h2>
 ${paras}
-<p class="soft" style="margin:0">The site you get is a start someone made for you. Make it yours.</p></div>
+${test.wording && test.wording.intro ? `<p class="soft" style="margin:0">${esc(test.wording.intro)}</p>` : ''}</div>
 <div class="card"><h2>How it goes</h2>
 <ol><li>Press Start. Give it a minute to build.</li>
-<li>A card on the right lists ${test.tasks.length} thing${test.tasks.length === 1 ? '' : 's'} to try. Do each one your own way, then press Done. If you can’t, press Couldn’t do it. Both are useful.</li>
+<li>A small card lists ${test.tasks.length} thing${test.tasks.length === 1 ? '' : 's'} to try. Do each one your own way, then press Done. If you can’t, press Couldn’t do it. Both are useful. You can drag the card out of the way.</li>
 <li>At the end there are four quick questions.</li></ol></div>
 <a class="go" href="${esc(playground)}" target="_blank" rel="noopener">Start</a>
-<p class="fine">Use a computer, not a phone, and Chrome, Edge or Firefox. The site is throwaway: close the tab and it is gone. The only thing kept is what the card learns — which tasks you did, how long they took, which page you were on, and anything you type into it. Nothing else: not what you write on the site, and not your name unless you choose to type it.</p>
+<p class="fine">Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is what the card learns — which tasks you did, how long they took, which page you were on, and anything you type into it. Nothing else: not what you write in WordPress, and not your name unless you choose to type it.</p>
 </div></body></html>`;
 }
 
@@ -2438,7 +2661,7 @@ const HOME = `<!doctype html>
     var d = document.createElement('div');
     d.className = 'task';
     d.innerHTML =
-      '<div class="top"><input type="text" class="t-title" maxlength="140" placeholder="Give the site your own name"></div>' +
+      '<div class="top"><input type="text" class="t-title" maxlength="200" placeholder="Give the site your own name"></div>' +
       '<input type="text" class="t-hint" maxlength="300" placeholder="Hint, shown only if they ask (optional)">' +
       // how the site can show it happened: read off the tester\u2019s site when
       // they press Done, so the results are not only their word for it
@@ -2706,9 +2929,20 @@ const RESULTS = `<!doctype html>
   .ask h2 { font-size:16px; margin:0 0 4px; }
   .ask p { margin:0; }
   .ask pre { white-space:pre-wrap; font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; background:#f6f3ee; padding:12px 14px; border-radius:8px; margin:12px 0; }
+  .titlerow { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .edit label { display:block; font-weight:600; margin:14px 0 4px; }
+  .edit label span { font-weight:400; color:var(--soft); }
+  .edit input[type=text], .edit textarea { width:100%; box-sizing:border-box; }
+  .edit textarea { min-height:90px; font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; }
+  .edit .task { margin:8px 0; padding:10px 12px; border:1px solid var(--line); border-radius:10px; }
+  .edit .task input + input { margin-top:6px; }
+  .edit .row { display:flex; gap:10px; align-items:center; margin-top:16px; }
+  .edit .primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .working { color:var(--ok); font-weight:600; }
 </style></head><body><div class="wrap">
-<h1 id="title">Results</h1>
+<div class="titlerow"><h1 id="title">Results</h1><button type="button" id="editBtn" hidden>Edit the test</button></div>
 <p class="soft">Each row is one tester. Click a row for the tasks and notes. <span id="sum"></span></p>
+<div id="edit" class="ask edit" hidden></div>
 <div id="auth"><input id="pw" type="password" placeholder="password" autocomplete="current-password"> <button id="go">Show</button> <span id="msg" class="err"></span></div>
 <div id="ask" class="ask" hidden>
   <h2>Let your assistant read it</h2>
@@ -2783,9 +3017,9 @@ const RESULTS = `<!doctype html>
     if (wrap && wrap.data) {
       var w = wrap.data;
       h += '<div class="wrapq">' +
-        '<span class="soft">Happy with the site</span><span>' + esc(w.happy) + ' / 5</span>' +
-        '<span class="soft">Could finish it</span><span>' + esc(w.confident) + '</span>' +
-        '<span class="soft">How editing felt</span><span class="note">' + esc(w.feel) + '</span>' +
+        '<span class="soft">Happy with how it went</span><span>' + esc(w.happy) + ' / 5</span>' +
+        '<span class="soft">Could have finished</span><span>' + esc(w.confident) + '</span>' +
+        '<span class="soft">How it felt</span><span class="note">' + esc(w.feel) + '</span>' +
         '<span class="soft">What confused them</span><span class="note">' + esc(w.confused) + '</span>' +
         '<span class="soft">Minutes</span><span>' + esc(w.minutes) + '</span></div>';
     } else h += '<p class="soft">No wrap-up yet.</p>';
@@ -2793,6 +3027,69 @@ const RESULTS = `<!doctype html>
       esc(errs.map(function (e) { return e.note; }).join(' \\u00b7 ').slice(0, 400)) + '</p>';
     document.getElementById('d-' + row.id).innerHTML = h + '</div>';
   }
+
+  // Finished, still going, or gone quiet: half an hour without a word from the
+  // card, and no answers to the closing questions, is somebody who stopped.
+  var STILL_WORKING_MS = 30 * 60 * 1000;
+  function statusOf(r, now) {
+    if (r.wrapped) return 'finished';
+    return (now || Date.now()) - r.last < STILL_WORKING_MS ? 'working' : 'stopped';
+  }
+  function statusCell(r, now) {
+    var m = Math.max(1, Math.round((r.last - r.first) / 60000)) + ' min';
+    var s = statusOf(r, now);
+    if (s === 'finished') return 'Finished \\u00b7 ' + m;
+    if (s === 'working') return '<span class="working">In progress</span> \\u00b7 ' + m;
+    return '<span class="soft">Stopped after ' + m + '</span>';
+  }
+
+  // Editing keeps the links and the password. Wording only: tasks are reworded
+  // in place, never added or removed here, so nobody's answers change task.
+  var current = null;
+  function field(label, idAttr, value, max, area) {
+    return '<label for="' + idAttr + '">' + label + '</label>' + (area
+      ? '<textarea id="' + idAttr + '" maxlength="' + max + '">' + esc(value) + '</textarea>'
+      : '<input type="text" id="' + idAttr + '" maxlength="' + max + '" value="' + esc(value) + '">');
+  }
+  function openEdit() {
+    var d = current, box = document.getElementById('edit');
+    if (!box.hidden) { box.hidden = true; return; }
+    var q = d.questions || {};
+    box.innerHTML = '<h2>Edit the test</h2><p class="soft">Fix a typo or change the wording. The links and the password stay the same, and testers who start from now on see the new words.</p>' +
+      field('What is being tested <span>\\u2014 \\u201cThank you for helping make \\u2026 better\\u201d</span>', 'eSubject', d.subject, 80) +
+      field('Who the tester is', 'ePersona', d.persona, 2000, true) +
+      field('A line under that <span>(optional)</span>', 'eIntro', d.intro, 300) +
+      '<label>Things to try <span>\\u2014 reword them here; the order and the number stay as they are</span></label>' +
+      (d.tasks || []).map(function (t, i) {
+        return '<div class="task"><input type="text" class="eTitle" maxlength="200" value="' + esc(t.title) + '" aria-label="Task ' + (i + 1) + '">' +
+          '<input type="text" class="eHint" maxlength="300" value="' + esc(t.hint || '') + '" placeholder="Hint, shown only if they ask" aria-label="Hint for task ' + (i + 1) + '"></div>';
+      }).join('') +
+      '<label>The questions at the end</label>' +
+      field('<span>1 to 5</span>', 'qHappy', q.happy, 120) +
+      field('<span>Yes, maybe or no</span>', 'qFinish', q.finish, 120) +
+      field('<span>Free text</span>', 'qFeel', q.feel, 120) +
+      field('<span>Free text</span>', 'qConfused', q.confused, 120) +
+      '<div class="row"><button type="button" class="primary" id="eSave">Save</button><button type="button" id="eCancel">Cancel</button><span id="eMsg"></span></div>';
+    box.hidden = false;
+    document.getElementById('eCancel').onclick = function () { box.hidden = true; };
+    document.getElementById('eSave').onclick = function () {
+      var val = function (x) { return document.getElementById(x).value; };
+      var titlesIn = [].slice.call(box.querySelectorAll('.eTitle')), hintsIn = [].slice.call(box.querySelectorAll('.eHint'));
+      var body = {
+        subject: val('eSubject'), persona: val('ePersona'), intro: val('eIntro'),
+        // each task keeps its check; only its words change
+        tasks: (d.tasks || []).map(function (t, i) { return { title: titlesIn[i].value, hint: hintsIn[i].value, check: t.check || 'none' }; }),
+        questions: { happy: val('qHappy'), finish: val('qFinish'), feel: val('qFeel'), confused: val('qConfused') },
+      };
+      var m = document.getElementById('eMsg');
+      m.className = 'soft'; m.textContent = 'Saving\\u2026';
+      fetch('/api/tests?test=' + encodeURIComponent(id), { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-test-password': pw }, body: JSON.stringify(body) })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'Could not save.'); return j; }); })
+        .then(function () { box.hidden = true; load(); })
+        .catch(function (e) { m.className = 'err'; m.textContent = e.message; });
+    };
+  }
+  document.getElementById('editBtn').addEventListener('click', openEdit);
 
   function load() {
     get('').then(function (d) {
@@ -2803,7 +3100,12 @@ const RESULTS = `<!doctype html>
       (d.tasks || []).forEach(function (t) { titles[t.id] = t.title; if (t.checkLabel) checks[t.id] = t.checkLabel; });
       var rows = d.sessions || [], done = 0, skipped = 0;
       rows.forEach(function (r) { done += r.done || 0; skipped += r.skipped || 0; });
-      sum.textContent = rows.length + ' tester(s), ' + done + ' tasks done, ' + skipped + ' not managed.';
+      current = d;
+      document.getElementById('editBtn').hidden = false;
+      var counts = { finished: 0, working: 0, stopped: 0 };
+      rows.forEach(function (r) { counts[statusOf(r, d.now)]++; });
+      sum.textContent = rows.length + ' tester(s): ' + counts.finished + ' finished, ' + counts.working + ' in progress, ' +
+        counts.stopped + ' stopped before the end. ' + done + ' tasks done, ' + skipped + ' not managed.';
       if (!rows.length) { out.innerHTML = '<p class="soft">Nobody has started yet.</p>'; return; }
       // a compared test: the versions side by side, task by task, first
       var vs = d.versions || null, labelOf = {};
@@ -2825,17 +3127,17 @@ const RESULTS = `<!doctype html>
               return '<td>' + bits.join(' \\u00b7 ') + '</td>';
             }).join('') + '</tr>';
           }).join('') +
-          '<tr><td>Happy with the site</td>' + vs.map(function (v) { return '<td>' + (v.happyAvg == null ? '\\u2013' : v.happyAvg + ' / 5') + '</td>'; }).join('') + '</tr>' +
-          '<tr><td>Could finish with more time</td>' + vs.map(function (v) { var c = v.couldFinish || {}; return '<td>' + (c.yes || 0) + ' yes \\u00b7 ' + (c.maybe || 0) + ' maybe \\u00b7 ' + (c.no || 0) + ' no</td>'; }).join('') + '</tr>' +
+          '<tr><td>Happy with how it went</td>' + vs.map(function (v) { return '<td>' + (v.happyAvg == null ? '\\u2013' : v.happyAvg + ' / 5') + '</td>'; }).join('') + '</tr>' +
+          '<tr><td>Could have finished</td>' + vs.map(function (v) { var c = v.couldFinish || {}; return '<td>' + (c.yes || 0) + ' yes \\u00b7 ' + (c.maybe || 0) + ' maybe \\u00b7 ' + (c.no || 0) + ' no</td>'; }).join('') + '</tr>' +
           '</table><h2>Each tester</h2>';
       }
-      out.innerHTML = cmp + '<table><tr><th>When</th><th>Who</th>' + (vs ? '<th>Version</th>' : '') + '<th>Done</th><th>Couldn\\u2019t</th><th>Wrap-up</th></tr>' +
+      out.innerHTML = cmp + '<table><tr><th>When</th><th>Who</th>' + (vs ? '<th>Version</th>' : '') + '<th>Done</th><th>Couldn\\u2019t</th><th>Status</th></tr>' +
         rows.map(function (r) {
           return '<tr class="s" data-id="' + esc(r.id) + '"><td>' + esc(when(r.first)) + '</td>' +
             '<td>' + esc(r.name || r.id) + '</td>' + (vs ? '<td>' + esc(labelOf[r.version] || '') + '</td>' : '') +
             '<td><span class="bar" style="width:' + (r.done * 14) + 'px"></span> ' + r.done + '</td>' +
             '<td><span class="bar b" style="width:' + (r.skipped * 14) + 'px"></span> ' + r.skipped + '</td>' +
-            '<td>' + (r.wrapped ? 'yes' : '') + '</td></tr>' +
+            '<td>' + statusCell(r, d.now) + '</td></tr>' +
             '<tr><td colspan="' + (vs ? 6 : 5) + '" id="d-' + esc(r.id) + '"></td></tr>';
         }).join('') + '</table>';
       [].slice.call(out.querySelectorAll('tr.s')).forEach(function (tr) {
@@ -2866,7 +3168,8 @@ const RESULTS = `<!doctype html>
   // answer per task, every note) attached. Any assistant can read that, and
   // the password never leaves this page.
   function askQuestion(compare) {
-    return 'These are the results of a user test of a WordPress site. Tell me where people got stuck, ' +
+    var subject = current && current.subject;
+    return 'These are the results of a user test of ' + (subject || 'something in WordPress') + '. Tell me where people got stuck, ' +
       'which hints they needed most, what they said in their notes, and the three changes that would help most.' +
       (compare ? ' The test compares versions, so tell me which did better and why.' : '');
   }
@@ -2929,7 +3232,11 @@ export default {
 
     if (url.pathname === '/api/tests') {
       if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-      if (req.method !== 'POST') return json({ error: 'POST only' }, 405, CORS);
+      if (req.method === 'PATCH') {
+        if (env.DB) await ensureSchema(env);
+        return editTest(env, req, url);
+      }
+      if (req.method !== 'POST') return json({ error: 'POST to make a test, PATCH to change one' }, 405, CORS);
       return createTest(env, req);
     }
 
