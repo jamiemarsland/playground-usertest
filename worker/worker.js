@@ -2248,7 +2248,7 @@ const DEMO = TASK_SETS.find((x) => x.key === 'make-it-yours');
 const HOME = `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>User-test a WordPress thing with anyone</title>
+<title>WordPress user testing, made easy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -2429,9 +2429,9 @@ const HOME = `<!doctype html>
 </header>
 
 <div class="shell hero">
-  <p class="eyebrow">USER TESTING FOR WORDPRESS · NO INSTALL · NO ACCOUNTS</p>
-  <h1>One sentence, and your plugin has testers.</h1>
-  <p class="sub">Paste this into Claude, ChatGPT, Cursor, anything that can fetch a URL. It drafts the persona and tasks with you, checks them, and hands you the links.</p>
+  <p class="eyebrow">NO INSTALL · NO ACCOUNTS · BUILT ON WORDPRESS PLAYGROUND</p>
+  <h1>WordPress user testing, made easy.</h1>
+  <p class="sub">Paste this into Claude Code, Cursor or any assistant that can run commands. It drafts the persona and tasks with you, checks them, and hands you the links. Using Claude or ChatGPT in the browser? Connect it as an MCP server, or <a href="#start">fill in the form</a>.</p>
   <div class="prompt">
     <p id="promptText">Fetch https://playground-usertest.view.fast/llms.txt and set up a user test for my plugin. Draft the persona and tasks with me, check them, then give me both links and the password.</p>
     <div class="under">
