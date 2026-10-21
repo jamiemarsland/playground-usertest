@@ -2431,7 +2431,7 @@ const HOME = `<!doctype html>
 <div class="shell hero">
   <p class="eyebrow">NO INSTALL · NO ACCOUNTS · BUILT ON WORDPRESS PLAYGROUND</p>
   <h1>WordPress user testing, made easy.</h1>
-  <p class="sub">Paste this into Claude Code, Cursor or any assistant that can run commands. It drafts the persona and tasks with you, checks them, and hands you the links. Using Claude or ChatGPT in the browser? Connect it as an MCP server, or <a href="#start">fill in the form</a>.</p>
+  <p class="sub">Paste this into Claude Code, Cursor or any assistant that can run commands. It drafts the persona and tasks with you, checks them, and hands you the links.</p>
   <div class="prompt">
     <p id="promptText">Fetch https://playground-usertest.view.fast/llms.txt and set up a user test for my plugin. Draft the persona and tasks with me, check them, then give me both links and the password.</p>
     <div class="under">
