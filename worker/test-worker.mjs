@@ -526,7 +526,7 @@ check(ct[1].check && ct[1].check.type === 'text' && ct[1].check.text === 'Open 9
 check(!ct[2].check && !ct[3].check && !ct[4].check, 'none, an unknown kind, and text with no words all mean no check');
 let lt = lintTest({ subject: 's', persona: 'You run a bakery and want a site your neighbours will like, with the hours on it.', tasks: [{ title: 'a', check: 'bogus' }, { title: 'b', check: { type: 'text' } }] });
 check(lt.problems.some((x) => /no check called|there is not/.test(x)) && lt.problems.some((x) => /which words/.test(x)), 'the check tool names a made-up check and text without words');
-check(Object.keys(CHECKS).length === 10, 'ten kinds of check');
+check(Object.keys(CHECKS).length === 12, 'twelve kinds of check: ten for WordPress, page and click for websites, words for both');
 
 const eChk = env();
 r = await call(eChk, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { tasks: [{ title: 'Give the site your own name', hint: 'Settings' }, { title: 'Add a page about your prices', hint: 'Pages' }, { title: 'Say hello', hint: 'x', check: 'none' }] }) });
@@ -726,6 +726,74 @@ check(dg.status && dg.status.working === 1 && dg.status.finished === 0 && dg.sta
 await eEd.DB.prepare('UPDATE sessions SET last_at = ? WHERE test_id = ?').bind(Date.now() - 2 * 60 * 60 * 1000, ed.id).run();
 const dg2 = await (await call(eEd, '/api/results?test=' + ed.id + '&digest=1', { headers: PW })).json();
 check(dg2.status.stopped === 1 && dg2.status.working === 0, 'one not heard from for two hours, and not finished, has stopped');
+
+/* ------------------------------------------------------------- any website */
+
+const eWeb = env();
+eWeb.CARD_SOURCE = '/* card */ console.log("card");';
+const WEB = {
+  subject: 'our pricing page', password: 'web-pass-1', siteUrl: 'https://shop.example.com/',
+  persona: 'You run a small bakery and want to know what this would cost you each month before you sign up for anything.',
+  tasks: [
+    { title: 'Find out what it costs each month', hint: 'Pricing, in the top menu', check: { type: 'page', path: 'https://shop.example.com/pricing/' } },
+    { title: 'Start a free trial', check: { type: 'click', text: 'Start free trial' } },
+    { title: 'Find out how to get in touch', check: { type: 'text', text: 'hello@shop.example.com' } },
+    { title: 'Change the site name to your bakery' },
+  ],
+};
+r = await call(eWeb, '/api/tests', { method: 'POST', body: WEB });
+const web = await r.json();
+check(r.status === 200 && web.snippet === '<script src="' + ORIGIN + '/card.js" async></script>', 'a website test hands back the one line to add: ' + web.snippet);
+check(web.installCheck.length === 1 && /^https:\/\/shop\.example\.com\/\?usertest=[a-z0-9]+&usertest_check=1$/.test(web.installCheck[0].url), 'and a link that checks the card is on the site: ' + web.installCheck[0].url);
+check(web.checks[0].check === 'They reached a page (“/pricing/”)' && /clicked something/.test(web.checks[1].check) && /page they saw/.test(web.checks[2].check), 'website checks: a page (a whole address cut to its path), a click, words seen');
+check(web.checks[3].check === '', 'nothing is guessed on a website: there is no site name to read');
+check(lintTest(Object.assign({}, WEB, { tasks: [{ title: 'Rename it', check: 'site_name' }] })).problems.some((x) => /only works on a WordPress test/.test(x)), 'a WordPress check on a website test is caught');
+check(lintTest(Object.assign({}, GOOD, { tasks: [{ title: 'See pricing', check: { type: 'page', path: '/p' } }] })).problems.some((x) => /only works on a website test/.test(x)), 'and a website check on a WordPress test');
+
+const webIntro = await (await call(eWeb, '/t/' + web.id)).text();
+check(webIntro.includes('href="https://shop.example.com/?usertest=' + web.id + '"') && !webIntro.includes('playground.wordpress.net'), 'the tester starts on the owner’s own site, not in Playground');
+check(/You are about to try a website/.test(webIntro), 'and the intro says so');
+r = await call(eWeb, '/t/' + web.id + '/blueprint.json');
+check(r.status === 404, 'a website test has no blueprint');
+
+r = await call(eWeb, '/api/card?test=' + web.id);
+const cfgWeb = await r.json();
+check(r.status === 200 && cfgWeb.tasks.length === 4 && cfgWeb.subject === 'our pricing page' && r.headers.get('access-control-allow-origin') === '*', 'the card on the owner’s site can read its tasks from any origin');
+check(cfgWeb.password === undefined && cfgWeb.persona === undefined, 'and nothing more than it needs');
+r = await call(eWeb, '/api/card?test=' + ed.id);
+check(r.status === 404, 'a WordPress test is not served to a website card');
+
+r = await call(eWeb, '/card.js');
+const js = await r.text();
+check(r.status === 200 && js.startsWith('window.PGUT_APP="' + ORIGIN + '";') && js.includes('console.log("card")') && /javascript/.test(r.headers.get('content-type')), 'the card script tells the card where the app is');
+r = await call(env(), '/card.js');
+check(r.status === 503, 'a build without the card bundled says so instead of serving nothing');
+
+const WPW = { 'x-test-password': 'web-pass-1' };
+let wres = await (await call(eWeb, '/api/results?test=' + web.id, { headers: WPW })).json();
+check(wres.web && wres.web.seen === null && wres.web.snippet === web.snippet, 'until the card loads on the site, the results page says it has not been seen');
+r = await call(eWeb, '/api/seen', { method: 'POST', body: { test: web.id, origin: 'https://shop.example.com/some/page?x=1' } });
+check(r.status === 200, 'the card reports that it loaded');
+wres = await (await call(eWeb, '/api/results?test=' + web.id, { headers: WPW })).json();
+check(wres.web.seen && wres.web.seen.origin === 'https://shop.example.com' && Date.now() - wres.web.seen.at < 5000, 'and the results page shows where, as an origin only');
+
+// events from the website card land like any other tester
+await call(eWeb, '/api/events', { method: 'POST', body: { test: web.id, session: 'webtester01', events: [
+  { type: 'start', data: { subject: 'our pricing page' } },
+  { type: 'task_done', task: cfgWeb.tasks[0].id, path: '/pricing/', data: { secs: 20, check: 'yes' } },
+] } });
+const wd = await (await call(eWeb, '/api/results?test=' + web.id + '&digest=1', { headers: WPW })).json();
+check(wd.tasks[0].done === 1 && wd.tasks[0].shown === 1 && wd.tasks[0].check === 'They reached a page (“/pricing/”)', 'a website tester’s result and check come back in the digest');
+
+r = await call(eWeb, '/api/tests', { method: 'POST', body: Object.assign({}, WEB, { siteUrl: undefined, password: 'web-pass-2', versions: [{ label: 'Today', siteUrl: 'https://shop.example.com/' }, { label: 'New', siteUrl: 'https://new.shop.example.com/' }] }) });
+const webCmp = await r.json();
+check(r.status === 200 && webCmp.installCheck.length === 2 && /usertest_v=b/.test(webCmp.installCheck[1].url), 'two websites can be compared, each with its own check link');
+const cmpIntro = await (await call(eWeb, '/t/' + webCmp.id)).text();
+check(/href="https:\/\/(new\.)?shop\.example\.com\/\?usertest=[a-z0-9]+&amp;usertest_v=[ab]"|href="https:\/\/(new\.)?shop\.example\.com\/\?usertest=[a-z0-9]+&usertest_v=[ab]"/.test(cmpIntro), 'a compared website test sends each tester to their version');
+r = await call(eWeb, '/api/tests', { method: 'POST', body: Object.assign({}, WEB, { siteUrl: undefined, password: 'web-pass-3', versions: [{ label: 'Site', siteUrl: 'https://shop.example.com/' }, { label: 'WP', blueprintJson: JSON.stringify(DEMO) }] }) });
+check(r.status === 400 && /not one of each/.test((await r.json()).error), 'a website cannot be compared with a WordPress');
+r = await call(eWeb, '/api/tests', { method: 'POST', body: Object.assign({}, WEB, { password: 'web-pass-4', siteUrl: 'http://shop.example.com/' }) });
+check(r.status === 400, 'a website address has to be https');
 
 /* -------------------------------------------------------------------- misc */
 

@@ -35,6 +35,11 @@ const NINETY_DAYS = 90 * 24 * 60 * 60;
 // is at this URL, so the card is updated for everybody by replacing the release
 // asset — no redeploy of the service.
 const DEFAULT_CARD_ZIP = 'https://github.com/jamiemarsland/playground-usertest/releases/latest/download/playground-usertest-card.zip';
+
+// The card's source, for websites that load it from here. spacefast/build.sh
+// writes plugin/card.js in place of the null below, so the published worker is
+// still one file; tests and local runs hand it in as env.CARD_SOURCE.
+const CARD_SOURCE = /*@card*/null;
 const TOUCH_AFTER = 24 * 60 * 60 * 1000; // how stale a test record may get before its expiry is refreshed
 
 const CORS = {
@@ -162,7 +167,9 @@ const SCHEMA = [
      creator        VARCHAR(64),
      webhook        VARCHAR(600),
      versions       TEXT,
-     wording        TEXT
+     wording        TEXT,
+     site_url       VARCHAR(600),
+     seen           TEXT
    )`,
   `CREATE TABLE IF NOT EXISTS sessions (
      test_id  VARCHAR(16) NOT NULL,
@@ -195,7 +202,7 @@ const SCHEMA = [
    )`,
 ];
 
-const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN versions TEXT', 'ALTER TABLE sessions ADD COLUMN version VARCHAR(4)', 'ALTER TABLE tests ADD COLUMN wording TEXT'];
+const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN versions TEXT', 'ALTER TABLE sessions ADD COLUMN version VARCHAR(4)', 'ALTER TABLE tests ADD COLUMN wording TEXT', 'ALTER TABLE tests ADD COLUMN site_url VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN seen TEXT'];
 
 // Once per database, not once per request — and keyed on the binding rather
 // than kept in one module-level variable, so a second database in the same
@@ -332,6 +339,9 @@ async function getTest(env, id) {
     webhook: row.webhook || '',
     versions: parse(row.versions, null),
     wording: parse(row.wording, null),
+    siteUrl: row.site_url || '',
+    // where and when the card was last seen loading for this test
+    seen: parse(row.seen, null),
   };
 }
 
@@ -486,7 +496,46 @@ const CHECKS = {
   menu: 'The menu changed',
   home: 'The home page changed',
   text: 'Some words appear on the home page',
+  // on any website, where there is no WordPress to read: what the tester saw
+  // and did, as the card watched it
+  page: 'They reached a page',
+  click: 'They clicked something',
 };
+
+// Which checks make sense where. A WordPress test reads the tester's own copy
+// of the site; a website test can only go by what the card saw them do.
+const WEB_CHECKS = ['page', 'text', 'click'];
+const WP_CHECKS = Object.keys(CHECKS).filter((k) => k !== 'page' && k !== 'click');
+
+// A test is a website test when its site (or any version of it) is an address
+// rather than a WordPress to boot.
+function isWebTest(test) {
+  return !!(test && (test.siteUrl || (Array.isArray(test.versions) && test.versions.some((v) => v && v.siteUrl))));
+}
+function isWebInput(body) {
+  return !!(body && (body.siteUrl || body.site_url ||
+    (Array.isArray(body.versions) && body.versions.some((v) => v && (v.siteUrl || v.site_url)))));
+}
+
+// A check put into words for the owner: "They reached a page (/pricing)".
+function describeCheck(check, web) {
+  if (!check || !CHECKS[check.type]) return '';
+  const name = web && check.type === 'text' ? 'Some words appear on a page they saw' : CHECKS[check.type];
+  const detail = check.type === 'page' ? check.path : check.text;
+  return name + (detail ? ` (“${detail}”)` : '');
+}
+
+// A path to look for, from whatever an owner typed: "/pricing", "pricing",
+// or a whole address on their site.
+function cleanPath(raw) {
+  let s = trim(raw, 200);
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) {
+    try { const u = new URL(s); s = u.pathname + u.search; } catch (e) { return ''; }
+  }
+  if (s[0] !== '/') s = '/' + s;
+  return s.slice(0, 200);
+}
 
 // A first guess from the task's own words, so most tests are checked without
 // anyone choosing anything. Order matters: "tagline" before "name", "menu"
@@ -507,21 +556,27 @@ function guessCheck(title) {
 
 // A check as an owner or an agent gave it: a type name, or { type, text }.
 // Absent means "guess from the title"; 'none' means "do not check this one".
-function cleanCheck(raw, title) {
+function cleanCheck(raw, title, web) {
   if (raw === undefined || raw === null || raw === '') {
+    // the guesses are all about WordPress; on a website nothing is guessed
+    if (web) return null;
     const g = guessCheck(title);
     return g ? { type: g } : null;
   }
   const type = typeof raw === 'string' ? raw : raw && raw.type;
-  if (!type || type === 'none' || !CHECKS[type]) return null;
-  if (type === 'text') {
+  if (!type || type === 'none' || !(web ? WEB_CHECKS : WP_CHECKS).includes(type)) return null;
+  if (type === 'text' || type === 'click') {
     const text = trim(typeof raw === 'object' ? raw.text : '', 120);
     return text ? { type, text } : null;
+  }
+  if (type === 'page') {
+    const path = cleanPath(typeof raw === 'object' ? (raw.path || raw.text) : '');
+    return path ? { type, path } : null;
   }
   return { type };
 }
 
-function cleanTasks(input) {
+function cleanTasks(input, web) {
   const list = Array.isArray(input) ? input : [];
   const out = [];
   for (const raw of list.slice(0, LIMITS.tasksMax)) {
@@ -532,7 +587,7 @@ function cleanTasks(input) {
     const hint = trim(raw && raw.hint, LIMITS.taskHint);
     if (why) task.why = why;
     if (hint) task.hint = hint;
-    const check = cleanCheck(raw && raw.check, title);
+    const check = cleanCheck(raw && raw.check, title, web);
     if (check) task.check = check;
     out.push(task);
   }
@@ -709,7 +764,8 @@ function lintTest(input) {
   const subject = trim(input && input.subject, LIMITS.subject);
   const set = TASK_SETS.find((x) => x.key === (input && (input.task_set || input.taskSet)));
   const persona = trimMultiline(input && input.persona, LIMITS.persona) || (set ? set.persona : '');
-  const tasks = cleanTasks(input && Array.isArray(input.tasks) && input.tasks.length ? input.tasks : (set ? set.tasks : []));
+  const web = isWebInput(input);
+  const tasks = cleanTasks(input && Array.isArray(input.tasks) && input.tasks.length ? input.tasks : (set ? set.tasks : []), web);
   const boot = input && input.boot && typeof input.boot === 'object' ? input.boot : null;
   const siteName = boot ? trim(boot.title, 60) : '';
 
@@ -751,16 +807,24 @@ function lintTest(input) {
   (Array.isArray(input && input.tasks) ? input.tasks : []).forEach((raw, i) => {
     const c = raw && raw.check;
     const type = typeof c === 'string' ? c : c && c.type;
-    if (type && type !== 'none' && !CHECKS[type]) problems.push(`Task ${i + 1} asks for a check called “${type}”, which there is not. The checks are: ${Object.keys(CHECKS).join(', ')}, or none.`);
-    if (type === 'text' && !(c && c.text)) problems.push(`Task ${i + 1} checks for words on the home page but does not say which words.`);
+    const allowed = web ? WEB_CHECKS : WP_CHECKS;
+    if (type && type !== 'none' && !allowed.includes(type)) {
+      problems.push(`Task ${i + 1} asks for a check called “${type}”, which ${CHECKS[type] ? (web ? 'only works on a WordPress test' : 'only works on a website test') : 'there is not'}. The checks here are: ${allowed.join(', ')}, or none.`);
+    }
+    if ((type === 'text' || type === 'click') && !(c && c.text)) problems.push(`Task ${i + 1} has a ${type} check but does not say which words to look for.`);
+    if (type === 'page' && !(c && (c.path || c.text))) problems.push(`Task ${i + 1} has a page check but does not say which page, e.g. { "type": "page", "path": "/pricing" }.`);
   });
   const unchecked = tasks.filter((t) => !t.check).length;
   // only worth saying when nothing at all is checked: a task like "write a
   // few sentences about yourself" has nothing the site can show, and that is fine
-  if (tasks.length && unchecked === tasks.length) notes.push('No task has a check, so you only have the tester’s word that they managed. Where the site can show it (a name, a page, the colours), give it a check.');
+  if (tasks.length && unchecked === tasks.length) {
+    notes.push(web
+      ? 'No task has a check, so you only have the tester’s word that they managed. Where you can, say what success looks like: a page they reach (/thank-you), words they see, or something they click.'
+      : 'No task has a check, so you only have the tester’s word that they managed. Where the site can show it (a name, a page, the colours), give it a check.');
+  }
 
   const summary = tasks.length
-    ? `${tasks.length} task(s) for someone testing ${subject || 'something'}:\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.hint ? '' : '  (no hint)'}${t.check ? `  [checked: ${CHECKS[t.check.type].toLowerCase()}${t.check.text ? ` “${t.check.text}”` : ''}]` : '  [not checked]'}`).join('\n')
+    ? `${tasks.length} task(s) for someone testing ${subject || 'something'}:\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.hint ? '' : '  (no hint)'}${t.check ? `  [checked: ${describeCheck(t.check, web).toLowerCase()}]` : '  [not checked]'}`).join('\n')
     : '';
 
   return { ok: problems.length === 0, problems, notes, summary };
@@ -1008,6 +1072,16 @@ async function readSiteSpec(body) {
   let blueprintBoot = null;
   const rawUrl = trim(body.blueprintUrl, 500);
   const rawJson = String(body.blueprintJson || '').trim();
+  const rawSite = trim(body.siteUrl || body.site_url, 500);
+
+  // A website, rather than a WordPress to boot. Nothing here ever fetches it:
+  // the address only becomes the tester's Start link, and the card the owner
+  // put on the site does the rest.
+  if (rawSite) {
+    const checked = checkPublicUrl(rawSite, 'site address');
+    if (checked.error) return { error: checked.error };
+    return { siteUrl: checked.url, blueprintUrl: '', blueprintJson: null, blueprintBoot: null };
+  }
 
   if (body.boot) {
     const checked = cleanBoot(body.boot);
@@ -1031,9 +1105,9 @@ async function readSiteSpec(body) {
       return { error: 'The pasted blueprint is not valid JSON.' };
     }
   } else {
-    return { error: 'Say what the tester should get: a blueprint URL, blueprint JSON, or a boot description.' };
+    return { error: 'Say what the tester should get: a website address, a blueprint URL, blueprint JSON, or a boot description.' };
   }
-  return { blueprintUrl, blueprintJson, blueprintBoot };
+  return { siteUrl: '', blueprintUrl, blueprintJson, blueprintBoot };
 }
 
 const VERSION_KEYS = ['a', 'b', 'c'];
@@ -1071,7 +1145,8 @@ async function makeTest(env, req, body) {
   // a ready-made set fills whatever was left out: the tasks, the persona
   const set = TASK_SETS.find((x) => x.key === body.taskSet);
   const persona = trimMultiline(body.persona, LIMITS.persona) || (set ? set.persona : '');
-  const tasks = cleanTasks(Array.isArray(body.tasks) && body.tasks.length ? body.tasks : (set ? set.tasks : []));
+  const web = isWebInput(body);
+  const tasks = cleanTasks(Array.isArray(body.tasks) && body.tasks.length ? body.tasks : (set ? set.tasks : []), web);
   const password = String(body.password || '');
 
   if (!subject) return json({ error: 'Say what is being tested — it goes in the tester’s thank-you line.' }, 400, CORS);
@@ -1093,6 +1168,7 @@ async function makeTest(env, req, body) {
   let blueprintUrl = '';
   let blueprintJson = null;
   let blueprintBoot = null;
+  let siteUrl = '';
   let versions = null;
   if (Array.isArray(body.versions) && body.versions.length) {
     if (body.versions.length < 2 || body.versions.length > VERSION_KEYS.length) {
@@ -1106,11 +1182,15 @@ async function makeTest(env, req, body) {
       if (spec.error) return json({ error: `${label}: ${spec.error}` }, 400, CORS);
       versions.push(Object.assign({ key: VERSION_KEYS[i], label }, spec));
     }
-    ({ blueprintUrl, blueprintJson, blueprintBoot } = versions[0]);
+    // one card can only be in one kind of place: all websites, or all WordPress
+    if (versions.some((v) => !!v.siteUrl) !== versions.every((v) => !!v.siteUrl)) {
+      return json({ error: 'Compare websites with websites, or WordPress with WordPress — not one of each.' }, 400, CORS);
+    }
+    ({ blueprintUrl, blueprintJson, blueprintBoot, siteUrl } = versions[0]);
   } else {
     const spec = await readSiteSpec(body);
     if (spec.error) return json({ error: spec.error }, 400, CORS);
-    ({ blueprintUrl, blueprintJson, blueprintBoot } = spec);
+    ({ blueprintUrl, blueprintJson, blueprintBoot, siteUrl } = spec);
   }
 
   const { salt, hash } = await hashPassword(password);
@@ -1120,24 +1200,99 @@ async function makeTest(env, req, body) {
   await run(
     env,
     `INSERT INTO tests (id, created, touched, expires, subject, persona, tasks,
-                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator, webhook, versions, wording)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator, webhook, versions, wording, site_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id, now, now, now + NINETY_DAYS * 1000, subject, persona, JSON.stringify(tasks),
     blueprintUrl || null,
     blueprintJson ? JSON.stringify(blueprintJson) : null,
     blueprintBoot ? JSON.stringify(blueprintBoot) : null,
     salt, hash, creator, webhook || null,
     versions ? JSON.stringify(versions) : null,
-    wording ? JSON.stringify(wording) : null
+    wording ? JSON.stringify(wording) : null,
+    siteUrl || null
   );
 
   const origin = publicOrigin(req);
   return json({
     id, tester: `${origin}/t/${id}`, results: `${origin}/t/${id}/results`,
-    checks: tasks.map((t) => ({ title: t.title, check: t.check ? CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') : '' })),
+    checks: tasks.map((t) => ({ title: t.title, check: t.check ? describeCheck(t.check, web) : '' })),
     webhook: webhook ? hookKind(webhook) : '',
     versions: versions ? versions.map((v) => ({ key: v.key, label: v.label })) : undefined,
+    // a website test needs the card on the site before anyone is sent
+    snippet: web ? cardSnippet(origin) : undefined,
+    installCheck: web ? installCheckLinks({ id, siteUrl, versions }) : undefined,
   }, 200, CORS);
+}
+
+/* ---------------------------------------------------------- any website */
+// A website test cannot ride in on a blueprint, so the owner puts the card on
+// their site with one line. It does nothing for an ordinary visitor: it only
+// wakes for someone who arrived through a tester link (?usertest=<id>), and
+// then it follows them from page to page on that site.
+
+function cardSnippet(origin) {
+  return `<script src="${origin}/card.js" async></script>`;
+}
+
+// The tester's way onto the site: the owner's address plus the test id, and
+// for a compared test the version they were given.
+function siteLink(siteUrl, id, version, extra) {
+  const u = new URL(siteUrl);
+  u.searchParams.set('usertest', id);
+  if (version) u.searchParams.set('usertest_v', version);
+  if (extra) for (const [k, v] of Object.entries(extra)) u.searchParams.set(k, v);
+  return u.toString();
+}
+
+// Links the owner opens to see the card is on the site before sending anyone:
+// the card says so and reports in, without starting a tester row.
+function installCheckLinks(test) {
+  if (test.versions && test.versions.some((v) => v && v.siteUrl)) {
+    return test.versions.map((v) => ({ key: v.key, label: v.label, url: siteLink(v.siteUrl, test.id, v.key, { usertest_check: '1' }) }));
+  }
+  return test.siteUrl ? [{ url: siteLink(test.siteUrl, test.id, '', { usertest_check: '1' }) }] : [];
+}
+
+// What the card needs to run on a website: the tasks and the words. Anyone
+// holding a tester link can see this much already.
+async function cardConfig(env, url) {
+  if (env.DB) await ensureSchema(env);
+  const test = await getTest(env, url.searchParams.get('test') || '');
+  if (!test || !isWebTest(test)) return json({ error: 'No such test.' }, 404, Object.assign({ 'cache-control': 'no-store' }, CORS));
+  return json({
+    test: test.id,
+    subject: test.subject,
+    tasks: test.tasks,
+    questions: (test.wording && test.wording.questions) || undefined,
+  }, 200, Object.assign({ 'cache-control': 'public, max-age=60' }, CORS));
+}
+
+// The card reporting that it loaded on the owner's site from an install-check
+// link. Kept as the latest sighting only; nothing about who opened it.
+async function cardSeen(env, req) {
+  if (!env.DB) return json({ error: 'The store is not set up yet.' }, 503, CORS);
+  await ensureSchema(env);
+  let body;
+  try { body = await req.json(); } catch (e) { return json({ error: 'json' }, 400, CORS); }
+  const test = await getTest(env, String((body && body.test) || ''));
+  if (!test || !isWebTest(test)) return json({ error: 'No such test.' }, 404, CORS);
+  const gate = await countAndCheck(env, `ip:seen:${thisHour()}:${ipOf(req)}`, 60, 2 * 60 * 60);
+  if (!gate.ok) return json({ error: 'too many' }, 429, CORS);
+  let origin = '';
+  try { origin = new URL(String(body.origin || '')).origin; } catch (e) { /* left empty */ }
+  await run(env, 'UPDATE tests SET seen = ? WHERE id = ?', JSON.stringify({ at: Date.now(), origin: origin.slice(0, 200) }), test.id);
+  return json({ ok: true }, 200, CORS);
+}
+
+// The card itself, as one script any site can load. The same file runs inside
+// a WordPress test, where the plugin hands it its settings; here it is told
+// where the app is and finds its own test from the link.
+function cardScript(env, origin) {
+  const src = env.CARD_SOURCE || CARD_SOURCE;
+  if (!src) return new Response('/* the card is not bundled into this build */', { status: 503, headers: { 'content-type': 'application/javascript; charset=utf-8' } });
+  return new Response(`window.PGUT_APP=${JSON.stringify(origin)};\n${src}`, {
+    headers: Object.assign({ 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public, max-age=300' }, CORS),
+  });
 }
 
 /* ------------------------------------------------------- the wrapped blueprint */
@@ -1215,6 +1370,7 @@ async function serveBlueprint(env, req, id) {
   await ensureSchema(env);
   const test = await getTest(env, id);
   if (!test) return json({ error: 'No such test.' }, 404, CORS);
+  if (isWebTest(test)) return json({ error: 'This test runs on a website, not in Playground.' }, 404, CORS);
 
   // which version: ?v= on the link the intro page handed out
   const wantV = new URL(req.url).searchParams.get('v') || '';
@@ -1473,7 +1629,7 @@ async function buildDigest(env, id, test, only) {
       id: task.id, title: task.title,
       done: 0, couldnt: 0, notReached: 0,
       hintOpened: 0, secs: [], notes: [],
-      check: task.check ? CHECKS[task.check.type] + (task.check.text ? ` (“${task.check.text}”)` : '') : '',
+      check: task.check ? describeCheck(task.check, isWebTest(test)) : '',
       shown: 0, notShown: 0, didAnyway: 0,
     });
   }
@@ -1627,7 +1783,7 @@ async function updateTest(env, test, body) {
       const old = test.tasks[i];
       return raw && raw.check === undefined && old ? Object.assign({}, raw, { check: old.check || 'none' }) : raw;
     });
-    const fresh = cleanTasks(given);
+    const fresh = cleanTasks(given, isWebTest(test));
     if (fresh.length < LIMITS.tasksMin) return { status: 400, body: { error: 'Give the tester at least one thing to try.' } };
     if (started) {
       if (fresh.length !== test.tasks.length) {
@@ -1705,7 +1861,14 @@ async function readResults(env, req, url) {
       persona: test.persona,
       intro: (test.wording && test.wording.intro) || '',
       questions: Object.assign({}, DEFAULT_QUESTIONS, (test.wording && test.wording.questions) || {}),
-      tasks: test.tasks.map((t) => (t.check ? Object.assign({}, t, { checkLabel: CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') }) : t)),
+      tasks: test.tasks.map((t) => (t.check ? Object.assign({}, t, { checkLabel: describeCheck(t.check, isWebTest(test)) }) : t)),
+      // a website test: where it runs, the line to put on it, and whether the card has been seen there
+      web: isWebTest(test) ? {
+        sites: test.versions ? test.versions.map((v) => ({ key: v.key, label: v.label, url: v.siteUrl })) : [{ url: test.siteUrl }],
+        snippet: cardSnippet(publicOrigin(req)),
+        installCheck: installCheckLinks(test),
+        seen: test.seen || null,
+      } : undefined,
       sessions: await sessionIndex(env, id),
       versions: test.versions ? await compareDigest(env, id, test) : undefined,
     },
@@ -1740,12 +1903,15 @@ const TASKS_SCHEMA = {
       hint: { type: 'string', maxLength: LIMITS.taskHint, description: `Shown only if they ask for it. This is where a control may be named. At most ${LIMITS.taskHint} characters.` },
       why: { type: 'string', maxLength: LIMITS.taskWhy, description: `Optional one line of context under the task. At most ${LIMITS.taskWhy} characters.` },
       check: {
-        description: 'How the service can see the task really happened, by reading the tester\'s site when they press Done or Couldn\'t do it. One of: ' +
-          Object.keys(CHECKS).map((k) => `${k} (${CHECKS[k].toLowerCase()})`).join(', ') +
-          '. For text, pass { "type": "text", "text": "the words" }. Leave it out and the service guesses from the title; pass "none" to check nothing.',
+        description: 'How the service can see the task really happened, read when they press Done or Couldn\'t do it. ' +
+          'On a WordPress test it reads the tester\'s own copy of the site — one of: ' +
+          WP_CHECKS.map((k) => `${k} (${CHECKS[k].toLowerCase()})`).join(', ') +
+          '. For text, pass { "type": "text", "text": "the words" }. Leave it out and the service guesses from the title. ' +
+          'On a website test (site_url) it goes by what the tester did while the task was open: { "type": "page", "path": "/pricing" } (they reached that page), ' +
+          '{ "type": "text", "text": "Thanks for signing up" } (a page they saw showed those words), or { "type": "click", "text": "Buy" } (they clicked a button or link with those words). Nothing is guessed on a website. Pass "none" to check nothing.',
         oneOf: [
-          { type: 'string', enum: Object.keys(CHECKS).concat(['none']) },
-          { type: 'object', properties: { type: { type: 'string', enum: Object.keys(CHECKS) }, text: { type: 'string' } }, required: ['type'] },
+          { type: 'string', enum: WP_CHECKS.concat(['none']) },
+          { type: 'object', properties: { type: { type: 'string', enum: Object.keys(CHECKS) }, text: { type: 'string' }, path: { type: 'string' } }, required: ['type'] },
         ],
       },
     },
@@ -1797,6 +1963,7 @@ const TOOLS = [
         persona: { type: 'string', maxLength: LIMITS.persona, description: 'A paragraph, second person, giving them a reason to want the site — not just a job title.' },
         tasks: TASKS_SCHEMA,
         boot: BOOT_SCHEMA,
+        site_url: { type: 'string', description: 'For a test on any website instead of WordPress in Playground: the https address testers start at. The owner must add one line to the site (usertest_create returns it). Testers use the real site, so a staging or preview copy is best if tasks change anything.' },
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
       },
@@ -1805,7 +1972,7 @@ const TOOLS = [
   },
   {
     name: 'usertest_create',
-    description: 'Make a test. Returns a link to send a tester and a link to read the results, plus the results password — which cannot be recovered, so give it to the person and keep it. Say what the tester should get with EITHER boot, or blueprint_url, or blueprint_json.',
+    description: 'Make a test. Returns a link to send a tester and a link to read the results, plus the results password — which cannot be recovered, so give it to the person and keep it. Say what the tester should get with ONE of: boot, blueprint_url or blueprint_json (WordPress in Playground), or site_url (any website, once the owner adds the one-line card it returns).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1814,6 +1981,7 @@ const TOOLS = [
         persona: { type: 'string', maxLength: LIMITS.persona },
         tasks: TASKS_SCHEMA,
         boot: BOOT_SCHEMA,
+        site_url: { type: 'string', description: 'For a test on any website instead of WordPress in Playground: the https address testers start at. The owner must add one line to the site (usertest_create returns it). Testers use the real site, so a staging or preview copy is best if tasks change anything.' },
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
         blueprint_url: { type: 'string', description: 'An https URL to an existing Playground blueprint. Re-read each time a tester starts, so it can keep changing.' },
@@ -1821,8 +1989,8 @@ const TOOLS = [
         password: { type: 'string', description: 'For the results page. One is made for you if you leave it out.' },
         versions: {
           type: 'array',
-          description: 'Optional, to compare: two or three versions of the site, each { label, boot | blueprint_url | blueprint_json }, given INSTEAD of boot/blueprint_url/blueprint_json. Same persona and tasks on each; one tester link shares testers out evenly; results come back side by side.',
-          items: { type: 'object', properties: { label: { type: 'string' }, boot: BOOT_SCHEMA, blueprint_url: { type: 'string' }, blueprint_json: { type: 'string' } }, required: ['label'] },
+          description: 'Optional, to compare: two or three versions, each { label, boot | blueprint_url | blueprint_json | site_url }, given INSTEAD of the single-site fields. All WordPress or all websites, not a mix. Same persona and tasks on each; one tester link shares testers out evenly; results come back side by side.',
+          items: { type: 'object', properties: { label: { type: 'string' }, boot: BOOT_SCHEMA, blueprint_url: { type: 'string' }, blueprint_json: { type: 'string' }, site_url: { type: 'string' } }, required: ['label'] },
         },
         webhook: { type: 'string', description: 'Optional. A Slack or Discord webhook URL (or any https address that takes a JSON POST). Each tester who finishes is posted there: what they managed, what the site showed, their answers and the results link. Never the password.' },
       },
@@ -1907,12 +2075,13 @@ async function mcpCall(env, req, name, args) {
       intro: args && args.intro,
       questions: args && args.questions,
       boot: args && args.boot,
+      siteUrl: args && args.site_url,
       blueprintUrl: args && args.blueprint_url,
       blueprintJson: args && args.blueprint_json,
       password,
       webhook: args && args.webhook,
       versions: args && Array.isArray(args.versions)
-        ? args.versions.map((v) => ({ label: v && v.label, boot: v && v.boot, blueprintUrl: v && v.blueprint_url, blueprintJson: v && v.blueprint_json }))
+        ? args.versions.map((v) => ({ label: v && v.label, boot: v && v.boot, siteUrl: v && v.site_url, blueprintUrl: v && v.blueprint_url, blueprintJson: v && v.blueprint_json }))
         : undefined,
     });
     const made = await res.json();
@@ -1920,7 +2089,10 @@ async function mcpCall(env, req, name, args) {
 
     const out = Object.assign({}, made, { password });
     return mcpText(
-      `Made. Send this to a tester:\n${made.tester}\n\n` +
+      (made.snippet
+        ? `Made. Before sending anyone, the owner adds this line to every page of their site, before </body>:\n${made.snippet}\n` +
+          `then opens ${made.installCheck.map((c) => c.url).join(' and ')} — the card says hello if it is there, and the results page shows it was seen.\n\nThen send this to a tester:\n${made.tester}\n\n`
+        : `Made. Send this to a tester:\n${made.tester}\n\n`) +
       `Read the results here:\n${made.results}\n\nPassword: ${password}\n\n` +
       'Give the person both links and the password — none of it can be looked up again. ' +
       'The test keeps itself for ninety days after the last tester.' +
@@ -2092,6 +2264,10 @@ tester opens a link, gets a throwaway WordPress site (WordPress Playground) with
 a card of things to try, and what they do comes back here. Nothing to install at
 either end, and no accounts.
 
+It also works on any website: give site_url instead of a blueprint, and the
+owner adds one line to their site. Testers then use the real site, with the
+same card, and the results come back the same way.
+
 ## Before anything else
 
 usertest_create hands back a results password that CANNOT be looked up again by
@@ -2134,7 +2310,17 @@ POST ${origin}/api/tests
   evenly; the digest gains versions[] side by side.
 
   Say what the tester gets with ONE of: boot (the service builds the blueprint),
-  blueprintUrl (re-read each time), blueprintJson (kept as-is).
+  blueprintUrl (re-read each time), blueprintJson (kept as-is), or siteUrl
+  (any https website).
+
+  A website test (siteUrl) answers with two more things: snippet, the line the
+  owner adds to every page of the site (it does nothing for ordinary visitors,
+  only for someone who came through the tester link), and installCheck, links
+  that show the card is there and mark it seen on the results page. Checks on
+  a website go by what the tester did: { type: "page", path: "/pricing" },
+  { type: "text", text: "the words" } (seen on a page), or
+  { type: "click", text: "Buy" }. Nothing is guessed. Testers use the real site,
+  so point it at staging or a preview if the tasks change anything.
 
 GET ${origin}/api/results?test=<id>&digest=1
   header: x-test-password: <the password>
@@ -2212,8 +2398,15 @@ async function versionFor(env, test, req) {
 }
 
 function introPage(test, origin, version) {
-  const playground = 'https://playground.wordpress.net/?blueprint-url=' +
-    encodeURIComponent(`${origin}/t/${test.id}/blueprint.json${version ? `?v=${version}` : ''}`) + '&storage=temp&mode=seamless';
+  const web = isWebTest(test);
+  const ver = web && test.versions ? (test.versions.find((v) => v.key === version) || test.versions[0]) : null;
+  // a website test starts on the owner's own site, where their card picks the
+  // tester up; a WordPress test starts in a fresh Playground
+  const start = web
+    ? siteLink((ver || test).siteUrl, test.id, ver ? ver.key : '')
+    : 'https://playground.wordpress.net/?blueprint-url=' +
+      encodeURIComponent(`${origin}/t/${test.id}/blueprint.json${version ? `?v=${version}` : ''}`) + '&storage=temp&mode=seamless';
+  const playground = start;
   // seamless: Playground's own toolbar stays out of the way, so the tester
   // sees a website and the card, nothing about the machinery underneath
   const paras = test.persona
@@ -2227,16 +2420,18 @@ function introPage(test, origin, version) {
 <title>Thank you for helping make ${esc(test.subject)} better</title>
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
 <h1>Thank you for helping make ${esc(test.subject)} better</h1>
-<p>You are about to get a real WordPress in your browser, already set up, with a small card of things to try. Nobody is watching. There are no wrong answers.</p>
+<p>${web ? 'You are about to try a website, with a small card of things to try.' : 'You are about to get a real WordPress in your browser, already set up, with a small card of things to try.'} Nobody is watching. There are no wrong answers.</p>
 <div class="card"><h2>Who you are while you try it</h2>
 ${paras}
 ${test.wording && test.wording.intro ? `<p class="soft" style="margin:0">${esc(test.wording.intro)}</p>` : ''}</div>
 <div class="card"><h2>How it goes</h2>
-<ol><li>Press Start. Give it a minute to build.</li>
+<ol><li>${web ? 'Press Start. The site opens in a new tab, with the card on it.' : 'Press Start. Give it a minute to build.'}</li>
 <li>A small card lists ${test.tasks.length} thing${test.tasks.length === 1 ? '' : 's'} to try. Do each one your own way, then press Done. If you can’t, press Couldn’t do it. Both are useful. You can drag the card out of the way.</li>
 <li>At the end there are four quick questions.</li></ol></div>
 <a class="go" href="${esc(playground)}" target="_blank" rel="noopener">Start</a>
-<p class="fine">Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is what the card learns — which tasks you did, how long they took, which page you were on, and anything you type into it. Nothing else: not what you write in WordPress, and not your name unless you choose to type it.</p>
+<p class="fine">${web ? '' : 'Use a computer, not a phone, and Chrome, Edge or Firefox. '}${web
+  ? 'The only thing kept is what the card learns — which tasks you did, how long they took, which pages you visited, and anything you type into the card. Nothing else: not what you type on the site, and not your name unless you choose to type it.'
+  : 'This WordPress is throwaway: close the tab and it is gone. The only thing kept is what the card learns — which tasks you did, how long they took, which page you were on, and anything you type into it. Nothing else: not what you write in WordPress, and not your name unless you choose to type it.'}</p>
 </div></body></html>`;
 }
 
@@ -2587,11 +2782,12 @@ const HOME = `<!doctype html>
 </fieldset>
 
 <fieldset>
-  <label>The blueprint that sets up your site</label>
-  <p class="hint">The one you already use to demo your thing. A URL is read once, now, and kept — so every tester gets the same site even if you carry on editing.</p>
-  <div class="tabs"><button type="button" class="on" data-bp="url">A URL</button><button type="button" data-bp="json">Paste JSON</button></div>
+  <label>Where they try it</label>
+  <p class="hint" id="bphint">The WordPress blueprint you already use to demo your thing. A URL is read once, now, and kept — so every tester gets the same site even if you carry on editing.</p>
+  <div class="tabs"><button type="button" class="on" data-bp="url">Blueprint URL</button><button type="button" data-bp="json">Paste blueprint JSON</button><button type="button" data-bp="site">Any website</button></div>
   <input type="url" id="bpurl" placeholder="https://example.com/blueprint.json">
   <textarea id="bpjson" hidden placeholder='{ "steps": [ … ] }'></textarea>
+  <input type="url" id="bpsite" hidden placeholder="https://your-site.example/">
   <label class="cmp-toggle"><input type="checkbox" id="compare"> Compare it with a second version</label>
   <p class="hint">Same tasks on both. One link shares testers out evenly, and the results come back side by side.</p>
 </fieldset>
@@ -2600,9 +2796,10 @@ const HOME = `<!doctype html>
   <label>The second version</label>
   <p class="hint">Name both, so the results say which is which.</p>
   <div class="names"><input type="text" id="labelA" maxlength="60" placeholder="First version, e.g. Today’s onboarding"><input type="text" id="labelB" maxlength="60" placeholder="Second version, e.g. New onboarding"></div>
-  <div class="tabs"><button type="button" class="on" data-bp2="url">A URL</button><button type="button" data-bp2="json">Paste JSON</button></div>
+  <div class="tabs"><button type="button" class="on" data-bp2="url">Blueprint URL</button><button type="button" data-bp2="json">Paste blueprint JSON</button><button type="button" data-bp2="site">Any website</button></div>
   <input type="url" id="bp2url" placeholder="https://example.com/blueprint-b.json">
   <textarea id="bp2json" hidden placeholder='{ "steps": [ … ] }'></textarea>
+  <input type="url" id="bp2site" hidden placeholder="https://second-version.example/">
 </fieldset>
 
 <fieldset>
@@ -2655,7 +2852,27 @@ const HOME = `<!doctype html>
   });
 
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
-  var CHECK_OPTIONS = ${JSON.stringify(Object.keys(CHECKS).map((k) => `<option value="${k}">${CHECKS[k]}</option>`).join(''))};
+  // WordPress tests read the tester's own copy of the site; a website test can
+  // only go by what the card saw them do, so the checks on offer follow the tab
+  var WP_OPTIONS = ${JSON.stringify(WP_CHECKS.map((k) => `<option value="${k}">${CHECKS[k]}</option>`).join(''))};
+  var WEB_OPTIONS = ${JSON.stringify(WEB_CHECKS.map((k) => `<option value="${k}">${k === 'text' ? 'Some words appear on a page they saw' : CHECKS[k]}</option>`).join(''))};
+  var CHECK_OPTIONS = WP_OPTIONS;
+  var WORDS_FOR = { text: 'The words to look for', click: 'Words on the button or link, e.g. Buy', page: 'The page, e.g. /pricing' };
+  function fitWords(d) {
+    var v = d.querySelector('.t-check').value, w = d.querySelector('.t-words');
+    w.hidden = !WORDS_FOR[v];
+    if (WORDS_FOR[v]) w.placeholder = WORDS_FOR[v];
+  }
+  function fitChecks(web) {
+    CHECK_OPTIONS = web ? WEB_OPTIONS : WP_OPTIONS;
+    [].slice.call(tasksEl.querySelectorAll('.task')).forEach(function (d) {
+      var sel = d.querySelector('.t-check'), was = sel.value;
+      sel.innerHTML = '<option value="">' + (web ? 'Only their word for it' : 'Work it out from the task') + '</option>' + CHECK_OPTIONS +
+        '<option value="none">Don\u2019t check this one</option>';
+      sel.value = [].some.call(sel.options, function (o) { return o.value === was; }) ? was : '';
+      fitWords(d);
+    });
+  }
   var SETS = ${JSON.stringify(TASK_SETS)};
   function addTask(title, hint, check) {
     var d = document.createElement('div');
@@ -2680,8 +2897,9 @@ const HOME = `<!doctype html>
     if (hint) d.querySelector('.t-hint').value = hint;
     var sel = d.querySelector('.t-check');
     if (check) sel.value = check;
-    sel.addEventListener('change', function () { d.querySelector('.t-words').hidden = sel.value !== 'text'; });
+    sel.addEventListener('change', function () { fitWords(d); });
     tasksEl.appendChild(d);
+    if (mode === 'site') fitChecks(true);
   }
   for (var i = 0; i < 5; i++) addTask();
 
@@ -2707,6 +2925,7 @@ const HOME = `<!doctype html>
       [].slice.call(document.querySelectorAll('[data-bp2]')).forEach(function (o) { o.classList.toggle('on', o === b); });
       document.getElementById('bp2url').hidden = mode2 !== 'url';
       document.getElementById('bp2json').hidden = mode2 !== 'json';
+      document.getElementById('bp2site').hidden = mode2 !== 'site';
     });
   });
   [].slice.call(document.querySelectorAll('[data-bp]')).forEach(function (b) {
@@ -2715,6 +2934,11 @@ const HOME = `<!doctype html>
       [].slice.call(document.querySelectorAll('[data-bp]')).forEach(function (o) { o.classList.toggle('on', o === b); });
       document.getElementById('bpurl').hidden = mode !== 'url';
       document.getElementById('bpjson').hidden = mode !== 'json';
+      document.getElementById('bpsite').hidden = mode !== 'site';
+      document.getElementById('bphint').textContent = mode === 'site'
+        ? 'Any site you can add one line to. Testers use the real site, so a staging or preview copy is best if your tasks change things.'
+        : 'The WordPress blueprint you already use to demo your thing. A URL is read once, now, and kept \u2014 so every tester gets the same site even if you carry on editing.';
+      fitChecks(mode === 'site');
     });
   });
 
@@ -2723,14 +2947,14 @@ const HOME = `<!doctype html>
     ev.preventDefault();
     msg.textContent = '';
     var tasks = [].slice.call(tasksEl.querySelectorAll('.task')).map(function (d) {
-      var c = d.querySelector('.t-check').value;
-      var check = c === 'text' ? { type: 'text', text: d.querySelector('.t-words').value } : (c || undefined);
+      var c = d.querySelector('.t-check').value, w = d.querySelector('.t-words').value;
+      var check = c === 'text' || c === 'click' ? { type: c, text: w } : c === 'page' ? { type: 'page', path: w } : (c || undefined);
       return { title: d.querySelector('.t-title').value, hint: d.querySelector('.t-hint').value, check: check };
     }).filter(function (t) { return t.title.trim(); });
     if (!tasks.length) { msg.textContent = 'Give the tester at least one thing to try.'; return; }
 
     submit.disabled = true;
-    submit.textContent = 'Checking the blueprint…';
+    submit.textContent = mode === 'site' ? 'Making the test…' : 'Checking the blueprint…';
 
     var url = mode === 'url' ? document.getElementById('bpurl').value.trim() : '';
     var comparing = document.getElementById('compare').checked;
@@ -2751,10 +2975,15 @@ const HOME = `<!doctype html>
 
     fetched.then(function (texts) {
       var text = texts[0], text2 = texts[1];
-      var first = { blueprintUrl: text ? '' : url, blueprintJson: text || (mode === 'json' ? document.getElementById('bpjson').value : '') };
+      var first = mode === 'site'
+        ? { siteUrl: document.getElementById('bpsite').value.trim() }
+        : { blueprintUrl: text ? '' : url, blueprintJson: text || (mode === 'json' ? document.getElementById('bpjson').value : '') };
+      var second = mode2 === 'site'
+        ? { siteUrl: document.getElementById('bp2site').value.trim() }
+        : { blueprintUrl: text2 ? '' : url2, blueprintJson: text2 || (mode2 === 'json' ? document.getElementById('bp2json').value : '') };
       var versions = comparing ? [
         Object.assign({ label: document.getElementById('labelA').value.trim() }, first),
-        { label: document.getElementById('labelB').value.trim(), blueprintUrl: text2 ? '' : url2, blueprintJson: text2 || (mode2 === 'json' ? document.getElementById('bp2json').value : '') },
+        Object.assign({ label: document.getElementById('labelB').value.trim() }, second),
       ] : undefined;
       return fetch('/api/tests', {
         method: 'POST',
@@ -2763,6 +2992,7 @@ const HOME = `<!doctype html>
           subject: document.getElementById('subject').value,
           persona: document.getElementById('persona').value,
           tasks: tasks,
+          siteUrl: first.siteUrl,
           blueprintUrl: first.blueprintUrl,
           blueprintJson: first.blueprintJson,
           versions: versions,
@@ -2793,6 +3023,8 @@ const HOME = `<!doctype html>
         document.getElementById('f').hidden = true;
         document.getElementById('out').innerHTML =
           '<div class="out"><h2 style="margin-top:0">Two links</h2>' +
+          (res.d.snippet ? '<p style="margin-bottom:4px"><strong>First, put this line on your site</strong>, before the closing &lt;/body&gt; tag. It only wakes for people who come through your tester link.</p><code>' + esc(res.d.snippet) + '</code>' +
+            '<p class="soft">Then open ' + (res.d.installCheck || []).map(function (c) { return '<a href="' + esc(c.url) + '" target="_blank" rel="noopener">this check link</a>' + (c.label ? ' (' + esc(c.label) + ')' : ''); }).join(' and ') + ': the card says hello if it is there, and the results page shows it was seen.</p>' : '') +
           '<p style="margin-bottom:4px"><strong>Send this to a tester</strong></p><code>' + res.d.tester + '</code>' +
           '<p style="margin-bottom:4px"><strong>Read the results here</strong>, with the password you chose</p><code>' + res.d.results + '</code>' +
           ((res.d.checks || []).length ? '<p style="margin-bottom:4px"><strong>How each task is checked</strong></p><ul class="soft" style="margin-top:0">' +
@@ -2943,6 +3175,7 @@ const RESULTS = `<!doctype html>
 <div class="titlerow"><h1 id="title">Results</h1><button type="button" id="editBtn" hidden>Edit the test</button></div>
 <p class="soft">Each row is one tester. Click a row for the tasks and notes. <span id="sum"></span></p>
 <div id="edit" class="ask edit" hidden></div>
+<div id="webBox" class="ask" hidden></div>
 <div id="auth"><input id="pw" type="password" placeholder="password" autocomplete="current-password"> <button id="go">Show</button> <span id="msg" class="err"></span></div>
 <div id="ask" class="ask" hidden>
   <h2>Let your assistant read it</h2>
@@ -3091,6 +3324,35 @@ const RESULTS = `<!doctype html>
   }
   document.getElementById('editBtn').addEventListener('click', openEdit);
 
+  // A website test only works once the card is on the site, so until it has
+  // been seen there this box says so first; after that it stays as a reminder.
+  function ago(ms) {
+    var m = Math.round(ms / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    var h = Math.round(m / 60);
+    return h < 48 ? h + ' hours ago' : Math.round(h / 24) + ' days ago';
+  }
+  function showWeb(w, testers) {
+    var box = document.getElementById('webBox');
+    var seen = w.seen && w.seen.at;
+    box.innerHTML = '<h2>' + (seen || testers ? 'The card on your site' : 'Put the card on your site first') + '</h2>' +
+      '<p class="soft">Add this line to every page of ' + w.sites.map(function (s) { return esc(s.url); }).join(' and ') +
+      ', before the closing &lt;/body&gt; tag. It does nothing for ordinary visitors; it only wakes for someone who came through your tester link.</p>' +
+      '<pre id="snippet">' + esc(w.snippet) + '</pre>' +
+      '<button type="button" id="snipCopy">Copy the line</button> ' +
+      w.installCheck.map(function (c) { return '<a href="' + esc(c.url) + '" target="_blank" rel="noopener">Check it is on ' + esc(c.label || 'the site') + '</a>'; }).join(' \u00b7 ') +
+      '<p class="soft" style="margin-top:10px">' + (seen
+        ? 'Last seen on ' + esc(w.seen.origin || 'the site') + ', ' + ago(Date.now() - w.seen.at) + '.'
+        : 'Not seen yet. Add the line, then open the check link: the card says hello and this changes.') + '</p>';
+    box.hidden = false;
+    var btn = document.getElementById('snipCopy');
+    btn.onclick = function () {
+      var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy the line'; }, 1600); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(w.snippet).then(done, function () {});
+    };
+  }
+
   function load() {
     get('').then(function (d) {
       auth.hidden = true;
@@ -3102,6 +3364,7 @@ const RESULTS = `<!doctype html>
       rows.forEach(function (r) { done += r.done || 0; skipped += r.skipped || 0; });
       current = d;
       document.getElementById('editBtn').hidden = false;
+      if (d.web) showWeb(d.web, rows.length);
       var counts = { finished: 0, working: 0, stopped: 0 };
       rows.forEach(function (r) { counts[statusOf(r, d.now)]++; });
       sum.textContent = rows.length + ' tester(s): ' + counts.finished + ' finished, ' + counts.working + ' in progress, ' +
@@ -3224,6 +3487,19 @@ export default {
       return new Response(LLMS_TXT(publicOrigin(req)), {
         headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' },
       });
+    }
+
+    if (url.pathname === '/card.js') return cardScript(env, publicOrigin(req));
+
+    if (url.pathname === '/api/card') {
+      if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+      return cardConfig(env, url);
+    }
+
+    if (url.pathname === '/api/seen') {
+      if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+      if (req.method !== 'POST') return json({ error: 'POST only' }, 405, CORS);
+      return cardSeen(env, req);
     }
 
     if (url.pathname === '/api/task-sets') {
