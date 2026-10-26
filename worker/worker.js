@@ -756,16 +756,92 @@ const TASK_SETS = [
   },
 ];
 
+// The tests most people run on an ordinary website: can a visitor tell what it
+// is, find what they came for, and get to the end of it. There is no address to
+// know in advance, so these carry no checks; an owner adds the page or the
+// words that mean success for their own site.
+const WEB_TASK_SETS = [
+  {
+    key: 'first-look',
+    name: 'First look',
+    for: 'A home page or landing page: can people tell what it is and what to do next?',
+    persona: 'A friend sent you this link because you run a small bakery and are always looking for ways to spend less time on admin. You have five minutes before the shop opens, and you want to know if this is worth a proper look.',
+    tasks: [
+      { title: 'In a sentence, say what this is for (type it in the note)', hint: 'Read the top of the home page.' },
+      { title: 'Find out what it costs', hint: 'Look for Pricing, usually in the top menu.' },
+      { title: 'Find out how to try it', hint: 'Look for a button near the top of the home page.' },
+      { title: 'Find a way to ask a question', hint: 'Contact is usually in the menu or at the bottom of the page.' },
+    ],
+  },
+  {
+    key: 'sign-up',
+    name: 'Sign up',
+    for: 'Anything with an account: can people get from interested to signed in?',
+    persona: 'You have heard good things about this from a colleague and want to set up your own account today, so you can try it with real work tomorrow.',
+    tasks: [
+      { title: 'Find out whether you can try it for free', hint: 'Pricing, or a button near the top of the home page.' },
+      { title: 'Create an account', hint: 'Sign up or Get started, usually top right.' },
+      { title: 'Find where to change your email address', hint: 'Your account or settings, usually behind your name or picture.' },
+      { title: 'Sign out', hint: 'Usually in the same place as your account settings.' },
+    ],
+  },
+  {
+    key: 'buy-something',
+    name: 'Buy something',
+    for: 'Online shops: can people find something, trust it, and get to checkout?',
+    persona: 'It is your friend’s birthday on Saturday and you want to send them something nice. You have about £30 to spend and do not want to leave it too late.',
+    tasks: [
+      { title: 'Find something under £30 that would make a good present', hint: 'The shop or a category in the menu; some shops let you sort by price.' },
+      { title: 'Check whether it would arrive by Saturday', hint: 'Delivery details are usually on the product page or in the footer.' },
+      { title: 'Put it in your basket', hint: 'Add to basket, on the product page.' },
+      { title: 'Get as far as paying, then stop before you pay', hint: 'Open the basket, then Checkout.' },
+    ],
+  },
+  {
+    key: 'find-something-to-read',
+    name: 'Find something to read',
+    for: 'Blogs, magazines and help centres: can people find what they are looking for?',
+    persona: 'You have a spare ten minutes and want something worth reading. You also want to know when there is something new, without having to remember to check.',
+    tasks: [
+      { title: 'Find an article on something you care about', hint: 'Search, or the topics in the menu.' },
+      { title: 'Find the newest article', hint: 'The home page, or a Blog or News page.' },
+      { title: 'Sign up to hear about new articles', hint: 'A newsletter or Subscribe box, often at the end of an article or in the footer.' },
+      { title: 'Copy a link to an article to send to a friend', hint: 'A Share button, or copy the address from the browser.' },
+    ],
+  },
+  {
+    key: 'get-in-touch',
+    name: 'Get in touch',
+    for: 'Local businesses and services: can people find the basics and make contact?',
+    persona: 'You need this kind of service next week and want to sort it out today. You want to know when they are open, where they are, and how to book.',
+    tasks: [
+      { title: 'Find out when they are open on Saturday', hint: 'Opening hours are often in the footer or on a Contact page.' },
+      { title: 'Find out where they are', hint: 'An address or map, usually on the Contact page.' },
+      { title: 'Ask for an appointment', hint: 'A Book or Contact button, or a form on the Contact page.' },
+      { title: 'Find a phone number to call', hint: 'Usually at the top or bottom of every page.' },
+    ],
+  },
+];
+
+// One app, two front doors. Published with FRONT 'web' (spacefast/build.sh
+// --front web) it presents itself as user testing for any website; otherwise as
+// WordPress user testing. The tests, card, results and editing are the same.
+const FRONT = /*@front*/'wordpress';
+function frontOf(env) { return ((env && env.FRONT) || FRONT) === 'web' ? 'web' : 'wordpress'; }
+function setsFor(front) { return front === 'web' ? WEB_TASK_SETS : TASK_SETS; }
+// a set is found by its key whichever door it was offered through
+function findSet(key) { return TASK_SETS.find((x) => x.key === key) || WEB_TASK_SETS.find((x) => x.key === key) || null; }
+
 const BUTTON_WORDS = /\b(click|press|tap|hit|select|choose|drag|navigate to|go to the|open the)\b/i;
 
-function lintTest(input) {
+function lintTest(input, forceWeb) {
   const problems = [];
   const notes = [];
 
   const subject = trim(input && input.subject, LIMITS.subject);
-  const set = TASK_SETS.find((x) => x.key === (input && (input.task_set || input.taskSet)));
+  const set = findSet(input && (input.task_set || input.taskSet));
   const persona = trimMultiline(input && input.persona, LIMITS.persona) || (set ? set.persona : '');
-  const web = isWebInput(input);
+  const web = forceWeb || isWebInput(input);
   const tasks = cleanTasks(input && Array.isArray(input.tasks) && input.tasks.length ? input.tasks : (set ? set.tasks : []), web);
   const boot = input && input.boot && typeof input.boot === 'object' ? input.boot : null;
   const siteName = boot ? trim(boot.title, 60) : '';
@@ -1144,7 +1220,7 @@ async function makeTest(env, req, body) {
   const subject = trim(body.subject, LIMITS.subject);
   const wording = cleanWording(body);
   // a ready-made set fills whatever was left out: the tasks, the persona
-  const set = TASK_SETS.find((x) => x.key === body.taskSet);
+  const set = findSet(body.taskSet);
   const persona = trimMultiline(body.persona, LIMITS.persona) || (set ? set.persona : '');
   const web = isWebInput(body);
   const tasks = cleanTasks(Array.isArray(body.tasks) && body.tasks.length ? body.tasks : (set ? set.tasks : []), web);
@@ -2051,18 +2127,60 @@ const TOOLS = [
   },
 ];
 
+// The website front door's tools: the same tools with the WordPress parts taken
+// out, so an assistant there is never offered a blueprint it cannot use.
+const WEB_CHECK_HELP = 'How you will know the task really happened, read when they press Done or Couldn\'t do it, from what they did while the task was open: ' +
+  '{ "type": "page", "path": "/pricing" } (they reached that page), { "type": "text", "text": "Thanks for signing up" } (a page they saw showed those words), ' +
+  'or { "type": "click", "text": "Buy" } (they clicked a button or link with those words). Leave it out to go by their word.';
+function toolsFor(front) {
+  if (front !== 'web') return TOOLS;
+  return TOOLS.map((tool) => {
+    const t = JSON.parse(JSON.stringify(tool));
+    const props = t.inputSchema && t.inputSchema.properties;
+    if (props) {
+      delete props.boot; delete props.blueprint_url; delete props.blueprint_json;
+      if (props.task_set) props.task_set.enum = WEB_TASK_SETS.map((x) => x.key);
+      if (props.tasks && props.tasks.items) {
+        props.tasks.items.properties.check = {
+          description: WEB_CHECK_HELP,
+          oneOf: [
+            { type: 'string', enum: ['none'] },
+            { type: 'object', properties: { type: { type: 'string', enum: WEB_CHECKS }, text: { type: 'string' }, path: { type: 'string' } }, required: ['type'] },
+          ],
+        };
+      }
+      if (props.site_url) props.site_url.description = 'The https address of the site, where testers start. The owner adds one line to the site (usertest_create returns it). Testers use the real site, so a staging or preview copy is best if the tasks change anything.';
+      if (props.versions) {
+        props.versions.description = 'Optional, to compare: two or three sites, each { label, site_url }, given INSTEAD of site_url. Same persona and tasks on each; one tester link shares testers out evenly; results come back side by side.';
+        const ip = props.versions.items.properties;
+        delete ip.boot; delete ip.blueprint_url; delete ip.blueprint_json;
+        props.versions.items.required = ['label', 'site_url'];
+      }
+      if (props.persona) props.persona.description = 'A paragraph, second person, giving them a reason to be on the site — not just a job title.';
+    }
+    if (t.name === 'usertest_task_sets') t.description = 'Ready-made task sets for the tests most people run on a website (a first look, signing up, buying something, finding something to read, getting in touch). Each has a persona and four tasks with hints. Pass task_set to usertest_check or usertest_create to use one, or copy and change its tasks.';
+    if (t.name === 'usertest_create') {
+      t.description = 'Make a test of a website. Returns the line the owner adds to every page of the site, a link that checks it is there, a link to send testers and a link to read the results, plus the results password — which cannot be recovered, so give it to the person and keep it.';
+      t.inputSchema.required = ['subject', 'site_url'];
+    }
+    return t;
+  });
+}
+
 function mcpText(t, extra) {
   return Object.assign({ content: [{ type: 'text', text: t }] }, extra || {});
 }
 
 async function mcpCall(env, req, name, args) {
+  const web = frontOf(env) === 'web';
   if (name === 'usertest_task_sets') {
-    const lines = TASK_SETS.map((x) => `${x.key} — ${x.name}: ${x.for}\n` + x.tasks.map((t, i) => `    ${i + 1}. ${t.title}`).join('\n'));
-    return mcpText(lines.join('\n\n') + '\n\nPass task_set: "<key>" to usertest_check or usertest_create; your own tasks or persona, if given, win.', { structuredContent: { sets: TASK_SETS } });
+    const sets = setsFor(frontOf(env));
+    const lines = sets.map((x) => `${x.key} — ${x.name}: ${x.for}\n` + x.tasks.map((t, i) => `    ${i + 1}. ${t.title}`).join('\n'));
+    return mcpText(lines.join('\n\n') + '\n\nPass task_set: "<key>" to usertest_check or usertest_create; your own tasks or persona, if given, win.', { structuredContent: { sets } });
   }
 
   if (name === 'usertest_check') {
-    const r = lintTest(args);
+    const r = lintTest(args, web);
     const lines = [];
     lines.push(r.ok ? 'Nothing blocking.' : 'Worth fixing first:');
     r.problems.forEach((x) => lines.push('- ' + x));
@@ -2078,6 +2196,9 @@ async function mcpCall(env, req, name, args) {
     // A password nobody chose is better than no password, and an agent has
     // nowhere sensible to invent one from.
     const password = String((args && args.password) || '') || makeId(16);
+    if (web && !(args && (args.site_url || (Array.isArray(args.versions) && args.versions.length)))) {
+      return mcpText('Say which site to test: site_url, the https address testers start at.', { isError: true });
+    }
     const res = await makeTest(env, req, {
       subject: args && args.subject,
       persona: args && args.persona,
@@ -2223,17 +2344,21 @@ async function mcpMessage(env, req, msg) {
       return ok({
         protocolVersion: MCP_VERSIONS.includes(want) ? want : MCP_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'playground-usertest', version: '1.0.0' },
-        instructions:
-          'Sets up a user test of a WordPress theme, plugin or site: the tester opens a link, ' +
-          'gets a throwaway WordPress site in their browser with a card of things to try, and what ' +
-          'they do comes back here. Draft the persona and tasks with the person, usertest_check them, ' +
-          'then usertest_create and hand over both links and the password. Come back later for ' +
-          'usertest_results — real testers take days, not minutes.',
+        serverInfo: { name: frontOf(env) === 'web' ? 'website-usertest' : 'playground-usertest', version: '1.0.0' },
+        instructions: frontOf(env) === 'web'
+          ? 'Sets up a user test of a website: the owner adds one line to their site, the tester opens a link, ' +
+            'uses the real site with a small card of things to try, and what they do comes back here. Draft the ' +
+            'persona and tasks with the person, usertest_check them, then usertest_create and hand over the line ' +
+            'to add, both links and the password. Come back later for usertest_results — real testers take days, not minutes.'
+          : 'Sets up a user test of a WordPress theme, plugin or site: the tester opens a link, ' +
+            'gets a throwaway WordPress site in their browser with a card of things to try, and what ' +
+            'they do comes back here. Draft the persona and tasks with the person, usertest_check them, ' +
+            'then usertest_create and hand over both links and the password. Come back later for ' +
+            'usertest_results — real testers take days, not minutes.',
       });
     }
     if (method === 'ping') return ok({});
-    if (method === 'tools/list') return ok({ tools: TOOLS });
+    if (method === 'tools/list') return ok({ tools: toolsFor(frontOf(env)) });
     if (method === 'tools/call') {
       const name = params && params.name;
       if (!TOOLS.some((t) => t.name === name)) return err(-32602, `Unknown tool: ${name}`);
@@ -2370,6 +2495,84 @@ usertest_check catches both.
 Real testers take days. Create, hand over the links, come back later.
 `;
 
+// The website front door's instructions: only what an assistant needs to test a
+// website, with nothing about blueprints.
+const LLMS_TXT_WEB = (origin) => `# Website user testing
+
+User-test any website with anyone who has a browser. The owner adds one line to
+their site; the tester opens a link, uses the real site with a small card of
+things to try, and what they do comes back here. No accounts.
+
+## Before anything else
+
+usertest_create hands back a results password that CANNOT be looked up again by
+anyone, including this service. Give it to the person you are working for, in
+your reply, the moment you have it.
+
+## As MCP
+
+POST ${origin}/mcp — tools: usertest_task_sets, usertest_check, usertest_create,
+usertest_update, usertest_delete, usertest_results.
+
+## As HTTP
+
+POST ${origin}/api/tests
+  { subject, persona, siteUrl, tasks: [{ title, hint, check }], password,
+    intro, questions, webhook }
+  -> { id, tester, results, checks, snippet, installCheck }
+
+  siteUrl: the https address testers start at. Testers use the real site, so
+  point it at staging or a preview if the tasks change anything.
+  snippet: the line the owner adds to every page, before </body>. It does
+  nothing for ordinary visitors; it wakes only for someone who came through
+  the tester link, and follows them from page to page.
+  installCheck: links that show the card is on the site and mark it seen on
+  the results page. Open one before sending anyone.
+  check (optional): how you will know the task happened, from what the tester
+  did while it was open: { type: "page", path: "/pricing" } (reached it),
+  { type: "text", text: "the words" } (saw them on a page),
+  { type: "click", text: "Buy" } (clicked it). Left out, you have their word.
+  taskSet (optional): ${WEB_TASK_SETS.map((x) => x.key).join(', ')}
+  (GET ${origin}/api/task-sets). It fills the persona and tasks you leave out.
+  versions (optional, to compare): [{ label, siteUrl }, …], two or three,
+  instead of siteUrl. One tester link shares testers out evenly.
+  intro (optional): a line under the persona on the tester's intro page.
+  questions (optional): the closing questions in your own words:
+  { ${QUESTION_KEYS.join(', ')} }.
+
+  Limits, in characters: subject ${LIMITS.subject}, persona ${LIMITS.persona}, task title
+  ${LIMITS.taskTitle}, hint ${LIMITS.taskHint}, intro ${LIMITS.intro}, each question ${LIMITS.question};
+  up to ${LIMITS.tasksMax} tasks. Anything longer is refused, never cut short.
+
+GET ${origin}/api/results?test=<id>&digest=1
+  header: x-test-password: <the password>
+  -> per task: done, couldnt, notReached, hintOpened, medianSecs, notes[],
+     wrapUps[], status { finished, working, stopped }.
+  If you cannot send a header, ask the person to open the results page and
+  press Copy prompt: it copies the same summary for them to paste to you.
+
+PATCH ${origin}/api/tests?test=<id>
+  header: x-test-password: <the password>
+  { subject?, persona?, tasks?, intro?, questions? } — only what changes. Same
+  links and password. Once anyone has started, tasks can be reworded but not
+  added, removed or reordered.
+
+DELETE ${origin}/api/results?test=<id>
+  header: x-test-password: <the password>
+  Clears a test and everything on it. Use it on dry runs.
+
+## The one thing that quietly ruins a test
+
+A task that names a control ("click Pricing") tests whether they can follow an
+instruction, not whether they can find it. Say what they want to end up with;
+put the control in the hint, which tells you who needed it. usertest_check
+catches it.
+
+## Pace
+
+Real testers take days. Create, hand over the links, come back later.
+`;
+
 /* --------------------------------------------------------------------- pages */
 
 const PAGE_CSS = `
@@ -2451,10 +2654,14 @@ ${test.wording && test.wording.intro ? `<p class="soft" style="margin:0">${esc(t
 // anyone who would rather type. Between them, a tester's-eye demo: the card
 // working on a pretend site, so you see what you are sending people.
 const DEMO = TASK_SETS.find((x) => x.key === 'make-it-yours');
-const HOME = `<!doctype html>
+function homePage(front) {
+  const web = front === 'web';
+  const SETS_HERE = setsFor(front);
+  const DEMO_SET = web ? WEB_TASK_SETS[0] : DEMO;
+  return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WordPress user testing, made easy</title>
+<title>${web ? 'Website user testing, made easy' : 'WordPress user testing, made easy'}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -2625,7 +2832,7 @@ const HOME = `<!doctype html>
 </style></head><body>
 
 <header class="shell topbar">
-  <a class="brand" href="/"><b aria-hidden="true">▍</b>playground/usertest</a>
+  <a class="brand" href="/"><b aria-hidden="true">▍</b>${web ? 'website/usertest' : 'playground/usertest'}</a>
   <nav aria-label="On this page">
     <a href="#start">Use the form</a>
     <a href="#sets">Ready-made sets</a>
@@ -2635,11 +2842,13 @@ const HOME = `<!doctype html>
 </header>
 
 <div class="shell hero">
-  <p class="eyebrow">NO INSTALL · NO ACCOUNTS · BUILT ON WORDPRESS PLAYGROUND</p>
-  <h1>WordPress user testing, made easy.</h1>
+  <p class="eyebrow">${web ? 'ONE LINE ON YOUR SITE · NOTHING FOR TESTERS TO INSTALL · NO ACCOUNTS' : 'NO INSTALL · NO ACCOUNTS · BUILT ON WORDPRESS PLAYGROUND'}</p>
+  <h1>${web ? 'Website user testing, made easy.' : 'WordPress user testing, made easy.'}</h1>
   <p class="sub">Paste this into Claude Code, Cursor or any assistant that can run commands. It drafts the persona and tasks with you, checks them, and hands you the links.</p>
   <div class="prompt">
-    <p id="promptText">Fetch https://playground-usertest.view.fast/llms.txt and set up a user test for my plugin. Draft the persona and tasks with me, check them, then give me both links and the password.</p>
+    <p id="promptText">${web
+      ? 'Fetch https://playground-usertest.view.fast/llms.txt and set up a user test for my website. Draft the persona and tasks with me, check them, then give me the line to add to my site, both links and the password.'
+      : 'Fetch https://playground-usertest.view.fast/llms.txt and set up a user test for my plugin. Draft the persona and tasks with me, check them, then give me both links and the password.'}</p>
     <div class="under">
       <span>Rather connect it properly? It is an MCP server too: <span class="addr" id="mcpAddr">https://playground-usertest.view.fast/mcp</span></span>
       <button type="button" class="copy" id="copy">Copy prompt</button>
@@ -2666,15 +2875,15 @@ const HOME = `<!doctype html>
       <p>Then it hands over a link for testers, a link for results, and the password.</p>
     </div>
     <div class="chat" aria-label="What the conversation looks like">
-      <div class="bubble you">Tasks look good? “Click Appearance → Editor → Styles to change the colours.”</div>
+      <div class="bubble you">${web ? 'Tasks look good? “Click Pricing in the top menu to see what it costs.”' : 'Tasks look good? “Click Appearance → Editor → Styles to change the colours.”'}</div>
       <div class="bubble it">
         <p class="tool">usertest_check · 1 issue</p>
         <p>That one names the control, so it tests whether they can follow instructions, not whether they can find it. Try:</p>
-        <p class="fix">“Give the site colours that feel like your studio”</p>
-        <p class="hintline">hint: Appearance → Editor → Styles</p>
+        <p class="fix">${web ? '“Find out what it costs each month”' : '“Give the site colours that feel like your studio”'}</p>
+        <p class="hintline">${web ? 'hint: Pricing, in the top menu' : 'hint: Appearance → Editor → Styles'}</p>
       </div>
       <div class="bubble it">
-        <p>Your test is ready.</p>
+        <p>Your test is ready.${web ? ' Add this line to your site first:' : ''}</p>${web ? '\n        <p class="hintline">&lt;script src="…/card.js" async&gt;&lt;/script&gt;</p>' : ''}
         <dl class="handover"><dt>testers</dt><dd>the link to send people</dd><dt>results</dt><dd>the link to read what happened</dd><dt>password</dt><dd class="key">shown once, so save it now</dd></dl>
       </div>
     </div>
@@ -2684,16 +2893,16 @@ const HOME = `<!doctype html>
 <section aria-labelledby="see" style="padding-top:0">
   <div class="shell">
     <h2 class="big" id="see">What your testers get.</h2>
-    <p class="demo-intro">A real WordPress in their browser, and a card of things to try. Have a go: press Done and watch the site change.</p>
+    <p class="demo-intro">${web ? 'Your real site, with a small card of things to try. It follows them from page to page. Have a go: press Done and watch them move around the site.' : 'A real WordPress in their browser, and a card of things to try. Have a go: press Done and watch the site change.'}</p>
     <div class="browser">
-      <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span>A fresh WordPress, just for this tester</span></div>
+      <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span>${web ? 'crumb.example — your own site, with the card on top' : 'A fresh WordPress, just for this tester'}</span></div>
       <div class="stage">
         <div class="site" id="dSite" aria-label="The pretend site" role="img">
           <div class="site-head">
-            <span class="site-name" id="dName">My Starter Site</span>
-            <span class="site-menu"><span>Home</span><span>Shop</span><span>About</span><span class="new" id="dContact" hidden>Contact</span></span>
+            <span class="site-name" id="dName">${web ? 'Crumb &amp; Co' : 'My Starter Site'}</span>
+            <span class="site-menu">${web ? '<span>Home</span><span>Pricing</span><span>Contact</span>' : '<span>Home</span><span>Shop</span><span>About</span>'}<span class="new" id="dContact" hidden>Contact</span></span>
           </div>
-          <div class="site-hero"><p id="dHeadline">Welcome to your new site</p><span>See the work</span></div>
+          <div class="site-hero"><p id="dHeadline">${web ? 'Ordering for small bakeries, made simple' : 'Welcome to your new site'}</p><span>${web ? 'Start free trial' : 'See the work'}</span></div>
           <div class="site-body">
             <div class="photo" id="dPhoto">
               <svg id="dPlain" aria-hidden="true" width="56" height="44" viewBox="0 0 56 44" fill="none" stroke="#8a90a0" stroke-width="2.5"><rect x="2" y="2" width="52" height="40" rx="4"/><path d="M2 34l16-14 12 10 8-6 16 12"/><circle cx="40" cy="13" r="4"/></svg>
@@ -2703,9 +2912,9 @@ const HOME = `<!doctype html>
           </div>
         </div>
         <div class="tcard">
-          <p class="who">You make pots in a small studio called Ash &amp; Clay. Make this site feel like yours.</p>
-          <div class="head"><strong>Things to try</strong><span id="dProgress" aria-live="polite">1 of ${DEMO.tasks.length}</span></div>
-          <ol class="tlist" id="dList">${DEMO.tasks.map((t, i) => `<li${i === 0 ? ' class="now"' : ''}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke-width="2"></svg><span>${esc(t.title)}</span></li>`).join('')}</ol>
+          <p class="who">${web ? 'You run a small bakery. Find out if this could save you time.' : 'You make pots in a small studio called Ash &amp; Clay. Make this site feel like yours.'}</p>
+          <div class="head"><strong>Things to try</strong><span id="dProgress" aria-live="polite">1 of ${DEMO_SET.tasks.length}</span></div>
+          <ol class="tlist" id="dList">${DEMO_SET.tasks.map((t, i) => `<li${i === 0 ? ' class="now"' : ''}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke-width="2"></svg><span>${esc(t.title)}</span></li>`).join('')}</ol>
           <p class="thint" id="dHint" hidden></p>
           <div class="tbtns" id="dBtns">
             <button type="button" class="primary" id="dDone">Done</button>
@@ -2722,11 +2931,11 @@ const HOME = `<!doctype html>
     </div>
     <div class="table" id="results">
       <table>
-        <caption id="rCaption">Results · ${esc(DEMO.name)} · try the demo above and your run shows up here</caption>
+        <caption id="rCaption">Results · ${esc(DEMO_SET.name)} · try the demo above and your run shows up here</caption>
         <thead><tr><th scope="col">Task</th><th scope="col">Done</th><th scope="col">Couldn’t</th><th scope="col">Hint</th></tr></thead>
-        <tbody id="rBody">${DEMO.tasks.map((t) => `<tr><td>${esc(t.title)}</td><td>–</td><td>–</td><td>–</td></tr>`).join('')}</tbody>
+        <tbody id="rBody">${DEMO_SET.tasks.map((t) => `<tr><td>${esc(t.title)}</td><td>–</td><td>–</td><td>–</td></tr>`).join('')}</tbody>
       </table>
-      <p class="foot">What you read back: who finished each task, who couldn’t, who never got there and who opened the hint, checked against the site itself. Plus their notes and four quick questions at the end. Then one button copies the lot for Claude or ChatGPT to tell you what to fix first.</p>
+      <p class="foot">What you read back: who finished each task, who couldn’t, who never got there and who opened the hint, ${web ? 'checked against what they did (the page they reached, the words they saw, what they clicked)' : 'checked against the site itself'}. Plus their notes and four quick questions at the end. Then one button copies the lot for Claude or ChatGPT to tell you what to fix first.</p>
     </div>
   </div>
 </section>
@@ -2735,16 +2944,16 @@ const HOME = `<!doctype html>
   <div class="shell">
     <h2 class="big" id="sets-h">Not sure what to ask? Start from a set.</h2>
     <p class="lede">A persona and tasks for the tests most people run, with hints and checks already in. Tell your assistant the set’s name, or use it in the form.</p>
-    <div class="chips" role="group" aria-label="Ready-made sets">${TASK_SETS.map((x, i) => `<button type="button" class="chip" data-set="${x.key}" aria-pressed="${i === 0}">${esc(x.name)}</button>`).join('')}</div>
+    <div class="chips" role="group" aria-label="Ready-made sets">${SETS_HERE.map((x, i) => `<button type="button" class="chip" data-set="${x.key}" aria-pressed="${i === 0}">${esc(x.name)}</button>`).join('')}</div>
     <div class="setview">
       <div>
-        <p class="label">Good for</p><p id="sFor" style="font-weight:600">${esc(DEMO.for)}</p>
-        <p class="label">The tester is</p><p id="sPersona" style="color:var(--muted)">${esc(DEMO.persona)}</p>
+        <p class="label">Good for</p><p id="sFor" style="font-weight:600">${esc(DEMO_SET.for)}</p>
+        <p class="label">The tester is</p><p id="sPersona" style="color:var(--muted)">${esc(DEMO_SET.persona)}</p>
         <button type="button" class="ghost" id="sUse">Use this set in the form</button>
       </div>
       <div>
         <p class="label">Things to try</p>
-        <ol id="sTasks">${DEMO.tasks.map((t) => `<li>${esc(t.title)}</li>`).join('')}</ol>
+        <ol id="sTasks">${DEMO_SET.tasks.map((t) => `<li>${esc(t.title)}</li>`).join('')}</ol>
       </div>
     </div>
   </div>
@@ -2754,7 +2963,9 @@ const HOME = `<!doctype html>
   <div class="shell features">
     <div><p class="label">→ compare</p><h3>Test two versions</h3><p>Same tasks, two or three sites. One link shares testers out evenly, and the results come back side by side.</p></div>
     <div><p class="label">→ webhook</p><h3>Hear when they finish</h3><p>Each tester who finishes is posted to Slack, Discord or any HTTPS endpoint. Never the password.</p></div>
-    <div><p class="label">→ nothing to install</p><h3>At either end</h3><p>Testers need a browser and nothing else. You need a blueprint, the one you already demo with.</p></div>
+    ${web
+      ? '<div><p class="label">→ one line</p><h3>On your site</h3><p>Add one line to your site. It does nothing for ordinary visitors, only for people who come through your tester link. Testers need a browser and nothing else.</p></div>'
+      : '<div><p class="label">→ nothing to install</p><h3>At either end</h3><p>Testers need a browser and nothing else. You need a blueprint, the one you already demo with.</p></div>'}
   </div>
 </section>
 
@@ -2769,7 +2980,7 @@ const HOME = `<!doctype html>
 <fieldset>
   <label for="set">Start from a ready-made set <span class="soft">(optional)</span></label>
   <p class="hint">A persona and tasks for the tests most people run, with hints and checks already in. Change anything you like.</p>
-  <select id="set" class="setpick"><option value="">My own tasks</option>${TASK_SETS.map((x) => `<option value="${x.key}">${esc(x.name)}</option>`).join('')}</select>
+  <select id="set" class="setpick"><option value="">My own tasks</option>${SETS_HERE.map((x) => `<option value="${x.key}">${esc(x.name)}</option>`).join('')}</select>
   <p class="hint" id="setfor" hidden></p>
 </fieldset>
 
@@ -2793,12 +3004,14 @@ const HOME = `<!doctype html>
 </fieldset>
 
 <fieldset>
-  <label>Where they try it</label>
+${web ? `  <label for="bpsite">Your site’s address</label>
+  <p class="hint" id="bphint">Where testers start. You add one line to the site after making the test. Testers use the real site, so a staging or preview copy is best if your tasks change anything.</p>
+  <input type="url" id="bpsite" placeholder="https://your-site.example/" required>` : `  <label>Where they try it</label>
   <p class="hint" id="bphint">The WordPress blueprint you already use to demo your thing. A URL is read once, now, and kept — so every tester gets the same site even if you carry on editing.</p>
   <div class="tabs"><button type="button" class="on" data-bp="url">Blueprint URL</button><button type="button" data-bp="json">Paste blueprint JSON</button><button type="button" data-bp="site">Any website</button></div>
   <input type="url" id="bpurl" placeholder="https://example.com/blueprint.json">
   <textarea id="bpjson" hidden placeholder='{ "steps": [ … ] }'></textarea>
-  <input type="url" id="bpsite" hidden placeholder="https://your-site.example/">
+  <input type="url" id="bpsite" hidden placeholder="https://your-site.example/">`}
   <label class="cmp-toggle"><input type="checkbox" id="compare"> Compare it with a second version</label>
   <p class="hint">Same tasks on both. One link shares testers out evenly, and the results come back side by side.</p>
 </fieldset>
@@ -2807,10 +3020,10 @@ const HOME = `<!doctype html>
   <label>The second version</label>
   <p class="hint">Name both, so the results say which is which.</p>
   <div class="names"><input type="text" id="labelA" maxlength="60" placeholder="First version, e.g. Today’s onboarding"><input type="text" id="labelB" maxlength="60" placeholder="Second version, e.g. New onboarding"></div>
-  <div class="tabs"><button type="button" class="on" data-bp2="url">Blueprint URL</button><button type="button" data-bp2="json">Paste blueprint JSON</button><button type="button" data-bp2="site">Any website</button></div>
+${web ? `  <input type="url" id="bp2site" placeholder="https://second-version.example/">` : `  <div class="tabs"><button type="button" class="on" data-bp2="url">Blueprint URL</button><button type="button" data-bp2="json">Paste blueprint JSON</button><button type="button" data-bp2="site">Any website</button></div>
   <input type="url" id="bp2url" placeholder="https://example.com/blueprint-b.json">
   <textarea id="bp2json" hidden placeholder='{ "steps": [ … ] }'></textarea>
-  <input type="url" id="bp2site" hidden placeholder="https://second-version.example/">
+  <input type="url" id="bp2site" hidden placeholder="https://second-version.example/">`}
 </fieldset>
 
 <fieldset>
@@ -2834,18 +3047,18 @@ const HOME = `<!doctype html>
 </div>
 </section>
 
-<footer class="foot-note"><div class="shell" style="padding:0">Every tester gets a throwaway site in their own browser. The only thing kept is what the card learns. <a href="/llms.txt">llms.txt</a> · <a href="/mcp">MCP</a></div></footer>
+<footer class="foot-note"><div class="shell" style="padding:0">${web ? 'Testers use your real site, with a small card on top.' : 'Every tester gets a throwaway site in their own browser.'} The only thing kept is what the card learns. <a href="/llms.txt">llms.txt</a> · <a href="/mcp">MCP</a></div></footer>
 <script>
 (function () {
   var tasksEl = document.getElementById('tasks');
-  var mode = 'url';
+  var mode = '${web ? 'site' : 'url'}';
 
   // The prompt leads the page; it names this address, so a copy of the
   // service answers for itself rather than sending people to someone else's.
   var origin = location.origin;
   document.getElementById('promptText').textContent =
-    'Fetch ' + origin + '/llms.txt and set up a user test for my plugin. ' +
-    'Draft the persona and tasks with me, check them, then give me both links and the password.';
+    'Fetch ' + origin + '/llms.txt and set up a user test for my ${web ? 'website' : 'plugin'}. ' +
+    'Draft the persona and tasks with me, check them, then give me ${web ? 'the line to add to my site, ' : ''}both links and the password.';
   document.getElementById('mcpAddr').textContent = origin + '/mcp';
 
   document.getElementById('copy').addEventListener('click', function () {
@@ -2884,7 +3097,7 @@ const HOME = `<!doctype html>
       fitWords(d);
     });
   }
-  var SETS = ${JSON.stringify(TASK_SETS)};
+  var SETS = ${JSON.stringify(SETS_HERE)};
   function addTask(title, hint, check) {
     var d = document.createElement('div');
     d.className = 'task';
@@ -2928,7 +3141,7 @@ const HOME = `<!doctype html>
   });
   document.getElementById('add').addEventListener('click', function () { addTask(); });
 
-  var mode2 = 'url';
+  var mode2 = '${web ? 'site' : 'url'}';
   document.getElementById('compare').addEventListener('change', function () { document.getElementById('second').hidden = !this.checked; });
   [].slice.call(document.querySelectorAll('[data-bp2]')).forEach(function (b) {
     b.addEventListener('click', function () {
@@ -3057,20 +3270,26 @@ const HOME = `<!doctype html>
 // The demo and the set browser. None of it talks to the service: it is all
 // for looking at before you make anything.
 (function () {
-  var SETS = ${JSON.stringify(TASK_SETS)};
-  var demo = SETS.filter(function (x) { return x.key === 'make-it-yours'; })[0];
+  var SETS = ${JSON.stringify(SETS_HERE)};
+  var demo = SETS.filter(function (x) { return x.key === '${DEMO_SET.key}'; })[0];
   var $ = function (id) { return document.getElementById(id); };
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
   // What each finished task does to the pretend site, in the set's own order.
-  var effects = [
+  var effects = ${web ? `[
+    // on a website the tester moves around it: each task lands them somewhere
+    function () { return $('dHeadline'); },
+    function (on) { $('dHeadline').textContent = on ? 'Pricing: £19 a month' : 'Ordering for small bakeries, made simple'; return $('dHeadline'); },
+    function (on) { $('dHeadline').textContent = on ? 'Thanks for signing up' : 'Ordering for small bakeries, made simple'; return $('dHeadline'); },
+    function (on) { $('dHeadline').textContent = on ? 'Email us at hello@crumb.example' : 'Ordering for small bakeries, made simple'; return $('dHeadline'); },
+  ]` : `[
     function (on) { $('dName').textContent = on ? 'Ash & Clay' : 'My Starter Site'; return $('dName'); },
     function (on) { $('dHeadline').textContent = on ? 'Hand-thrown pots from a small studio by the river' : 'Welcome to your new site'; return $('dHeadline'); },
     function (on) { $('dPhoto').classList.toggle('swapped', on); $('dPot').hidden = !on; $('dPlain').hidden = on; return $('dPhoto'); },
     function (on) { $('dSite').classList.toggle('styled', on); return $('dSite'); },
     function (on) { $('dContact').hidden = !on; return $('dContact'); },
     function () { return null; },
-  ];
+  ]`};
   var ICON = {
     done: '<circle cx="9" cy="9" r="8" stroke="#1f7a4d"/><path d="M5.5 9.2l2.3 2.3 4.7-4.7" stroke="#1f7a4d"/>',
     couldnt: '<circle cx="9" cy="9" r="8" stroke="#b23a1e"/><path d="M6 6l6 6M12 6l-6 6" stroke="#b23a1e"/>',
@@ -3143,6 +3362,7 @@ const HOME = `<!doctype html>
 })();
 </script>
 </body></html>`;
+}
 
 // What the owner reads. One row per tester; click a row for the tasks and notes.
 // The password is asked for once and kept for the tab, never put in the URL.
@@ -3489,13 +3709,13 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname === '/' || url.pathname === '') {
-      return html(HOME, { 'cache-control': 'public, max-age=300' });
+      return html(homePage(frontOf(env)), { 'cache-control': 'public, max-age=300' });
     }
 
     if (url.pathname === '/mcp') return handleMcp(req, env);
 
     if (url.pathname === '/llms.txt') {
-      return new Response(LLMS_TXT(publicOrigin(req)), {
+      return new Response(frontOf(env) === 'web' ? LLMS_TXT_WEB(publicOrigin(req)) : LLMS_TXT(publicOrigin(req)), {
         headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' },
       });
     }
@@ -3514,7 +3734,7 @@ export default {
     }
 
     if (url.pathname === '/api/task-sets') {
-      return json({ sets: TASK_SETS }, 200, Object.assign({ 'cache-control': 'public, max-age=3600' }, CORS));
+      return json({ sets: setsFor(frontOf(env)) }, 200, Object.assign({ 'cache-control': 'public, max-age=3600' }, CORS));
     }
 
     if (url.pathname === '/api/tests') {
@@ -3580,4 +3800,4 @@ const NOT_FOUND = `<!doctype html>
 </div></body></html>`;
 
 // exported for the tests
-export { TASK_SETS, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };
+export { TASK_SETS, WEB_TASK_SETS, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };

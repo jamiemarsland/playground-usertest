@@ -3,7 +3,7 @@
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
 import { DatabaseSync } from 'node:sqlite';
-import worker, { TASK_SETS, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
+import worker, { TASK_SETS, WEB_TASK_SETS, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 
 // A real SQL engine rather than a mock. The worker talks to a D1-shaped
 // binding, which is what both Spacefast Functions and Cloudflare D1 hand it, so
@@ -807,6 +807,30 @@ r = await call(eWeb, '/api/tests', { method: 'POST', body: Object.assign({}, WEB
 check(r.status === 400 && /not one of each/.test((await r.json()).error), 'a website cannot be compared with a WordPress');
 r = await call(eWeb, '/api/tests', { method: 'POST', body: Object.assign({}, WEB, { password: 'web-pass-4', siteUrl: 'http://shop.example.com/' }) });
 check(r.status === 400, 'a website address has to be https');
+
+/* ------------------------------------------------- the website front door */
+
+const eFront = Object.assign(env(), { FRONT: 'web' });
+const webHome = await (await call(eFront, '/')).text();
+check(/<h1>Website user testing, made easy\.<\/h1>/.test(webHome) && !/Blueprint URL|blueprint\.json|Built on WordPress|BUILT ON WORDPRESS/.test(webHome), 'the website front door talks about websites, not blueprints');
+check(webHome.includes('id="bpsite"') && !webHome.includes('id="bpurl"'), 'its form asks for a site address only');
+check(WEB_TASK_SETS.every((x) => webHome.includes(x.name)) && !webHome.includes('Brand the site'), 'and offers website task sets, not WordPress ones');
+const wpHome = await (await call(env(), '/')).text();
+check(/<h1>WordPress user testing, made easy\.<\/h1>/.test(wpHome) && wpHome.includes('id="bpurl"'), 'the WordPress front door is as it was');
+const webLlms = await (await call(eFront, '/llms.txt')).text();
+check(/^# Website user testing/.test(webLlms) && !/blueprint/i.test(webLlms) && /siteUrl/.test(webLlms), 'its llms.txt is about websites only');
+const webSets = await (await call(eFront, '/api/task-sets')).json();
+check(webSets.sets.length === WEB_TASK_SETS.length && webSets.sets[0].key === 'first-look', 'its task sets are the website ones');
+const rpcFront = async (msg) => (await (await worker.fetch(new Request(ORIGIN + '/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify(msg) }), eFront)).json());
+const tl = await rpcFront({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+const createTool = tl.result.tools.find((x) => x.name === 'usertest_create');
+check(!createTool.inputSchema.properties.boot && !createTool.inputSchema.properties.blueprint_url && createTool.inputSchema.required.includes('site_url'), 'its create tool asks for a site, never a blueprint');
+let fm = await rpcFront({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'usertest_create', arguments: { subject: 'my site', task_set: 'first-look', password: 'front-pass-1' } } });
+check(fm.result.isError && /site_url/.test(fm.result.content[0].text), 'and says so when it is left out');
+fm = await rpcFront({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'usertest_create', arguments: { subject: 'my site', task_set: 'buy-something', site_url: 'https://shop.example.com/', password: 'front-pass-2' } } });
+check(!fm.result.isError && /card\.js/.test(fm.result.content[0].text) && fm.result.structuredContent.checks.length === 4, 'a website test made from a website set: ' + fm.result.content[0].text.split('\n')[0]);
+fm = await rpcFront({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'usertest_check', arguments: { subject: 'my site', tasks: [{ title: 'Change the site name', hint: 'h' }] } } });
+check(!/checked: the site name changed/.test(fm.result.content[0].text), 'the check there guesses no WordPress checks');
 
 /* -------------------------------------------------------------------- misc */
 
