@@ -785,6 +785,19 @@ await call(eWeb, '/api/events', { method: 'POST', body: { test: web.id, session:
 const wd = await (await call(eWeb, '/api/results?test=' + web.id + '&digest=1', { headers: WPW })).json();
 check(wd.tasks[0].done === 1 && wd.tasks[0].shown === 1 && wd.tasks[0].check === 'They reached a page (“/pricing/”)', 'a website tester’s result and check come back in the digest');
 
+// a page that sends what is waiting as the tester leaves, then the next page
+// sending it again, must not count the same task twice
+const twice = { test: web.id, session: 'resender01', events: [
+  { n: 1, type: 'start' },
+  { n: 2, type: 'task_done', task: cfgWeb.tasks[1].id, data: { secs: 5, check: 'yes' } },
+] };
+await call(eWeb, '/api/events', { method: 'POST', body: twice });
+r = await call(eWeb, '/api/events', { method: 'POST', body: Object.assign({}, twice, { events: twice.events.concat([{ n: 3, type: 'hint', task: cfgWeb.tasks[2].id }]) }) });
+const wd2 = await (await call(eWeb, '/api/results?test=' + web.id + '&digest=1', { headers: WPW })).json();
+check(wd2.tasks[1].done === 1 && wd2.tasks[2].hintOpened === 1, 'a batch sent twice is kept once, and what was new in it is kept');
+r = await call(eWeb, '/api/events', { method: 'POST', body: twice });
+check((await r.json()).repeat === true, 'a batch that is all repeats says so');
+
 r = await call(eWeb, '/api/tests', { method: 'POST', body: Object.assign({}, WEB, { siteUrl: undefined, password: 'web-pass-2', versions: [{ label: 'Today', siteUrl: 'https://shop.example.com/' }, { label: 'New', siteUrl: 'https://new.shop.example.com/' }] }) });
 const webCmp = await r.json();
 check(r.status === 200 && webCmp.installCheck.length === 2 && /usertest_v=b/.test(webCmp.installCheck[1].url), 'two websites can be compared, each with its own check link');

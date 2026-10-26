@@ -118,7 +118,9 @@
     }
 
     function send(type, task, note, data) {
-      state.queue.push({ t: Date.now(), type: type, task: task || '', path: where(), note: note || '', data: data || null });
+      // numbered, so the app can tell a resend from something new
+      state.n = (state.n || 0) + 1;
+      state.queue.push({ n: state.n, t: Date.now(), type: type, task: task || '', path: where(), note: note || '', data: data || null });
       save();
       flush();
     }
@@ -137,10 +139,16 @@
         body: JSON.stringify({ test: cfg.test, session: cfg.session, events: batch }),
         keepalive: true,
       })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); state.queue = state.queue.slice(batch.length); save(); })
-        .catch(function () {})
-        .then(function () { sending = false; if (state.queue.length) setTimeout(flush, 4000); });
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); state.queue = state.queue.slice(batch.length); save(); return true; })
+        .catch(function () { return false; })
+        // more waiting goes straight after a batch that landed; the long wait
+        // is only for trying again after one that did not
+        .then(function (ok) { sending = false; if (state.queue.length) setTimeout(flush, ok ? 200 : 4000); });
     }
+
+    // A tester who presses Send and closes the tab straight away should not
+    // take their answers with them: anything still waiting goes as they leave.
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flush(); });
 
     window.addEventListener('error', function (ev) {
       var msg = ev && ev.message ? String(ev.message).slice(0, 300) : 'error';

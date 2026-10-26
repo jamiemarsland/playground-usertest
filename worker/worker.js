@@ -193,6 +193,7 @@ const SCHEMA = [
      path       VARCHAR(220),
      note       TEXT,
      data       TEXT,
+     n          BIGINT,
      PRIMARY KEY (test_id, session_id, seq)
    )`,
   `CREATE TABLE IF NOT EXISTS counters (
@@ -202,7 +203,7 @@ const SCHEMA = [
    )`,
 ];
 
-const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN versions TEXT', 'ALTER TABLE sessions ADD COLUMN version VARCHAR(4)', 'ALTER TABLE tests ADD COLUMN wording TEXT', 'ALTER TABLE tests ADD COLUMN site_url VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN seen TEXT'];
+const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN versions TEXT', 'ALTER TABLE sessions ADD COLUMN version VARCHAR(4)', 'ALTER TABLE tests ADD COLUMN wording TEXT', 'ALTER TABLE tests ADD COLUMN site_url VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN seen TEXT', 'ALTER TABLE events ADD COLUMN n BIGINT'];
 
 // Once per database, not once per request — and keyed on the binding rather
 // than kept in one module-level variable, so a second database in the same
@@ -1416,6 +1417,8 @@ function cleanEvent(e) {
     task: trim(e && e.task, 40),
     path: trim(e && e.path, 200),
     note: trimMultiline(e && e.note, 2000),
+    // the card's own number for this event, so a batch sent twice is stored once
+    n: e && Number.isInteger(e.n) && e.n > 0 && e.n < 1e9 ? e.n : null,
   };
   if (e && e.data && typeof e.data === 'object' && !Array.isArray(e.data)) {
     const d = {};
@@ -1448,8 +1451,8 @@ async function appendEvents(env, req, ctx) {
   const gate = await countAndCheck(env, `ip:events:${thisHour()}:${ipOf(req)}`, cap, 2 * 60 * 60);
   if (!gate.ok) return json({ error: 'too many' }, 429, CORS);
 
-  const events = (Array.isArray(body.events) ? body.events : []).slice(0, 50).map(cleanEvent);
-  if (!events.length) return json({ ok: true, n: 0 }, 200, CORS);
+  const sent = (Array.isArray(body.events) ? body.events : []).slice(0, 50).map(cleanEvent);
+  if (!sent.length) return json({ ok: true, n: 0 }, 200, CORS);
 
   const now = Date.now();
 
@@ -1457,11 +1460,19 @@ async function appendEvents(env, req, ctx) {
   // keep them in order — no shared counter, no read-modify-write of a blob.
   const top = await one(
     env,
-    'SELECT COUNT(*) AS n, MAX(seq) AS top FROM events WHERE test_id = ? AND session_id = ?',
+    'SELECT COUNT(*) AS n, MAX(seq) AS top, MAX(n) AS seen FROM events WHERE test_id = ? AND session_id = ?',
     id, session
   );
   const have = Number((top && top.n) || 0);
   let seq = Number((top && top.top) || 0);
+
+  // A card sends what is waiting as the tester leaves a page, and never hears
+  // whether it landed; the next page sends it again. The card numbers its
+  // events, so anything at or below the highest number already kept is a
+  // repeat. (An older card sends no numbers, and everything it sends is kept.)
+  const already = Number((top && top.seen) || 0);
+  const events = sent.filter((e) => !e.n || e.n > already);
+  if (!events.length) return json({ ok: true, n: have, repeat: true }, 200, CORS);
 
   if (have >= MAX_EVENTS_PER_SESSION) {
     return json({ ok: true, n: have, full: true }, 200, CORS);
@@ -1482,9 +1493,9 @@ async function appendEvents(env, req, ctx) {
 
   const writes = room.map((e) => q(
     env,
-    'INSERT INTO events (test_id, session_id, seq, t, type, task, path, note, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO events (test_id, session_id, seq, t, type, task, path, note, data, n) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     id, session, ++seq, e.t, e.type, e.task || null, e.path || null, e.note || null,
-    e.data ? JSON.stringify(e.data) : null
+    e.data ? JSON.stringify(e.data) : null, e.n || null
   ));
   if (env.DB.batch) await env.DB.batch(writes);
   else for (const w of writes) await w.run();
