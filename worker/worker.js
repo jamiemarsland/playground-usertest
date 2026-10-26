@@ -1445,6 +1445,21 @@ async function deleteTest(env, id) {
 
 const DIGEST_MAX_SESSIONS = 100;
 
+// How many tests have been taken: a tester counts once they have done or given
+// up on at least one task, so someone who opened the link and left does not.
+// The service grew out of an earlier one-off tester, whose 147 testers count
+// too; their results live in that service, not here.
+const EARLIER_TESTS = 147;
+async function testsTaken(env) {
+  if (!env.DB) return EARLIER_TESTS;
+  await ensureSchema(env);
+  const row = await one(
+    env,
+    "SELECT COUNT(*) AS n FROM (SELECT DISTINCT test_id, session_id FROM events WHERE type IN ('task_done', 'task_skip')) taken"
+  );
+  return EARLIER_TESTS + Number((row && row.n) || 0);
+}
+
 // A tester who has not been heard from in this long, and has not answered the
 // closing questions, has most likely stopped. The card reports on every task
 // and hint, so half an hour of silence is a long time on one task.
@@ -2283,6 +2298,13 @@ const HOME = `<!doctype html>
   .copy { font:inherit; font-weight:700; font-size:15px; padding:12px 22px; border-radius:999px; border:0; background:var(--mint); color:var(--night); cursor:pointer; }
   .copy:hover { background:var(--mint-hi); }
   .or { margin:24px 0 0; font-size:15px; color:var(--dim); }
+  .taken { display:inline-flex; align-items:center; gap:10px; margin:22px 0 0; font:500 15px/1 "JetBrains Mono",ui-monospace,monospace; color:var(--dim); }
+  .taken[hidden] { display:none; }
+  .taken b { color:var(--text); font-weight:700; font-size:17px; font-variant-numeric:tabular-nums; transition:color .4s; }
+  .taken b.up { color:var(--mint); }
+  .taken i { width:9px; height:9px; border-radius:50%; background:var(--mint); animation:takenPulse 2s infinite; }
+  @keyframes takenPulse { 0% { box-shadow:0 0 0 0 rgba(124,242,176,.55); } 70% { box-shadow:0 0 0 10px rgba(124,242,176,0); } 100% { box-shadow:0 0 0 0 rgba(124,242,176,0); } }
+  @media (prefers-reduced-motion: reduce) { .taken i { animation:none; } }
   @media (max-width:640px) { .hero h1 { font-size:46px; } h2.big { font-size:32px; } section { padding:64px 0; } .prompt p { font-size:15px; } }
 
   .warn { display:flex; flex-wrap:wrap; gap:20px; align-items:center; border:1px solid var(--amber); border-radius:16px; padding:24px 28px; }
@@ -2440,6 +2462,7 @@ const HOME = `<!doctype html>
     </div>
   </div>
   <p class="or">Rather type it yourself? <a href="#start">Fill in the form</a>. It takes about half a minute.</p>
+  <p class="taken" id="taken" hidden aria-live="polite"><i aria-hidden="true"></i><span><b id="takenN">0</b> tests taken so far</span></p>
 </div>
 
 <div class="shell">
@@ -2639,6 +2662,33 @@ const HOME = `<!doctype html>
     'Fetch ' + origin + '/llms.txt and set up a user test for my plugin. ' +
     'Draft the persona and tasks with me, check them, then give me both links and the password.';
   document.getElementById('mcpAddr').textContent = origin + '/mcp';
+
+  // Tests taken, counted up when the page opens and again whenever someone
+  // else finishes a task while it is open. It looks every half minute.
+  var takenBox = document.getElementById('taken'), takenN = document.getElementById('takenN'), shown = 0;
+  function countTo(n) {
+    var from = shown, start = null, ms = from ? 900 : 1400;
+    if (n <= from) return;
+    shown = n;
+    takenN.classList.toggle('up', from > 0);
+    var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { takenN.textContent = n; return; }
+    (function step(ts) {
+      if (start === null) start = ts;
+      var k = Math.min(1, (ts - start) / ms), eased = 1 - Math.pow(1 - k, 3);
+      takenN.textContent = Math.round(from + (n - from) * eased);
+      if (k < 1) requestAnimationFrame(step);
+      else setTimeout(function () { takenN.classList.remove('up'); }, 1200);
+    })(performance.now());
+  }
+  function lookTaken() {
+    fetch('/api/stats', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.tests) { takenBox.hidden = false; countTo(d.tests); } })
+      .catch(function () {});
+  }
+  lookTaken();
+  setInterval(function () { if (!document.hidden) lookTaken(); }, 30000);
 
   document.getElementById('copy').addEventListener('click', function () {
     var btn = this;
@@ -3224,6 +3274,11 @@ export default {
       return new Response(LLMS_TXT(publicOrigin(req)), {
         headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' },
       });
+    }
+
+    if (url.pathname === '/api/stats') {
+      // the number on the home page; nothing about any one test
+      return json({ tests: await testsTaken(env) }, 200, Object.assign({ 'cache-control': 'public, max-age=30' }, CORS));
     }
 
     if (url.pathname === '/api/task-sets') {

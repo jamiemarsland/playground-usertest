@@ -727,6 +727,20 @@ await eEd.DB.prepare('UPDATE sessions SET last_at = ? WHERE test_id = ?').bind(D
 const dg2 = await (await call(eEd, '/api/results?test=' + ed.id + '&digest=1', { headers: PW })).json();
 check(dg2.status.stopped === 1 && dg2.status.working === 0, 'one not heard from for two hours, and not finished, has stopped');
 
+/* ----------------------------------------------------------- tests taken */
+
+const eCount = env();
+let st = await (await call(eCount, '/api/stats')).json();
+check(st.tests === 147, 'with nobody tested here yet, the count is the earlier testers: ' + st.tests);
+r = await call(eCount, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { password: 'count-pass-1' }) });
+const cnt = await r.json();
+const cntTasks = (await (await call(eCount, '/api/results?test=' + cnt.id, { headers: { 'x-test-password': 'count-pass-1' } })).json()).tasks;
+await call(eCount, '/api/events', { method: 'POST', body: { test: cnt.id, session: 'lookedonly1', events: [{ type: 'start' }] } });
+await call(eCount, '/api/events', { method: 'POST', body: { test: cnt.id, session: 'triedone001', events: [{ type: 'start' }, { type: 'task_skip', task: cntTasks[0].id }, { type: 'task_done', task: cntTasks[1].id }] } });
+st = await (await call(eCount, '/api/stats')).json();
+check(st.tests === 148, 'a tester who tried a task counts once; one who only opened the link does not');
+check(/id="taken"/.test(await (await call(eCount, '/')).text()), 'the home page has the count of tests taken');
+
 /* -------------------------------------------------------------------- misc */
 
 r = await call(e1, '/nope');
