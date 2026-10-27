@@ -2673,13 +2673,15 @@ const HOME = `<!doctype html>
     takenN.classList.toggle('up', from > 0);
     var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduce) { takenN.textContent = n; return; }
-    (function step(ts) {
-      if (start === null) start = ts;
-      var k = Math.min(1, (ts - start) / ms), eased = 1 - Math.pow(1 - k, 3);
+    // a timer rather than animation frames: some views never paint frames
+    // (embedded panes, screenshot tools), and the number must still arrive
+    start = Date.now();
+    (function step() {
+      var k = Math.min(1, (Date.now() - start) / ms), eased = 1 - Math.pow(1 - k, 3);
       takenN.textContent = Math.round(from + (n - from) * eased);
-      if (k < 1) requestAnimationFrame(step);
+      if (k < 1) setTimeout(step, 30);
       else setTimeout(function () { takenN.classList.remove('up'); }, 1200);
-    })(performance.now());
+    })();
   }
   function lookTaken() {
     fetch('/api/stats', { cache: 'no-store' })
