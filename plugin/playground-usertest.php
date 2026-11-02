@@ -108,6 +108,14 @@ function pgut_tasks( $tasks ) {
 				if ( 'text' === $type && ! empty( $task['check']['text'] ) ) {
 					$clean['check']['text'] = sanitize_text_field( (string) $task['check']['text'] );
 				}
+				if ( 'page' === $type ) {
+					$path = isset( $task['check']['path'] ) ? substr( sanitize_text_field( (string) $task['check']['path'] ), 0, 120 ) : '';
+					if ( '' === $path ) {
+						unset( $clean['check'] );
+					} else {
+						$clean['check']['path'] = $path;
+					}
+				}
 				if ( 'block' === $type || 'block_changed' === $type ) {
 					$name = isset( $task['check']['block'] ) ? strtolower( (string) $task['check']['block'] ) : '';
 					if ( ! preg_match( '#^[a-z0-9-]+/[a-z0-9-]+$#', $name ) ) {
@@ -221,7 +229,7 @@ add_action( 'admin_enqueue_scripts', 'pgut_enqueue', 20 );
  * @return string[]
  */
 function pgut_check_types() {
-	return array( 'site_name', 'tagline', 'site_icon', 'logo', 'new_page', 'new_post', 'styles', 'menu', 'home', 'text', 'block', 'block_changed' );
+	return array( 'site_name', 'tagline', 'site_icon', 'logo', 'new_page', 'new_post', 'styles', 'menu', 'home', 'text', 'block', 'block_changed', 'page' );
 }
 
 /**
@@ -392,8 +400,10 @@ function pgut_check( $check, $base = null ) {
 		case 'text':
 		case 'block':
 		case 'block_changed':
-			// words as a visitor sees them, and blocks in the editor before
-			// anything is saved: the card reads both itself
+		case 'page':
+			// words as a visitor sees them, blocks in the editor before
+			// anything is saved, and which screen they are on: the card reads
+			// all three itself
 			return 'client';
 	}
 	return 'unknown';

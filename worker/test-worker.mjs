@@ -526,7 +526,7 @@ check(ct[1].check && ct[1].check.type === 'text' && ct[1].check.text === 'Open 9
 check(!ct[2].check && !ct[3].check && !ct[4].check, 'none, an unknown kind, and text with no words all mean no check');
 let lt = lintTest({ subject: 's', persona: 'You run a bakery and want a site your neighbours will like, with the hours on it.', tasks: [{ title: 'a', check: 'bogus' }, { title: 'b', check: { type: 'text' } }] });
 check(lt.problems.some((x) => /no check called|there is not/.test(x)) && lt.problems.some((x) => /which words/.test(x)), 'the check tool names a made-up check and text without words');
-check(Object.keys(CHECKS).length === 12, 'twelve kinds of check, two of them read from the editor');
+check(Object.keys(CHECKS).length === 13, 'thirteen kinds of check, three of them read in the browser');
 
 const eChk = env();
 r = await call(eChk, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { tasks: [{ title: 'Give the site your own name', hint: 'Settings' }, { title: 'Add a page about your prices', hint: 'Pages' }, { title: 'Say hello', hint: 'x', check: 'none' }] }) });
@@ -763,6 +763,10 @@ const TOUR = {
 check(cleanTasks([{ title: 'x', check: { type: 'block', block: 'Core/Heading' } }])[0].check.block === 'core/heading', 'a block check keeps its block name, in the case WordPress uses');
 check(!cleanTasks([{ title: 'x', check: { type: 'block_changed', block: 'heading' } }])[0].check, 'a block check without a proper block name is no check');
 check(cleanTasks([{ title: 'x', point: '  .a   .b ' }])[0].point === '.a .b', 'a step keeps its pointer');
+check(cleanTasks([{ title: 'x', check: { type: 'page', path: 'site-editor.php' } }])[0].check.path === 'site-editor.php', 'a screen check keeps the address it looks for');
+check(!cleanTasks([{ title: 'x', check: { type: 'page' } }])[0].check, 'a screen check with no address is no check');
+check(/does not say which/.test(lintTest(Object.assign({}, TOUR, { tasks: [{ title: 'Go there', hint: 'Open it.', check: { type: 'page' } }] })).problems.join()), 'the check says when a screen check names no screen');
+check(TOUR_SETS[0].tasks[0].check.type === 'page', 'the ready-made tour’s first step moves on once they reach the Site Editor');
 
 let tl = lintTest(TOUR);
 check(tl.ok && tl.mode === 'tour', 'a tour that names its buttons checks clean: naming the button is the point here ' + JSON.stringify(tl.problems));

@@ -330,6 +330,7 @@
     var ask = askSite(t)
       .then(function (result) {
         if (result !== 'client') return result;
+        if (t.check.type === 'page') return onScreen(t.check.path) ? 'yes' : 'no';
         if (t.check.type !== 'text') return 'unknown';
         return homeHas(t.check.text).then(function (yes) { return yes ? 'yes' : 'no'; });
       })
@@ -548,9 +549,15 @@
     }
   }
 
+  // Is this the screen they were sent to? Part of its address is enough.
+  function onScreen(path) {
+    return !!path && String(location.pathname + location.search).indexOf(path) !== -1;
+  }
+
   // Is the step done? yes, no, or wait (nothing to go on yet).
   function look(t) {
     var c = t.check;
+    if (c.type === 'page') return Promise.resolve(onScreen(c.path) ? 'yes' : 'no');
     if (c.type === 'block' || c.type === 'block_changed') {
       var now = blocksNamed(c.block);
       if (!now) return Promise.resolve('wait');

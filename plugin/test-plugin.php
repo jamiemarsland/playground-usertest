@@ -125,6 +125,7 @@ case_run(
 		"tasks" => array(
 			array( "id" => "1-a", "title" => "Add the block", "hint" => "Click +", "point" => "[aria-label=\"Add block\"] <b>", "check" => array( "type" => "block", "block" => "Open-Today/hours" ) ),
 			array( "id" => "2-b", "title" => "Change it", "check" => array( "type" => "block_changed", "block" => "not a block name" ) ),
+			array( "id" => "3-c", "title" => "Open the Site Editor", "check" => array( "type" => "page", "path" => "site-editor.php" ) ),
 		),
 	) ) );
 	require "' . $plugin . '";
@@ -135,6 +136,7 @@ case_run(
 	ok( "[aria-label=\"Add block\"]" === $loc["tasks"][0]["point"], "a step keeps its selector, with any markup stripped: " . $loc["tasks"][0]["point"] );
 	ok( "open-today/hours" === $loc["tasks"][0]["check"]["block"], "a block check keeps its block name" );
 	ok( ! isset( $loc["tasks"][1]["check"] ), "a block check with no proper block name is dropped" );
+	ok( "site-editor.php" === $loc["tasks"][2]["check"]["path"], "a screen check keeps the address it looks for" );
 	ok( false !== strpos( $loc["mark"], "pgut/v1/mark" ), "the card is told where to mark a step" );'
 );
 

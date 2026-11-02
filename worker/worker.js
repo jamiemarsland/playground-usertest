@@ -497,6 +497,9 @@ const CHECKS = {
   // made for tours, where a plugin's own block is usually the point
   block: 'A block was added in the editor',
   block_changed: 'A block’s settings changed in the editor',
+  // the address of the screen they are on, read in the browser: for a step
+  // that is only about getting somewhere, like the Site Editor
+  page: 'They reached a screen',
 };
 
 const BLOCK_NAME_RE = /^[a-z0-9-]+\/[a-z0-9-]+$/;
@@ -504,7 +507,7 @@ const BLOCK_NAME_RE = /^[a-z0-9-]+\/[a-z0-9-]+$/;
 // A check in words, with the words or block it looks for.
 function checkLabel(c) {
   if (!c || !CHECKS[c.type]) return '';
-  return CHECKS[c.type] + (c.text ? ` (“${c.text}”)` : '') + (c.block ? ` (${c.block})` : '');
+  return CHECKS[c.type] + (c.text ? ` (“${c.text}”)` : '') + (c.block ? ` (${c.block})` : '') + (c.path ? ` (${c.path})` : '');
 }
 
 // A first guess from the task's own words, so most tests are checked without
@@ -540,6 +543,10 @@ function cleanCheck(raw, title) {
   if (type === 'block' || type === 'block_changed') {
     const block = trim(typeof raw === 'object' ? raw.block : '', 100).toLowerCase();
     return BLOCK_NAME_RE.test(block) ? { type, block } : null;
+  }
+  if (type === 'page') {
+    const path = trim(typeof raw === 'object' ? raw.path : '', 120);
+    return path ? { type, path } : null;
   }
   return { type };
 }
@@ -738,7 +745,7 @@ const TOUR_SETS = [
     persona: 'Anyone who runs a site on WordPress and wants to see what it can do now.',
     button: { label: 'Read the release post', url: 'https://wordpress.org/news/' },
     tasks: [
-      { title: 'Open the Site Editor', hint: 'Choose Edit site in the bar at the top. From the dashboard it is Appearance → Editor.', point: '#wp-admin-bar-site-editor > a', check: 'none' },
+      { title: 'Open the Site Editor', hint: 'Choose Edit site in the bar at the top. From the dashboard it is Appearance → Editor.', point: '#wp-admin-bar-site-editor > a', check: { type: 'page', path: 'site-editor.php' } },
       { title: 'Find anything with the command palette', hint: 'Press ⌘K, or Ctrl+K on Windows, and type “styles”.', point: '#wp-admin-bar-command-palette > .ab-item', check: 'none' },
       { title: 'Give the site a new look in one click', hint: 'Open Styles, then Browse styles. Pick one of the looks, then Save.', point: '.global-styles-ui-variations_item:not(.is-active) || button "Browse styles" || button "Styles"', check: 'styles' },
       { title: 'Try a new pair of fonts', hint: 'In Styles, open Typography and pick one of the font pairs, then Save.', point: 'button "Typography"', check: 'styles' },
@@ -818,6 +825,7 @@ function lintTest(input) {
     const type = typeof c === 'string' ? c : c && c.type;
     if (type && type !== 'none' && !CHECKS[type]) problems.push(`Task ${i + 1} asks for a check called “${type}”, which there is not. The checks are: ${Object.keys(CHECKS).join(', ')}, or none.`);
     if (type === 'text' && !(c && c.text)) problems.push(`Task ${i + 1} checks for words on the home page but does not say which words.`);
+    if (type === 'page' && !(c && String(c.path || '').trim())) problems.push(`Task ${i + 1} checks for a screen but does not say which: give part of its address, like “site-editor.php”.`);
   });
   const unchecked = tasks.filter((t) => !t.check).length;
   // only worth saying when nothing at all is checked: a task like "write a
@@ -848,6 +856,7 @@ function lintTour(input, subject, tasks, tour, problems, notes) {
     if (type && type !== 'none' && !CHECKS[type]) problems.push(`Step ${i + 1} asks for a check called “${type}”, which there is not. The checks are: ${Object.keys(CHECKS).join(', ')}, or none.`);
     if (type === 'text' && !(c && c.text)) problems.push(`Step ${i + 1} checks for words on the home page but does not say which words.`);
     if ((type === 'block' || type === 'block_changed') && !(c && BLOCK_NAME_RE.test(String(c.block || '').toLowerCase()))) problems.push(`Step ${i + 1} checks a block but does not name it the way WordPress does, like “core/heading” or “my-plugin/my-block”.`);
+    if (type === 'page' && !(c && String(c.path || '').trim())) problems.push(`Step ${i + 1} checks for a screen but does not say which: give part of its address, like “site-editor.php”.`);
   });
   if (tasks.length > 6) notes.push(`${tasks.length} steps is a long tour. Most people stop somewhere around five.`);
   if (tasks.length && tasks.every((t) => !t.check)) notes.push('No step has a check, so every step needs Next. Where the site or the editor can show it (the colours, a page, your block), give it a check and the step moves on by itself.');
@@ -1915,10 +1924,10 @@ const TASKS_SCHEMA = {
       check: {
         description: 'How the service can see the task really happened, by reading the tester\'s site when they press Done or Couldn\'t do it. One of: ' +
           Object.keys(CHECKS).map((k) => `${k} (${CHECKS[k].toLowerCase()})`).join(', ') +
-          '. For text, pass { "type": "text", "text": "the words" }; for block and block_changed, { "type": "block", "block": "my-plugin/my-block" }. Leave it out and the service guesses from the title; pass "none" to check nothing. In a tour, a checked step moves on by itself when the check sees it done; an unchecked one shows Next.',
+          '. For text, pass { "type": "text", "text": "the words" }; for block and block_changed, { "type": "block", "block": "my-plugin/my-block" }; for page, { "type": "page", "path": "site-editor.php" } (part of the screen’s address). Leave it out and the service guesses from the title; pass "none" to check nothing. In a tour, a checked step moves on by itself when the check sees it done; an unchecked one shows Next.',
         oneOf: [
-          { type: 'string', enum: Object.keys(CHECKS).filter((k) => k !== 'text' && k !== 'block' && k !== 'block_changed').concat(['none']) },
-          { type: 'object', properties: { type: { type: 'string', enum: Object.keys(CHECKS) }, text: { type: 'string' }, block: { type: 'string' } }, required: ['type'] },
+          { type: 'string', enum: Object.keys(CHECKS).filter((k) => k !== 'text' && k !== 'block' && k !== 'block_changed' && k !== 'page').concat(['none']) },
+          { type: 'object', properties: { type: { type: 'string', enum: Object.keys(CHECKS) }, text: { type: 'string' }, block: { type: 'string' }, path: { type: 'string' } }, required: ['type'] },
         ],
       },
     },
@@ -2388,7 +2397,8 @@ button instead of the four questions.
   a || b uses the first one on screen. Pin the WordPress version in the
   blueprint, or a new release can move what the selector finds.
   block / block_changed checks read the editor in the visitor's browser, so a
-  step can be done before anything is saved. Every other check is measured
+  step can be done before anything is saved. page { type: "page", path:
+  "site-editor.php" } moves on once they reach a screen whose address has it. Every other check is measured
   from when the step began, not from the start.
   The digest of a tour gives, per step: auto (moved on by itself), next,
   skipped, stoppedHere, onItNow, medianSecs; plus buttonPresses.
@@ -3002,7 +3012,8 @@ const HOME = `<!doctype html>
         '<option value="">Work it out from the task</option>' + CHECK_OPTIONS +
         '<option value="none" class="t-none">Don\u2019t check this one</option></select>' +
         '<input type="text" class="t-words" maxlength="120" placeholder="The words to look for" hidden>' +
-        '<input type="text" class="t-block" maxlength="100" placeholder="The block, e.g. my-plugin/my-block" hidden></label>' +
+        '<input type="text" class="t-block" maxlength="100" placeholder="The block, e.g. my-plugin/my-block" hidden>' +
+        '<input type="text" class="t-path" maxlength="120" placeholder="Part of its address, e.g. site-editor.php" hidden></label>' +
       // a tour step can point at the thing to click
       '<label class="chk t-point">Point at <input type="text" class="t-words t-sel" maxlength="200" placeholder="A CSS selector, or button &quot;Styles&quot; (optional)"></label>';
     var drop = document.createElement('button');
@@ -3019,11 +3030,13 @@ const HOME = `<!doctype html>
     var shape = function () {
       d.querySelector('.t-words').hidden = sel.value !== 'text';
       d.querySelector('.t-block').hidden = sel.value !== 'block' && sel.value !== 'block_changed';
+      d.querySelector('.t-path').hidden = sel.value !== 'page';
     };
     if (check && typeof check === 'object') {
       sel.value = check.type;
       if (check.text) d.querySelector('.t-words').value = check.text;
       if (check.block) d.querySelector('.t-block').value = check.block;
+      if (check.path) d.querySelector('.t-path').value = check.path;
     } else if (check) sel.value = check;
     sel.addEventListener('change', shape);
     shape();
@@ -3094,6 +3107,7 @@ const HOME = `<!doctype html>
       var c = d.querySelector('.t-check').value;
       var check = c === 'text' ? { type: 'text', text: d.querySelector('.t-words').value }
         : (c === 'block' || c === 'block_changed') ? { type: c, block: d.querySelector('.t-block').value.trim() }
+        : c === 'page' ? { type: 'page', path: d.querySelector('.t-path').value.trim() }
         : (c || undefined);
       var t = { title: d.querySelector('.t-title').value, hint: d.querySelector('.t-hint').value, check: check };
       if (touring && d.querySelector('.t-sel').value.trim()) t.point = d.querySelector('.t-sel').value.trim();
