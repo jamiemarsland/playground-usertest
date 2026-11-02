@@ -162,7 +162,8 @@ const SCHEMA = [
      creator        VARCHAR(64),
      webhook        VARCHAR(600),
      versions       TEXT,
-     wording        TEXT
+     wording        TEXT,
+     tour           TEXT
    )`,
   `CREATE TABLE IF NOT EXISTS sessions (
      test_id  VARCHAR(16) NOT NULL,
@@ -195,7 +196,7 @@ const SCHEMA = [
    )`,
 ];
 
-const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN versions TEXT', 'ALTER TABLE sessions ADD COLUMN version VARCHAR(4)', 'ALTER TABLE tests ADD COLUMN wording TEXT'];
+const MIGRATIONS = ['ALTER TABLE tests ADD COLUMN creator VARCHAR(64)', 'ALTER TABLE tests ADD COLUMN webhook VARCHAR(600)', 'ALTER TABLE tests ADD COLUMN versions TEXT', 'ALTER TABLE sessions ADD COLUMN version VARCHAR(4)', 'ALTER TABLE tests ADD COLUMN wording TEXT', 'ALTER TABLE tests ADD COLUMN tour TEXT'];
 
 // Once per database, not once per request — and keyed on the binding rather
 // than kept in one module-level variable, so a second database in the same
@@ -332,6 +333,8 @@ async function getTest(env, id) {
     webhook: row.webhook || '',
     versions: parse(row.versions, null),
     wording: parse(row.wording, null),
+    // a tour rather than a test: { button: { label, url } | null }
+    tour: parse(row.tour, null),
   };
 }
 
@@ -402,6 +405,8 @@ const LIMITS = {
   taskHint: 300,
   intro: 300,       // one line of the test's own under the persona
   question: 120,    // a closing question in the test's own words
+  point: 200,       // a tour step's CSS selector for the thing to click
+  buttonLabel: 40,  // the words on the button a tour ends with
   tasksMin: 1,
   tasksMax: 12,
   blueprintBytes: 256 * 1024,
@@ -435,7 +440,9 @@ function overLimits(body) {
     over(t && t.title, LIMITS.taskTitle, `Task ${i + 1}’s title`);
     over(t && t.hint, LIMITS.taskHint, `Task ${i + 1}’s hint`);
     over(t && t.why, LIMITS.taskWhy, `Task ${i + 1}’s note`);
+    over(t && t.point, LIMITS.point, `Task ${i + 1}’s pointer`);
   });
+  over(body.button && body.button.label, LIMITS.buttonLabel, 'The button’s words');
   const qs = body.questions && typeof body.questions === 'object' ? body.questions : {};
   QUESTION_KEYS.forEach((k) => over(qs[k], LIMITS.question, `The ${k} question`));
   if (Array.isArray(body.tasks) && body.tasks.length > LIMITS.tasksMax) {
@@ -486,7 +493,19 @@ const CHECKS = {
   menu: 'The menu changed',
   home: 'The home page changed',
   text: 'Some words appear on the home page',
+  // read from the editor in the tester's browser, before anything is saved;
+  // made for tours, where a plugin's own block is usually the point
+  block: 'A block was added in the editor',
+  block_changed: 'A block’s settings changed in the editor',
 };
+
+const BLOCK_NAME_RE = /^[a-z0-9-]+\/[a-z0-9-]+$/;
+
+// A check in words, with the words or block it looks for.
+function checkLabel(c) {
+  if (!c || !CHECKS[c.type]) return '';
+  return CHECKS[c.type] + (c.text ? ` (“${c.text}”)` : '') + (c.block ? ` (${c.block})` : '');
+}
 
 // A first guess from the task's own words, so most tests are checked without
 // anyone choosing anything. Order matters: "tagline" before "name", "menu"
@@ -518,6 +537,10 @@ function cleanCheck(raw, title) {
     const text = trim(typeof raw === 'object' ? raw.text : '', 120);
     return text ? { type, text } : null;
   }
+  if (type === 'block' || type === 'block_changed') {
+    const block = trim(typeof raw === 'object' ? raw.block : '', 100).toLowerCase();
+    return BLOCK_NAME_RE.test(block) ? { type, block } : null;
+  }
   return { type };
 }
 
@@ -532,6 +555,9 @@ function cleanTasks(input) {
     const hint = trim(raw && raw.hint, LIMITS.taskHint);
     if (why) task.why = why;
     if (hint) task.hint = hint;
+    // a tour step's pointer: only ever handed to querySelector by the card
+    const point = trim(raw && raw.point, LIMITS.point);
+    if (point) task.point = point;
     const check = cleanCheck(raw && raw.check, title);
     if (check) task.check = check;
     out.push(task);
@@ -700,6 +726,42 @@ const TASK_SETS = [
   },
 ];
 
+// Ready-made tours. A tour shows rather than tests, so here the hint is the
+// instruction and naming the button is the point. The steps of this one are a
+// starting place for a release showcase, to be rewritten for each release.
+const TOUR_SETS = [
+  {
+    key: 'whats-new',
+    mode: 'tour',
+    name: 'What’s new in WordPress',
+    for: 'A release showcase. A starting point: rewrite the steps for whatever the next release brings.',
+    persona: 'Anyone who runs a site on WordPress and wants to see what it can do now.',
+    button: { label: 'Read the release post', url: 'https://wordpress.org/news/' },
+    tasks: [
+      { title: 'Open the Site Editor', hint: 'Choose Edit site in the bar at the top. From the dashboard it is Appearance → Editor.', point: '#wp-admin-bar-site-editor > a', check: 'none' },
+      { title: 'Find anything with the command palette', hint: 'Press ⌘K, or Ctrl+K on Windows, and type “styles”.', point: '#wp-admin-bar-command-palette > .ab-item', check: 'none' },
+      { title: 'Give the site a new look in one click', hint: 'Open Styles, then Browse styles. Pick one of the looks, then Save.', point: '.global-styles-ui-variations_item:not(.is-active) || button "Browse styles" || button "Styles"', check: 'styles' },
+      { title: 'Try a new pair of fonts', hint: 'In Styles, open Typography and pick one of the font pairs, then Save.', point: 'button "Typography"', check: 'styles' },
+      { title: 'Drop a ready-made pattern onto the home page', hint: 'Click the page to edit it. Press + at the top left, choose Patterns and click one to add it, then Save.', point: '.editor-document-tools__inserter-toggle', check: 'home' },
+    ],
+  },
+];
+const ALL_SETS = TASK_SETS.concat(TOUR_SETS);
+
+// Whether a draft is a tour, and the button it ends with. A tour made from a
+// ready-made tour set is a tour without saying so; its button fills in too.
+function readTour(body, set) {
+  const isTour = (body && body.mode === 'tour') || (!(body && body.mode) && set && set.mode === 'tour');
+  if (!isTour) return { tour: null };
+  const raw = body && body.button && typeof body.button === 'object' ? body.button : (set && set.button) || null;
+  if (!raw || (!trim(raw.label, 100) && !trim(raw.url, 600))) return { tour: { button: null } };
+  const label = trim(raw.label, LIMITS.buttonLabel);
+  if (!label) return { error: 'The button at the end needs some words, like “Get the plugin”.' };
+  const checked = checkPublicUrl(trim(raw.url, 600), 'button’s link');
+  if (checked.error) return { error: checked.error };
+  return { tour: { button: { label, url: checked.url } } };
+}
+
 const BUTTON_WORDS = /\b(click|press|tap|hit|select|choose|drag|navigate to|go to the|open the)\b/i;
 
 function lintTest(input) {
@@ -707,13 +769,16 @@ function lintTest(input) {
   const notes = [];
 
   const subject = trim(input && input.subject, LIMITS.subject);
-  const set = TASK_SETS.find((x) => x.key === (input && (input.task_set || input.taskSet)));
+  const set = ALL_SETS.find((x) => x.key === (input && (input.task_set || input.taskSet)));
   const persona = trimMultiline(input && input.persona, LIMITS.persona) || (set ? set.persona : '');
   const tasks = cleanTasks(input && Array.isArray(input.tasks) && input.tasks.length ? input.tasks : (set ? set.tasks : []));
   const boot = input && input.boot && typeof input.boot === 'object' ? input.boot : null;
   const siteName = boot ? trim(boot.title, 60) : '';
 
   overLimits(input).forEach((x) => problems.push(x));
+  const toured = readTour(input, set);
+  if (toured.error) problems.push(toured.error);
+  if (toured.tour) return lintTour(input, subject, tasks, toured.tour, problems, notes);
   if (!subject) problems.push('Say what is being tested — it is the tester’s first line: “Thank you for helping make X better”.');
   if (!persona) problems.push('There is no persona. The tester needs to know who they are meant to be.');
   if (!tasks.length) problems.push('There is nothing for them to try.');
@@ -760,10 +825,38 @@ function lintTest(input) {
   if (tasks.length && unchecked === tasks.length) notes.push('No task has a check, so you only have the tester’s word that they managed. Where the site can show it (a name, a page, the colours), give it a check.');
 
   const summary = tasks.length
-    ? `${tasks.length} task(s) for someone testing ${subject || 'something'}:\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.hint ? '' : '  (no hint)'}${t.check ? `  [checked: ${CHECKS[t.check.type].toLowerCase()}${t.check.text ? ` “${t.check.text}”` : ''}]` : '  [not checked]'}`).join('\n')
+    ? `${tasks.length} task(s) for someone testing ${subject || 'something'}:\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.hint ? '' : '  (no hint)'}${t.check ? `  [checked: ${checkLabel(t.check).toLowerCase()}]` : '  [not checked]'}`).join('\n')
     : '';
 
   return { ok: problems.length === 0, problems, notes, summary };
+}
+
+// A tour is checked the other way round. Naming the button is right here: the
+// instruction is shown from the start. What goes wrong is a step with nothing
+// to tell them, and a tour where every step needs Next.
+function lintTour(input, subject, tasks, tour, problems, notes) {
+  if (!subject) problems.push('Say what the tour shows — it heads the welcome page: “A short tour of X”.');
+  if (!tasks.length) problems.push('There are no steps.');
+  tasks.forEach((task, i) => {
+    if (!task.hint) problems.push(`Step ${i + 1} has nothing to tell them. In a tour the hint is the instruction, shown straight away: say what to do, button and all.`);
+  });
+  const titles = tasks.map((t) => t.title.toLowerCase());
+  titles.forEach((t, i) => { if (titles.indexOf(t) !== i) problems.push(`Step ${i + 1} repeats an earlier one.`); });
+  (Array.isArray(input && input.tasks) ? input.tasks : []).forEach((raw, i) => {
+    const c = raw && raw.check;
+    const type = typeof c === 'string' ? c : c && c.type;
+    if (type && type !== 'none' && !CHECKS[type]) problems.push(`Step ${i + 1} asks for a check called “${type}”, which there is not. The checks are: ${Object.keys(CHECKS).join(', ')}, or none.`);
+    if (type === 'text' && !(c && c.text)) problems.push(`Step ${i + 1} checks for words on the home page but does not say which words.`);
+    if ((type === 'block' || type === 'block_changed') && !(c && BLOCK_NAME_RE.test(String(c.block || '').toLowerCase()))) problems.push(`Step ${i + 1} checks a block but does not name it the way WordPress does, like “core/heading” or “my-plugin/my-block”.`);
+  });
+  if (tasks.length > 6) notes.push(`${tasks.length} steps is a long tour. Most people stop somewhere around five.`);
+  if (tasks.length && tasks.every((t) => !t.check)) notes.push('No step has a check, so every step needs Next. Where the site or the editor can show it (the colours, a page, your block), give it a check and the step moves on by itself.');
+  if (!tour.button) notes.push('There is no button at the end. Say what they should do once they have seen it: “Get the plugin”, “Read the release post”.');
+  const summary = tasks.length
+    ? `A tour of ${subject || 'something'} in ${tasks.length} step(s):\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.check ? `  [moves on when: ${checkLabel(t.check).toLowerCase()}]` : '  [Next]'}${t.point ? '  [points at ' + t.point + ']' : ''}`).join('\n') +
+      (tour.button ? `\n  Ends with a button: ${tour.button.label} → ${tour.button.url}` : '')
+    : '';
+  return { ok: problems.length === 0, problems, notes, summary, mode: 'tour' };
 }
 
 /* ------------------------------------------------- a blueprint, without one */
@@ -1069,13 +1162,17 @@ async function makeTest(env, req, body) {
   const subject = trim(body.subject, LIMITS.subject);
   const wording = cleanWording(body);
   // a ready-made set fills whatever was left out: the tasks, the persona
-  const set = TASK_SETS.find((x) => x.key === body.taskSet);
+  const set = ALL_SETS.find((x) => x.key === body.taskSet);
   const persona = trimMultiline(body.persona, LIMITS.persona) || (set ? set.persona : '');
   const tasks = cleanTasks(Array.isArray(body.tasks) && body.tasks.length ? body.tasks : (set ? set.tasks : []));
   const password = String(body.password || '');
+  // a tour has no persona to play (they are themselves), only who it is for
+  const toured = readTour(body, set);
+  if (toured.error) return json({ error: toured.error }, 400, CORS);
+  const tour = toured.tour;
 
-  if (!subject) return json({ error: 'Say what is being tested — it goes in the tester’s thank-you line.' }, 400, CORS);
-  if (!persona) return json({ error: 'Write a paragraph about who the tester should pretend to be.' }, 400, CORS);
+  if (!subject) return json({ error: tour ? 'Say what the tour shows — it heads the welcome page.' : 'Say what is being tested — it goes in the tester’s thank-you line.' }, 400, CORS);
+  if (!persona && !tour) return json({ error: 'Write a paragraph about who the tester should pretend to be.' }, 400, CORS);
   if (tasks.length < LIMITS.tasksMin) return json({ error: 'Give the tester at least one thing to try.' }, 400, CORS);
   if (password.length < LIMITS.passwordMin || password.length > LIMITS.passwordMax) {
     return json({ error: `The results password has to be at least ${LIMITS.passwordMin} characters.` }, 400, CORS);
@@ -1120,21 +1217,24 @@ async function makeTest(env, req, body) {
   await run(
     env,
     `INSERT INTO tests (id, created, touched, expires, subject, persona, tasks,
-                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator, webhook, versions, wording)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        blueprint_url, blueprint_json, blueprint_boot, pw_salt, pw_hash, creator, webhook, versions, wording, tour)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id, now, now, now + NINETY_DAYS * 1000, subject, persona, JSON.stringify(tasks),
     blueprintUrl || null,
     blueprintJson ? JSON.stringify(blueprintJson) : null,
     blueprintBoot ? JSON.stringify(blueprintBoot) : null,
     salt, hash, creator, webhook || null,
     versions ? JSON.stringify(versions) : null,
-    wording ? JSON.stringify(wording) : null
+    wording ? JSON.stringify(wording) : null,
+    tour ? JSON.stringify(tour) : null
   );
 
   const origin = publicOrigin(req);
   return json({
     id, tester: `${origin}/t/${id}`, results: `${origin}/t/${id}/results`,
-    checks: tasks.map((t) => ({ title: t.title, check: t.check ? CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') : '' })),
+    checks: tasks.map((t) => ({ title: t.title, check: checkLabel(t.check) })),
+    mode: tour ? 'tour' : 'test',
+    button: tour && tour.button ? tour.button : undefined,
     webhook: webhook ? hookKind(webhook) : '',
     versions: versions ? versions.map((v) => ({ key: v.key, label: v.label })) : undefined,
   }, 200, CORS);
@@ -1170,6 +1270,8 @@ function wrapBlueprint(base, test, origin, pluginZipUrl, version) {
         tasks: test.tasks,
         // only a test's own closing questions; the card has neutral defaults
         questions: (test.wording && test.wording.questions) || undefined,
+        mode: test.tour ? 'tour' : undefined,
+        button: test.tour && test.tour.button ? test.tour.button : undefined,
       }),
     },
   });
@@ -1247,7 +1349,9 @@ async function serveBlueprint(env, req, id) {
 
 /* -------------------------------------------------------------------- events */
 
-const EVENT_TYPES = ['start', 'task_start', 'task_done', 'task_skip', 'hint', 'error', 'wrap', 'note'];
+// A tour reports with the same events: task_done carries how the step moved on
+// (by itself, or Next), wrap marks the end, and cta is the button at the end.
+const EVENT_TYPES = ['start', 'task_start', 'task_done', 'task_skip', 'hint', 'error', 'wrap', 'note', 'cta'];
 const MAX_EVENTS_PER_SESSION = 600;
 const MAX_SESSIONS_PER_TEST = 500;
 
@@ -1377,6 +1481,7 @@ function hookKind(url) {
 }
 
 function finishSummary(test, events, origin) {
+  if (test.tour) return tourSummary(test, events, origin);
   const titles = new Map(test.tasks.map((t) => [t.id, t.title]));
   const wrap = (events.filter((e) => e.type === 'wrap').slice(-1)[0] || {}).data || {};
   const lines = [];
@@ -1408,6 +1513,23 @@ function finishSummary(test, events, origin) {
   const head = `${who} finished the ${test.subject} test.`;
   const text = [head, '', ...lines, '', ...answers, '', `Results: ${results}`].join('\n');
   return { head, text, tasks, wrap: { name: wrap.name || '', happy: wrap.happy || '', confident: wrap.confident || '', feel: wrap.feel || '', confused: wrap.confused || '', minutes: wrap.minutes || 0 }, results };
+}
+
+// The end of a tour: which steps moved on by themselves, which needed Next and
+// which were skipped. There are no answers to report.
+function tourSummary(test, events, origin) {
+  const lines = [];
+  const tasks = [];
+  for (const t of test.tasks) {
+    const last = events.filter((e) => e.task === t.id && (e.type === 'task_done' || e.type === 'task_skip')).slice(-1)[0];
+    const how = !last ? 'not reached' : last.type === 'task_skip' ? 'skipped' : (last.data && last.data.how === 'auto') ? 'moved on by itself' : 'pressed Next';
+    tasks.push({ title: t.title, result: how });
+    lines.push(`${how === 'skipped' ? '↷' : how === 'not reached' ? '·' : '✓'} ${t.title} (${how})`);
+  }
+  const results = `${origin}/t/${test.id}/results`;
+  const head = `Someone finished the ${test.subject} tour.`;
+  const text = [head, '', ...lines, '', `Tour numbers: ${results}`].join('\n');
+  return { head, text, tasks, wrap: {}, results };
 }
 
 async function announceFinish(env, test, session, origin) {
@@ -1455,7 +1577,8 @@ async function testsTaken(env) {
   await ensureSchema(env);
   const row = await one(
     env,
-    "SELECT COUNT(*) AS n FROM (SELECT DISTINCT test_id, session_id FROM events WHERE type IN ('task_done', 'task_skip')) taken"
+    // a tour is not a test, so its visitors are not counted here
+    "SELECT COUNT(*) AS n FROM (SELECT DISTINCT test_id, session_id FROM events WHERE type IN ('task_done', 'task_skip') AND test_id NOT IN (SELECT id FROM tests WHERE tour IS NOT NULL)) taken"
   );
   return EARLIER_TESTS + Number((row && row.n) || 0);
 }
@@ -1488,14 +1611,18 @@ async function buildDigest(env, id, test, only) {
       id: task.id, title: task.title,
       done: 0, couldnt: 0, notReached: 0,
       hintOpened: 0, secs: [], notes: [],
-      check: task.check ? CHECKS[task.check.type] + (task.check.text ? ` (“${task.check.text}”)` : '') : '',
+      check: checkLabel(task.check),
       shown: 0, notShown: 0, didAnyway: 0,
+      // for a tour: moved on by itself, or Next; and who stopped on this step
+      auto: 0, next: 0, stoppedHere: 0, onItNow: 0,
     });
   }
 
   const wrapUps = [];
   let errors = 0;
   let lastEventAt = 0;
+  let ctaPresses = 0;
+  const now = Date.now();
 
   // Every event for the test in one query, then split by tester here. A query
   // per tester read the same rows and cost a round trip each, and it put the
@@ -1521,9 +1648,12 @@ async function buildDigest(env, id, test, only) {
 
     const who = row.name || row.id;
     const reached = new Set();
+    const ended = new Set();
+    let pressed = false;
 
     for (const e of events) {
       if (e.type === 'error') { errors++; continue; }
+      if (e.type === 'cta') { pressed = true; continue; }
       if (e.type === 'wrap') {
         const d = e.data || {};
         wrapUps.push({
@@ -1539,7 +1669,10 @@ async function buildDigest(env, id, test, only) {
       reached.add(e.task);
       if (e.type === 'hint') t.hintOpened++;
       if (e.type === 'task_done' || e.type === 'task_skip') {
+        ended.add(e.task);
         if (e.type === 'task_done') t.done++; else t.couldnt++;
+        if (e.type === 'task_done' && e.data && e.data.how === 'auto') t.auto++;
+        if (e.type === 'task_done' && e.data && e.data.how === 'next') t.next++;
         // what the site said, when the task had a check: yes, no or unknown
         const seen = e.data && e.data.check;
         if (e.type === 'task_done' && seen === 'yes') t.shown++;
@@ -1554,7 +1687,12 @@ async function buildDigest(env, id, test, only) {
     // difference is usually "they ran out of patience three tasks ago".
     for (const [taskId, t] of byTask) {
       if (!reached.has(taskId)) t.notReached++;
+      // where an unfinished visitor is: gone quiet on it, or still on it
+      else if (!ended.has(taskId) && !row.wrapped) {
+        if (testerStatus(row, now) === 'stopped') t.stoppedHere++; else t.onItNow++;
+      }
     }
+    if (pressed) ctaPresses++;
   }
 
   const tasks = [...byTask.values()].map((t) => ({
@@ -1565,6 +1703,7 @@ async function buildDigest(env, id, test, only) {
     check: t.check,
     shown: t.shown, notShown: t.notShown, didAnyway: t.didAnyway,
     notes: t.notes,
+    ...(test.tour ? { auto: t.auto, next: t.next, skipped: t.couldnt, stoppedHere: t.stoppedHere, onItNow: t.onItNow } : {}),
   }));
 
   const happies = wrapUps.map((w) => Number(w.happy)).filter((n) => n >= 1 && n <= 5);
@@ -1582,7 +1721,8 @@ async function buildDigest(env, id, test, only) {
     finished: wrapUps.length,
     errors,
     tasks,
-    wrapUps,
+    wrapUps: test.tour ? [] : wrapUps,
+    ...(test.tour ? { mode: 'tour', button: test.tour.button || null, buttonPresses: ctaPresses } : {}),
   };
 }
 
@@ -1629,7 +1769,7 @@ async function updateTest(env, test, body) {
   const subject = has('subject') ? trim(body.subject, LIMITS.subject) : test.subject;
   const persona = has('persona') ? trimMultiline(body.persona, LIMITS.persona) : test.persona;
   if (!subject) return { status: 400, body: { error: 'Say what is being tested — it goes in the tester’s thank-you line.' } };
-  if (!persona) return { status: 400, body: { error: 'The persona cannot be empty.' } };
+  if (!persona && !test.tour) return { status: 400, body: { error: 'The persona cannot be empty.' } };
 
   const counted = await one(env, 'SELECT COUNT(*) AS n FROM sessions WHERE test_id = ?', test.id);
   const started = Number((counted && counted.n) || 0);
@@ -1640,7 +1780,12 @@ async function updateTest(env, test, body) {
     // than having one guessed afresh from the new wording
     const given = (Array.isArray(body.tasks) ? body.tasks : []).map((raw, i) => {
       const old = test.tasks[i];
-      return raw && raw.check === undefined && old ? Object.assign({}, raw, { check: old.check || 'none' }) : raw;
+      if (!raw || !old) return raw;
+      const kept = Object.assign({}, raw);
+      if (raw.check === undefined) kept.check = old.check || 'none';
+      // and a step sent without a pointer keeps the one it had
+      if (raw.point === undefined && old.point) kept.point = old.point;
+      return kept;
     });
     const fresh = cleanTasks(given);
     if (fresh.length < LIMITS.tasksMin) return { status: 400, body: { error: 'Give the tester at least one thing to try.' } };
@@ -1662,16 +1807,26 @@ async function updateTest(env, test, body) {
     questions: has('questions') ? body.questions : before.questions,
   });
 
+  // a tour's button can change; a test cannot become a tour, nor the other way
+  let tour = test.tour;
+  if (tour && has('button')) {
+    const toured = readTour({ mode: 'tour', button: body.button || {} });
+    if (toured.error) return { status: 400, body: { error: toured.error } };
+    tour = toured.tour;
+  }
+
   await run(
     env,
-    'UPDATE tests SET subject = ?, persona = ?, tasks = ?, wording = ?, touched = ? WHERE id = ?',
-    subject, persona, JSON.stringify(tasks), wording ? JSON.stringify(wording) : null, Date.now(), test.id
+    'UPDATE tests SET subject = ?, persona = ?, tasks = ?, wording = ?, tour = ?, touched = ? WHERE id = ?',
+    subject, persona, JSON.stringify(tasks), wording ? JSON.stringify(wording) : null, tour ? JSON.stringify(tour) : null, Date.now(), test.id
   );
   return {
     status: 200,
     body: {
       ok: true, id: test.id, started,
       subject, tasks: tasks.map((t) => ({ title: t.title, hint: t.hint || '' })),
+      mode: tour ? 'tour' : 'test',
+      button: tour ? tour.button || null : undefined,
       intro: (wording && wording.intro) || '',
       questions: Object.assign({}, DEFAULT_QUESTIONS, (wording && wording.questions) || {}),
     },
@@ -1720,7 +1875,9 @@ async function readResults(env, req, url) {
       persona: test.persona,
       intro: (test.wording && test.wording.intro) || '',
       questions: Object.assign({}, DEFAULT_QUESTIONS, (test.wording && test.wording.questions) || {}),
-      tasks: test.tasks.map((t) => (t.check ? Object.assign({}, t, { checkLabel: CHECKS[t.check.type] + (t.check.text ? ` (“${t.check.text}”)` : '') }) : t)),
+      tasks: test.tasks.map((t) => (t.check ? Object.assign({}, t, { checkLabel: checkLabel(t.check) }) : t)),
+      mode: test.tour ? 'tour' : 'test',
+      button: test.tour ? test.tour.button || null : undefined,
       sessions: await sessionIndex(env, id),
       versions: test.versions ? await compareDigest(env, id, test) : undefined,
     },
@@ -1751,16 +1908,17 @@ const TASKS_SCHEMA = {
   items: {
     type: 'object',
     properties: {
-      title: { type: 'string', maxLength: LIMITS.taskTitle, description: `What they are trying to get done, in their words. "Give the site your own name", not "click Settings". At most ${LIMITS.taskTitle} characters — longer is refused, not cut.` },
-      hint: { type: 'string', maxLength: LIMITS.taskHint, description: `Shown only if they ask for it. This is where a control may be named. At most ${LIMITS.taskHint} characters.` },
+      title: { type: 'string', maxLength: LIMITS.taskTitle, description: `What they are trying to get done, in their words. "Give the site your own name", not "click Settings". In a tour, the step's heading. At most ${LIMITS.taskTitle} characters — longer is refused, not cut.` },
+      hint: { type: 'string', maxLength: LIMITS.taskHint, description: `Shown only if they ask for it. This is where a control may be named. In a tour it is the instruction, shown straight away: say what to do, button and all. At most ${LIMITS.taskHint} characters.` },
+      point: { type: 'string', maxLength: LIMITS.point, description: `Tours only, optional: a CSS selector for the thing to click, e.g. [aria-label="Styles"]. Add words in quotes to match an element by its text, e.g. button "Styles"; separate several with || and the first on screen wins, so the ring can follow them across panels. A ring is drawn round it, inside the editor's canvas too. A selector that finds nothing shows no ring. At most ${LIMITS.point} characters.` },
       why: { type: 'string', maxLength: LIMITS.taskWhy, description: `Optional one line of context under the task. At most ${LIMITS.taskWhy} characters.` },
       check: {
         description: 'How the service can see the task really happened, by reading the tester\'s site when they press Done or Couldn\'t do it. One of: ' +
           Object.keys(CHECKS).map((k) => `${k} (${CHECKS[k].toLowerCase()})`).join(', ') +
-          '. For text, pass { "type": "text", "text": "the words" }. Leave it out and the service guesses from the title; pass "none" to check nothing.',
+          '. For text, pass { "type": "text", "text": "the words" }; for block and block_changed, { "type": "block", "block": "my-plugin/my-block" }. Leave it out and the service guesses from the title; pass "none" to check nothing. In a tour, a checked step moves on by itself when the check sees it done; an unchecked one shows Next.',
         oneOf: [
-          { type: 'string', enum: Object.keys(CHECKS).concat(['none']) },
-          { type: 'object', properties: { type: { type: 'string', enum: Object.keys(CHECKS) }, text: { type: 'string' } }, required: ['type'] },
+          { type: 'string', enum: Object.keys(CHECKS).filter((k) => k !== 'text' && k !== 'block' && k !== 'block_changed').concat(['none']) },
+          { type: 'object', properties: { type: { type: 'string', enum: Object.keys(CHECKS) }, text: { type: 'string' }, block: { type: 'string' } }, required: ['type'] },
         ],
       },
     },
@@ -1795,10 +1953,18 @@ const WORDING_SCHEMA = {
   },
 };
 
+// A tour shows people a thing rather than testing them on it: the same link,
+// site and card, but each step's hint is the instruction, a checked step moves
+// on by itself, and it ends with a button instead of questions.
+const TOUR_SCHEMA = {
+  mode: { type: 'string', enum: ['test', 'tour'], description: 'test (the default) watches people try things on their own. tour walks people through it: each step shows its hint as the instruction, can point at the thing to click, moves on by itself when its check sees it done, and ends with a button instead of the closing questions. For a tour, persona is optional: one line on who it is for.' },
+  button: { type: 'object', description: `Tours only: the button at the end, { label, url }. The label at most ${LIMITS.buttonLabel} characters, the url https. E.g. { "label": "Get the plugin", "url": "https://wordpress.org/plugins/…" }.`, properties: { label: { type: 'string', maxLength: LIMITS.buttonLabel }, url: { type: 'string' } } },
+};
+
 const TOOLS = [
   {
     name: 'usertest_task_sets',
-    description: 'Ready-made task sets for the tests most people run (first edits, pages and the menu, writing a post, branding, building a page, a WooCommerce shop). Each has a persona and five or six tasks with hints and site checks. Pass task_set to usertest_check or usertest_create to use one, or copy and change its tasks.',
+    description: 'Ready-made task sets for the tests most people run (first edits, pages and the menu, writing a post, branding, building a page, a WooCommerce shop), and ready-made tours (what’s new in WordPress). Each has a persona and five or six tasks with hints and site checks. Pass task_set to usertest_check or usertest_create to use one, or copy and change its tasks.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -1808,12 +1974,14 @@ const TOOLS = [
       type: 'object',
       properties: {
         subject: { type: 'string', maxLength: LIMITS.subject, description: 'What is being tested. It becomes the tester\'s first line: "Thank you for helping make X better".' },
-        task_set: { type: 'string', enum: TASK_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
+        task_set: { type: 'string', enum: ALL_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
         persona: { type: 'string', maxLength: LIMITS.persona, description: 'A paragraph, second person, giving them a reason to want the site — not just a job title.' },
         tasks: TASKS_SCHEMA,
         boot: BOOT_SCHEMA,
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
+        mode: TOUR_SCHEMA.mode,
+        button: TOUR_SCHEMA.button,
       },
       required: ['subject'],
     },
@@ -1825,12 +1993,14 @@ const TOOLS = [
       type: 'object',
       properties: {
         subject: { type: 'string', maxLength: LIMITS.subject },
-        task_set: { type: 'string', enum: TASK_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
+        task_set: { type: 'string', enum: ALL_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
         persona: { type: 'string', maxLength: LIMITS.persona },
         tasks: TASKS_SCHEMA,
         boot: BOOT_SCHEMA,
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
+        mode: TOUR_SCHEMA.mode,
+        button: TOUR_SCHEMA.button,
         blueprint_url: { type: 'string', description: 'An https URL to an existing Playground blueprint. Re-read each time a tester starts, so it can keep changing.' },
         blueprint_json: { type: 'string', description: 'A Playground blueprint as a JSON string, kept as-is.' },
         password: { type: 'string', description: 'For the results page. One is made for you if you leave it out.' },
@@ -1857,6 +2027,7 @@ const TOOLS = [
         tasks: TASKS_SCHEMA,
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
+        button: TOUR_SCHEMA.button,
       },
       required: ['test', 'password'],
     },
@@ -1893,8 +2064,8 @@ function mcpText(t, extra) {
 
 async function mcpCall(env, req, name, args) {
   if (name === 'usertest_task_sets') {
-    const lines = TASK_SETS.map((x) => `${x.key} — ${x.name}: ${x.for}\n` + x.tasks.map((t, i) => `    ${i + 1}. ${t.title}`).join('\n'));
-    return mcpText(lines.join('\n\n') + '\n\nPass task_set: "<key>" to usertest_check or usertest_create; your own tasks or persona, if given, win.', { structuredContent: { sets: TASK_SETS } });
+    const lines = ALL_SETS.map((x) => `${x.key} — ${x.name}${x.mode === 'tour' ? ' (a tour)' : ''}: ${x.for}\n` + x.tasks.map((t, i) => `    ${i + 1}. ${t.title}`).join('\n'));
+    return mcpText(lines.join('\n\n') + '\n\nPass task_set: "<key>" to usertest_check or usertest_create; your own tasks or persona, if given, win. A tour set makes a tour.', { structuredContent: { sets: TASK_SETS, tours: TOUR_SETS } });
   }
 
   if (name === 'usertest_check') {
@@ -1921,6 +2092,8 @@ async function mcpCall(env, req, name, args) {
       taskSet: args && args.task_set,
       intro: args && args.intro,
       questions: args && args.questions,
+      mode: args && args.mode,
+      button: args && args.button,
       boot: args && args.boot,
       blueprintUrl: args && args.blueprint_url,
       blueprintJson: args && args.blueprint_json,
@@ -1934,9 +2107,10 @@ async function mcpCall(env, req, name, args) {
     if (!res.ok) return mcpText(made.error || 'That did not work.', { isError: true, structuredContent: made });
 
     const out = Object.assign({}, made, { password });
+    const touring = made.mode === 'tour';
     return mcpText(
-      `Made. Send this to a tester:\n${made.tester}\n\n` +
-      `Read the results here:\n${made.results}\n\nPassword: ${password}\n\n` +
+      (touring ? `Made a tour. Send this link to anyone:\n${made.tester}\n\nSee where people stop here:\n${made.results}` : `Made. Send this to a tester:\n${made.tester}\n\nRead the results here:\n${made.results}`) +
+      `\n\nPassword: ${password}\n\n` +
       'Give the person both links and the password — none of it can be looked up again. ' +
       'The test keeps itself for ninety days after the last tester.' +
       (made.versions ? `\n\nOne link for all ${made.versions.length} versions (${made.versions.map((v) => v.label).join(', ')}): testers are shared out evenly, and usertest_results compares them.` : '') +
@@ -1950,7 +2124,7 @@ async function mcpCall(env, req, name, args) {
     const test = await openTest(env, id, (args && args.password) || '');
     if (!test) return mcpText('That test id and password do not go together.', { isError: true });
     const changes = {};
-    ['subject', 'persona', 'tasks', 'intro', 'questions'].forEach((k) => { if (args && args[k] !== undefined) changes[k] = args[k]; });
+    ['subject', 'persona', 'tasks', 'intro', 'questions', 'button'].forEach((k) => { if (args && args[k] !== undefined) changes[k] = args[k]; });
     if (!Object.keys(changes).length) return mcpText('Nothing to change: send the fields that should be different.', { isError: true });
     const r = await updateTest(env, test, changes);
     if (r.status !== 200) return mcpText(r.body.error, { isError: true, structuredContent: r.body });
@@ -1959,7 +2133,9 @@ async function mcpCall(env, req, name, args) {
       `Updated ${id}. Same links, same password; testers who start from now on see this.\n\n` +
       `${b.subject}\n` + b.tasks.map((t, i) => `  ${i + 1}. ${t.title}`).join('\n') +
       (b.intro ? `\n\nIntro line: ${b.intro}` : '') +
-      '\n\nClosing questions:\n' + QUESTION_KEYS.map((k) => `  ${b.questions[k]}`).join('\n'),
+      (b.mode === 'tour'
+        ? (b.button ? `\n\nEnds with a button: ${b.button.label} → ${b.button.url}` : '\n\nNo button at the end.')
+        : '\n\nClosing questions:\n' + QUESTION_KEYS.map((k) => `  ${b.questions[k]}`).join('\n')),
       { structuredContent: b }
     );
   }
@@ -2014,6 +2190,24 @@ async function mcpCall(env, req, name, args) {
       return mcpText(L.join('\n'), { structuredContent: d });
     }
 
+    if (d.mode === 'tour') {
+      const L = [`${d.testers} people started the tour: ${d.status.finished} saw the end, ${d.status.working} still going, ${d.status.stopped} stopped part way.` +
+        (d.button ? ` ${d.buttonPresses} pressed “${d.button.label}”.` : ''), ''];
+      d.tasks.forEach((t, i) => {
+        const reached = d.testers - t.notReached;
+        const bits = [`${reached} reached it`];
+        if (t.auto) bits.push(`${t.auto} moved on by itself`);
+        if (t.next) bits.push(`${t.next} pressed Next`);
+        if (t.skipped) bits.push(`${t.skipped} skipped`);
+        if (t.stoppedHere) bits.push(`${t.stoppedHere} stopped here`);
+        if (t.onItNow) bits.push(`${t.onItNow} on it now`);
+        if (t.medianSecs != null) bits.push(`${t.medianSecs}s median`);
+        L.push(`${i + 1}. ${t.title} — ${bits.join(', ')}`);
+      });
+      if (d.truncated) L.push('', `Only the most recent ${DIGEST_MAX_SESSIONS} visitors are counted here.`);
+      return mcpText(L.join('\n'), { structuredContent: d });
+    }
+
     const lines = [`${d.testers} tester(s): ${d.status.finished} finished, ${d.status.working} still going, ${d.status.stopped} stopped before the end.`, ''];
     for (const t of d.tasks) {
       const bits = [`${t.done} done`, `${t.couldnt} couldn’t`];
@@ -2061,7 +2255,9 @@ async function mcpMessage(env, req, msg) {
           'gets a throwaway WordPress site in their browser with a card of things to try, and what ' +
           'they do comes back here. Draft the persona and tasks with the person, usertest_check them, ' +
           'then usertest_create and hand over both links and the password. Come back later for ' +
-          'usertest_results — real testers take days, not minutes.',
+          'usertest_results — real testers take days, not minutes. ' +
+          'To show people a thing instead of testing them on it, make a tour (mode: "tour"): each ' +
+          'step says what to do, can point at it, moves on by itself when done, and ends with a button.',
       });
     }
     if (method === 'ping') return ok({});
@@ -2173,6 +2369,31 @@ DELETE ${origin}/api/results?test=<id>
   Clears a test and everything on it. Use it on dry runs before the real
   invitations go out — every rehearsal is a row.
 
+## Show it instead: a tour
+
+The same thing with mode: "tour" walks people through it rather than testing
+them. Each step's hint is the instruction, shown straight away (naming the
+button is right here). A step with a check moves on by itself once the check
+sees it done; one without shows Next. Skip is always there. It ends with a
+button instead of the four questions.
+
+  { mode: "tour", subject: "Open Today", persona: "For anyone who runs a shop.",
+    button: { label: "Get the plugin", url: "https://…" },
+    tasks: [{ title: "Add your opening hours", hint: "Press + then choose Opening hours.",
+              point: "[aria-label=\"Add block\"]",
+              check: { type: "block", block: "open-today/hours" } }] }
+
+  point (optional): a CSS selector; a ring is drawn round it, inside the
+  editor's canvas too. button "Styles" matches a button by its words, and
+  a || b uses the first one on screen. Pin the WordPress version in the
+  blueprint, or a new release can move what the selector finds.
+  block / block_changed checks read the editor in the visitor's browser, so a
+  step can be done before anything is saved. Every other check is measured
+  from when the step began, not from the start.
+  The digest of a tour gives, per step: auto (moved on by itself), next,
+  skipped, stoppedHere, onItNow, medianSecs; plus buttonPresses.
+  Ready-made: taskSet "${TOUR_SETS.map((x) => x.key).join('", "')}".
+
 ## Two things that quietly ruin a test
 
 - A task that names a control ("click Settings") tests whether they can follow
@@ -2229,6 +2450,7 @@ async function versionFor(env, test, req) {
 function introPage(test, origin, version) {
   const playground = 'https://playground.wordpress.net/?blueprint-url=' +
     encodeURIComponent(`${origin}/t/${test.id}/blueprint.json${version ? `?v=${version}` : ''}`) + '&storage=temp&mode=seamless';
+  if (test.tour) return tourIntroPage(test, playground);
   // seamless: Playground's own toolbar stays out of the way, so the tester
   // sees a website and the card, nothing about the machinery underneath
   const paras = test.persona
@@ -2252,6 +2474,29 @@ ${test.wording && test.wording.intro ? `<p class="soft" style="margin:0">${esc(t
 <li>At the end there are four quick questions.</li></ol></div>
 <a class="go" href="${esc(playground)}" target="_blank" rel="noopener">Start</a>
 <p class="fine">Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is what the card learns — which tasks you did, how long they took, which page you were on, and anything you type into it. Nothing else: not what you write in WordPress, and not your name unless you choose to type it.</p>
+</div></body></html>`;
+}
+
+// A tour's welcome page. No persona to play and no thank-you for helping: they
+// are here to see something. It still says plainly what is kept.
+function tourIntroPage(test, playground) {
+  const n = test.tasks.length;
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>A short tour of ${esc(test.subject)}</title>
+<style>${PAGE_CSS}</style></head><body><div class="wrap">
+<h1>A short tour of ${esc(test.subject)}</h1>
+<p>You are about to get a real WordPress in your browser, already set up, with a small card that walks you through it in ${n} step${n === 1 ? '' : 's'}.</p>
+${test.persona ? `<p class="soft">${esc(test.persona)}</p>` : ''}
+${test.wording && test.wording.intro ? `<p class="soft">${esc(test.wording.intro)}</p>` : ''}
+<div class="card"><h2>How it goes</h2>
+<ol><li>Press Start. Give it a minute to build.</li>
+<li>The card says what to do, and a ring shows where. Once it sees you have done it, it moves on by itself. You can skip any step, and drag the card out of the way.</li>
+<li>When you have seen it all, the site is yours to keep playing with until you close the tab.</li></ol></div>
+<a class="go" href="${esc(playground)}" target="_blank" rel="noopener">Start the tour</a>
+<p class="fine">Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is which steps you did, how long they took and which page you were on. Nothing you write in WordPress is kept.</p>
 </div></body></html>`;
 }
 
@@ -2431,6 +2676,15 @@ const HOME = `<!doctype html>
   .tabs button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
   .add:focus-visible, .drop:focus-visible, .tabs button:focus-visible { outline:2px solid #1f7a4d; outline-offset:2px; }
   .err { color:var(--bad); font-weight:600; }
+  /* the first question: test it, or show it */
+  .modes { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:560px) { .modes { grid-template-columns:1fr; } }
+  .panel .mode { position:relative; display:flex; flex-direction:column; gap:4px; padding:16px 16px 16px 46px; border:1px solid var(--line); border-radius:14px; cursor:pointer; font-weight:400; margin:0; }
+  .mode input { position:absolute; left:16px; top:18px; width:18px; height:18px; accent-color:var(--ink); margin:0; }
+  .mode strong { font-size:17px; }
+  .mode span { font-size:14px; color:var(--soft); }
+  .mode:has(input:checked) { border-color:var(--ink); box-shadow:0 0 0 1px var(--ink); background:#f7fbf8; }
+  #f[data-mode="test"] .t-point { display:none; }
   .panel .go { background:var(--ink); color:#fff; }
   .panel .go:hover { background:#2a2c33; }
   .out { margin:26px 0 0; padding:20px 22px; border:1px solid var(--line); border-radius:16px; background:#fff; }
@@ -2572,6 +2826,7 @@ const HOME = `<!doctype html>
     <div><p class="label">→ compare</p><h3>Test two versions</h3><p>Same tasks, two or three sites. One link shares testers out evenly, and the results come back side by side.</p></div>
     <div><p class="label">→ webhook</p><h3>Hear when they finish</h3><p>Each tester who finishes is posted to Slack, Discord or any HTTPS endpoint. Never the password.</p></div>
     <div><p class="label">→ nothing to install</p><h3>At either end</h3><p>Testers need a browser and nothing else. You need a blueprint, the one you already demo with.</p></div>
+    <div><p class="label">→ show it</p><h3>Or walk them through it</h3><p>Turn it round into a tour: each step says what to do, points at it and moves on by itself once it is done. It ends with your button.</p></div>
   </div>
 </section>
 
@@ -2582,31 +2837,45 @@ const HOME = `<!doctype html>
   <p class="lede">The same test, made by hand. About half a minute.</p>
 </div>
 <div class="panel">
-<form id="f">
+<form id="f" data-mode="test">
+<fieldset>
+  <label>What is this link for?</label>
+  <div class="modes" role="radiogroup" aria-label="What is this link for?">
+    <label class="mode" for="mTest"><input type="radio" name="mode" id="mTest" value="test" checked><strong>Test it</strong><span>People try things on their own. Hints stay hidden until they are stuck, and four questions come at the end.</span></label>
+    <label class="mode" for="mShow"><input type="radio" name="mode" id="mShow" value="tour"><strong>Show it</strong><span>People are walked through it. Each step says what to do and moves on when it is done. It ends with a button.</span></label>
+  </div>
+</fieldset>
+
 <fieldset>
   <label for="set">Start from a ready-made set <span class="soft">(optional)</span></label>
   <p class="hint">A persona and tasks for the tests most people run, with hints and checks already in. Change anything you like.</p>
-  <select id="set" class="setpick"><option value="">My own tasks</option>${TASK_SETS.map((x) => `<option value="${x.key}">${esc(x.name)}</option>`).join('')}</select>
+  <select id="set" class="setpick"><option value="">My own tasks</option>${TASK_SETS.map((x) => `<option value="${x.key}">${esc(x.name)}</option>`).join('')}<optgroup label="Tours">${TOUR_SETS.map((x) => `<option value="${x.key}">${esc(x.name)}</option>`).join('')}</optgroup></select>
   <p class="hint" id="setfor" hidden></p>
 </fieldset>
 
 <fieldset>
-  <label for="subject">What are you testing?</label>
-  <p class="hint">Goes in the tester’s first line: “Thank you for helping make <em>this</em> better.”</p>
+  <label for="subject" data-test="What are you testing?" data-tour="What are you showing?">What are you testing?</label>
+  <p class="hint" data-test="Goes in the tester’s first line: “Thank you for helping make this better.”" data-tour="Heads the welcome page: “A short tour of this.”">Goes in the tester’s first line: “Thank you for helping make this better.”</p>
   <input type="text" id="subject" maxlength="80" placeholder="my theme" required>
 </fieldset>
 
 <fieldset>
-  <label for="persona">Who should they pretend to be?</label>
-  <p class="hint">A paragraph. Give them a reason to want the site, not just instructions. Don’t use the demo site’s own name, or “rename the site” has nothing to change.</p>
+  <label for="persona" data-test="Who should they pretend to be?" data-tour="Who is it for? (optional)">Who should they pretend to be?</label>
+  <p class="hint" data-test="A paragraph. Give them a reason to want the site, not just instructions. Don’t use the demo site’s own name, or “rename the site” has nothing to change." data-tour="One line on the welcome page. Nobody plays a part in a tour: they are themselves.">A paragraph. Give them a reason to want the site, not just instructions. Don’t use the demo site’s own name, or “rename the site” has nothing to change.</p>
   <textarea id="persona" maxlength="2000" required placeholder="You are a photographer a few months into running your own business. Customers keep asking whether you have a website…"></textarea>
 </fieldset>
 
 <fieldset>
-  <label>What should they try?</label>
-  <p class="hint">Five to seven works well. Say what they want, not which button to press — the hint is there for when they are stuck.</p>
+  <label data-test="What should they try?" data-tour="What should they see?">What should they try?</label>
+  <p class="hint" data-test="Five to seven works well. Say what they want, not which button to press — the hint is there for when they are stuck." data-tour="Three to six steps. Here, do name the button: what you tell them is on the card from the start. Give a step a check and it moves on by itself; without one they press Next.">Five to seven works well. Say what they want, not which button to press — the hint is there for when they are stuck.</p>
   <div id="tasks"></div>
-  <button type="button" class="add" id="add">Add another</button>
+  <button type="button" class="add" id="add" data-test="Add another" data-tour="Add a step">Add another</button>
+</fieldset>
+
+<fieldset data-only="tour" hidden>
+  <label for="btnLabel">End with a button <span class="soft">(optional)</span></label>
+  <p class="hint">Instead of the four questions. What should they do once they have seen it?</p>
+  <div class="names"><input type="text" id="btnLabel" maxlength="40" placeholder="Get the plugin"><input type="url" id="btnUrl" maxlength="600" placeholder="https://wordpress.org/plugins/…"></div>
 </fieldset>
 
 <fieldset>
@@ -2629,7 +2898,7 @@ const HOME = `<!doctype html>
 </fieldset>
 
 <fieldset>
-  <label for="password">A password for the results page</label>
+  <label for="password" data-test="A password for the results page" data-tour="A password for the tour numbers">A password for the results page</label>
   <p class="hint">There are no accounts here. This password is the only thing in front of your testers’ notes, and it cannot be recovered — keep it somewhere.</p>
   <input type="password" id="password" minlength="6" maxlength="200" required>
 </fieldset>
@@ -2641,7 +2910,7 @@ const HOME = `<!doctype html>
 </fieldset>
 
 <p id="msg" class="err" role="alert"></p>
-<button type="submit" class="go" id="submit">Make the test</button>
+<button type="submit" class="go" id="submit" data-test="Make the test" data-tour="Make the tour">Make the test</button>
 </form>
 
 <div id="out"></div>
@@ -2708,8 +2977,20 @@ const HOME = `<!doctype html>
 
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   var CHECK_OPTIONS = ${JSON.stringify(Object.keys(CHECKS).map((k) => `<option value="${k}">${CHECKS[k]}</option>`).join(''))};
-  var SETS = ${JSON.stringify(TASK_SETS)};
-  function addTask(title, hint, check) {
+  var SETS = ${JSON.stringify(ALL_SETS)};
+  var form = document.getElementById('f');
+  var WORDS = {
+    test: { title: 'Give the site your own name', hint: 'Hint, shown only if they ask (optional)', none: 'Don\u2019t check this one', know: 'How we\u2019ll know they did it' },
+    tour: { title: 'Give the site a new look in one click', hint: 'What to tell them, e.g. Open Styles, pick a look, then Save', none: 'Nothing: they press Next', know: 'Moves on when' },
+  };
+  function wordsFor(d) {
+    var w = WORDS[form.dataset.mode];
+    d.querySelector('.t-title').placeholder = w.title;
+    d.querySelector('.t-hint').placeholder = w.hint;
+    d.querySelector('.t-none').textContent = w.none;
+    d.querySelector('.t-know').textContent = w.know;
+  }
+  function addTask(title, hint, check, point) {
     var d = document.createElement('div');
     d.className = 'task';
     d.innerHTML =
@@ -2717,10 +2998,13 @@ const HOME = `<!doctype html>
       '<input type="text" class="t-hint" maxlength="300" placeholder="Hint, shown only if they ask (optional)">' +
       // how the site can show it happened: read off the tester\u2019s site when
       // they press Done, so the results are not only their word for it
-      '<label class="chk">How we\u2019ll know they did it <select class="t-check">' +
+      '<label class="chk"><span class="t-know">How we\u2019ll know they did it</span> <select class="t-check">' +
         '<option value="">Work it out from the task</option>' + CHECK_OPTIONS +
-        '<option value="none">Don\u2019t check this one</option></select>' +
-        '<input type="text" class="t-words" maxlength="120" placeholder="The words to look for" hidden></label>';
+        '<option value="none" class="t-none">Don\u2019t check this one</option></select>' +
+        '<input type="text" class="t-words" maxlength="120" placeholder="The words to look for" hidden>' +
+        '<input type="text" class="t-block" maxlength="100" placeholder="The block, e.g. my-plugin/my-block" hidden></label>' +
+      // a tour step can point at the thing to click
+      '<label class="chk t-point">Point at <input type="text" class="t-words t-sel" maxlength="200" placeholder="A CSS selector, or button &quot;Styles&quot; (optional)"></label>';
     var drop = document.createElement('button');
     drop.type = 'button';
     drop.className = 'drop';
@@ -2730,11 +3014,36 @@ const HOME = `<!doctype html>
     d.querySelector('.top').appendChild(drop);
     if (title) d.querySelector('.t-title').value = title;
     if (hint) d.querySelector('.t-hint').value = hint;
+    if (point) d.querySelector('.t-sel').value = point;
     var sel = d.querySelector('.t-check');
-    if (check) sel.value = check;
-    sel.addEventListener('change', function () { d.querySelector('.t-words').hidden = sel.value !== 'text'; });
+    var shape = function () {
+      d.querySelector('.t-words').hidden = sel.value !== 'text';
+      d.querySelector('.t-block').hidden = sel.value !== 'block' && sel.value !== 'block_changed';
+    };
+    if (check && typeof check === 'object') {
+      sel.value = check.type;
+      if (check.text) d.querySelector('.t-words').value = check.text;
+      if (check.block) d.querySelector('.t-block').value = check.block;
+    } else if (check) sel.value = check;
+    sel.addEventListener('change', shape);
+    shape();
+    wordsFor(d);
     tasksEl.appendChild(d);
   }
+
+  // Test it or show it. The form keeps everything typed and changes its words;
+  // a tour has no persona to play, so that box is no longer required.
+  function setMode(m) {
+    form.dataset.mode = m;
+    document.getElementById(m === 'tour' ? 'mShow' : 'mTest').checked = true;
+    [].slice.call(form.querySelectorAll('[data-test]')).forEach(function (el) { el.textContent = el.getAttribute('data-' + m); });
+    [].slice.call(form.querySelectorAll('[data-only]')).forEach(function (el) { el.hidden = el.dataset.only !== m; });
+    document.getElementById('persona').required = m !== 'tour';
+    [].slice.call(tasksEl.querySelectorAll('.task')).forEach(wordsFor);
+  }
+  [].slice.call(form.querySelectorAll('input[name=mode]')).forEach(function (r) {
+    r.addEventListener('change', function () { setMode(r.value); });
+  });
   for (var i = 0; i < 5; i++) addTask();
 
   // a ready-made set fills the persona and the tasks; the owner edits from there
@@ -2744,10 +3053,16 @@ const HOME = `<!doctype html>
     setFor.hidden = !set;
     if (!set) return;
     setFor.textContent = set.for;
+    // a ready-made tour makes the form a tour, and a test set a test
+    setMode(set.mode === 'tour' ? 'tour' : 'test');
+    if (set.button) {
+      document.getElementById('btnLabel').value = set.button.label;
+      document.getElementById('btnUrl').value = set.button.url;
+    }
     var persona = document.getElementById('persona');
     if (!persona.value.trim() || persona.value === lastSetPersona) { persona.value = set.persona; lastSetPersona = set.persona; }
     tasksEl.innerHTML = '';
-    set.tasks.forEach(function (t) { addTask(t.title, t.hint, t.check); });
+    set.tasks.forEach(function (t) { addTask(t.title, t.hint, t.check, t.point); });
   });
   document.getElementById('add').addEventListener('click', function () { addTask(); });
 
@@ -2774,12 +3089,19 @@ const HOME = `<!doctype html>
   document.getElementById('f').addEventListener('submit', function (ev) {
     ev.preventDefault();
     msg.textContent = '';
+    var touring = form.dataset.mode === 'tour';
     var tasks = [].slice.call(tasksEl.querySelectorAll('.task')).map(function (d) {
       var c = d.querySelector('.t-check').value;
-      var check = c === 'text' ? { type: 'text', text: d.querySelector('.t-words').value } : (c || undefined);
-      return { title: d.querySelector('.t-title').value, hint: d.querySelector('.t-hint').value, check: check };
+      var check = c === 'text' ? { type: 'text', text: d.querySelector('.t-words').value }
+        : (c === 'block' || c === 'block_changed') ? { type: c, block: d.querySelector('.t-block').value.trim() }
+        : (c || undefined);
+      var t = { title: d.querySelector('.t-title').value, hint: d.querySelector('.t-hint').value, check: check };
+      if (touring && d.querySelector('.t-sel').value.trim()) t.point = d.querySelector('.t-sel').value.trim();
+      return t;
     }).filter(function (t) { return t.title.trim(); });
-    if (!tasks.length) { msg.textContent = 'Give the tester at least one thing to try.'; return; }
+    if (!tasks.length) { msg.textContent = touring ? 'Give the tour at least one step.' : 'Give the tester at least one thing to try.'; return; }
+    var button = touring && (document.getElementById('btnLabel').value.trim() || document.getElementById('btnUrl').value.trim())
+      ? { label: document.getElementById('btnLabel').value.trim(), url: document.getElementById('btnUrl').value.trim() } : undefined;
 
     submit.disabled = true;
     submit.textContent = 'Checking the blueprint…';
@@ -2820,6 +3142,8 @@ const HOME = `<!doctype html>
           versions: versions,
           password: document.getElementById('password').value,
           webhook: document.getElementById('webhook').value.trim(),
+          mode: touring ? 'tour' : undefined,
+          button: button,
         }),
       });
     }).then(function (r) {
@@ -2840,15 +3164,16 @@ const HOME = `<!doctype html>
     })
       .then(function (res) {
         submit.disabled = false;
-        submit.textContent = 'Make the test';
+        submit.textContent = submit.getAttribute('data-' + form.dataset.mode);
         if (!res.ok) { msg.textContent = res.d.error || 'That did not work.'; return; }
+        var tour = res.d.mode === 'tour';
         document.getElementById('f').hidden = true;
         document.getElementById('out').innerHTML =
           '<div class="out"><h2 style="margin-top:0">Two links</h2>' +
-          '<p style="margin-bottom:4px"><strong>Send this to a tester</strong></p><code>' + res.d.tester + '</code>' +
-          '<p style="margin-bottom:4px"><strong>Read the results here</strong>, with the password you chose</p><code>' + res.d.results + '</code>' +
-          ((res.d.checks || []).length ? '<p style="margin-bottom:4px"><strong>How each task is checked</strong></p><ul class="soft" style="margin-top:0">' +
-            res.d.checks.map(function (c) { return '<li>' + esc(c.title) + ' \u2014 ' + esc(c.check || 'not checked: only their word for it') + '</li>'; }).join('') + '</ul>' : '') +
+          '<p style="margin-bottom:4px"><strong>' + (tour ? 'Send this to anyone' : 'Send this to a tester') + '</strong></p><code>' + res.d.tester + '</code>' +
+          '<p style="margin-bottom:4px"><strong>' + (tour ? 'See where people stop' : 'Read the results here') + '</strong>, with the password you chose</p><code>' + res.d.results + '</code>' +
+          ((res.d.checks || []).length ? '<p style="margin-bottom:4px"><strong>' + (tour ? 'How each step moves on' : 'How each task is checked') + '</strong></p><ul class="soft" style="margin-top:0">' +
+            res.d.checks.map(function (c) { return '<li>' + esc(c.title) + ' \u2014 ' + esc(c.check || (tour ? 'they press Next' : 'not checked: only their word for it')) + '</li>'; }).join('') + '</ul>' : '') +
           (res.d.versions ? '<p class="soft">One link for both: testers are shared out between ' + res.d.versions.map(function (v) { return '<strong>' + esc(v.label) + '</strong>'; }).join(' and ') + ', and the results come back side by side.</p>' : '') +
           (res.d.webhook ? '<p class="soft">Each tester who finishes will be posted to your ' + (res.d.webhook === 'json' ? 'webhook' : res.d.webhook.charAt(0).toUpperCase() + res.d.webhook.slice(1) + ' channel') + '.</p>' : '') +
           '<p class="soft" style="margin:0">Keep both. Neither can be looked up again, and the test keeps itself for ninety days after the last tester.</p></div>';
@@ -2856,7 +3181,7 @@ const HOME = `<!doctype html>
       })
       .catch(function () {
         submit.disabled = false;
-        submit.textContent = 'Make the test';
+        submit.textContent = submit.getAttribute('data-' + form.dataset.mode);
         msg.textContent = 'Could not reach the service. Try again.';
       });
   });
@@ -2991,6 +3316,15 @@ const RESULTS = `<!doctype html>
   .edit .row { display:flex; gap:10px; align-items:center; margin-top:16px; }
   .edit .primary { background:var(--accent); color:#fff; border-color:var(--accent); }
   .working { color:var(--ok); font-weight:600; }
+  /* a tour: where people stop, step by step */
+  .stack { display:inline-flex; width:160px; height:10px; border-radius:5px; background:#efece6; overflow:hidden; vertical-align:middle; }
+  .stack i { display:block; height:100%; }
+  .stack .a { background:var(--ok); } .stack .s { background:#e8a33d; } .stack .l { background:var(--bad); }
+  .key { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:13px; color:var(--soft); margin:-8px 0 18px; }
+  .key i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  tr.flag td { background:#fff6e8; }
+  .tag { display:inline-block; margin-left:8px; font-size:11px; font-weight:700; padding:2px 7px; border-radius:99px; background:#ffe3b8; color:#7a4300; }
+  td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; }
 </style></head><body><div class="wrap">
 <div class="titlerow"><h1 id="title">Results</h1><button type="button" id="editBtn" hidden>Edit the test</button></div>
 <p class="soft">Each row is one tester. Click a row for the tasks and notes. <span id="sum"></span></p>
@@ -3048,6 +3382,7 @@ const RESULTS = `<!doctype html>
   }
 
   function showSession(row, events) {
+    if (current && current.mode === 'tour') return showVisit(row, events);
     var start = events.filter(function (e) { return e.type === 'start'; })[0] || {};
     var wrap = events.filter(function (e) { return e.type === 'wrap'; }).slice(-1)[0];
     var tasks = tasksOf(events);
@@ -3080,6 +3415,57 @@ const RESULTS = `<!doctype html>
     document.getElementById('d-' + row.id).innerHTML = h + '</div>';
   }
 
+  // One visitor's walk through a tour: how each step moved on, and how long.
+  function showVisit(row, events) {
+    var start = events.filter(function (e) { return e.type === 'start'; })[0] || {};
+    var how = {};
+    events.forEach(function (e) {
+      if (e.type === 'task_done') how[e.task] = { got: e.data && e.data.how === 'auto' ? 'moved on by itself' : 'pressed Next', cls: 'ok', secs: e.data && e.data.secs, path: e.path };
+      if (e.type === 'task_skip') how[e.task] = { got: 'skipped', cls: 'bad', secs: e.data && e.data.secs, path: e.path };
+    });
+    var pressed = events.some(function (e) { return e.type === 'cta'; });
+    var h = '<div class="detail"><h2>' + esc(row.id) + ' <span class="soft">\u00b7 ' + esc(when(row.first)) + ' \u00b7 ' + esc((start.data || {}).viewport || '') + '</span></h2>' +
+      '<table><tr><th>Step</th><th>How it moved on</th><th>Time</th><th>Ended on</th></tr>' +
+      (current.tasks || []).map(function (t) {
+        var x = how[t.id];
+        return '<tr><td>' + esc(t.title) + '</td><td class="' + (x ? x.cls : 'soft') + '">' + esc(x ? x.got : 'not reached') + '</td>' +
+          '<td>' + (x ? mins(x.secs) : '') + '</td><td class="soft">' + esc(x ? x.path : '') + '</td></tr>';
+      }).join('') + '</table>' +
+      (current.button ? '<p class="soft" style="margin:0">' + (pressed ? 'Pressed \u201c' + esc(current.button.label) + '\u201d.' : 'Did not press \u201c' + esc(current.button.label) + '\u201d.') + '</p>' : '');
+    document.getElementById('d-' + row.id).innerHTML = h + '</div>';
+  }
+
+  // Where people stop and which step needed help: one row per step, each a
+  // share of everyone who started.
+  function tourTable(d, dg) {
+    var n = dg.testers || 0;
+    var pct = function (x) { return n ? Math.round(x / n * 100) : 0; };
+    var worst = -1, worstShare = 0.25;
+    dg.tasks.forEach(function (t, i) {
+      var reached = n - t.notReached;
+      var share = reached ? (t.skipped + t.stoppedHere) / reached : 0;
+      if (reached >= 2 && share >= worstShare) { worst = i; worstShare = share; }
+    });
+    var rows = dg.tasks.map(function (t, i) {
+      var reached = n - t.notReached;
+      var on = t.auto + t.next;
+      return '<tr' + (i === worst ? ' class="flag"' : '') + '><td>' + (i + 1) + '. ' + esc(t.title) + (i === worst ? '<span class="tag">Needs help</span>' : '') + '</td>' +
+        '<td class="n">' + reached + '</td><td class="n' + (t.auto ? ' ok' : '') + '">' + t.auto + '</td><td class="n">' + t.next + '</td>' +
+        '<td class="n' + (t.skipped ? ' bad' : '') + '">' + t.skipped + '</td><td class="n' + (t.stoppedHere ? ' bad' : '') + '">' + t.stoppedHere + '</td>' +
+        '<td class="n">' + (t.medianSecs == null ? '' : mins(t.medianSecs)) + '</td>' +
+        '<td><span class="stack" role="img" aria-label="' + pct(on) + '% moved on, ' + pct(t.skipped) + '% skipped, ' + pct(t.stoppedHere) + '% stopped here">' +
+          '<i class="a" style="width:' + pct(on) + '%"></i><i class="s" style="width:' + pct(t.skipped) + '%"></i><i class="l" style="width:' + pct(t.stoppedHere) + '%"></i></span></td></tr>';
+    }).join('');
+    var help = '';
+    if (worst !== -1) {
+      var w = dg.tasks[worst], reachedW = n - w.notReached;
+      help = '<div class="ask"><h2>Step ' + (worst + 1) + ' needs help.</h2><p>' + Math.round((w.skipped + w.stoppedHere) / reachedW * 100) + '% of the people who reached \u201c' + esc(w.title) +
+        '\u201d skipped it or stopped there. Try a shorter instruction, a pointer, or splitting it in two.</p></div>';
+    }
+    return '<table><tr><th>Step</th><th class="n">Reached</th><th class="n">By itself</th><th class="n">Next</th><th class="n">Skipped</th><th class="n">Stopped here</th><th class="n">Median</th><th>Of everyone</th></tr>' + rows + '</table>' +
+      '<p class="key"><span><i style="background:var(--ok)"></i>moved on by itself, or pressed Next</span><span><i style="background:#e8a33d"></i>skipped</span><span><i style="background:var(--bad)"></i>stopped here</span></p>' + help;
+  }
+
   // Finished, still going, or gone quiet: half an hour without a word from the
   // card, and no answers to the closing questions, is somebody who stopped.
   var STILL_WORKING_MS = 30 * 60 * 1000;
@@ -3107,6 +3493,7 @@ const RESULTS = `<!doctype html>
     var d = current, box = document.getElementById('edit');
     if (!box.hidden) { box.hidden = true; return; }
     var q = d.questions || {};
+    if (d.mode === 'tour') return openTourEdit(d, box);
     box.innerHTML = '<h2>Edit the test</h2><p class="soft">Fix a typo or change the wording. The links and the password stay the same, and testers who start from now on see the new words.</p>' +
       field('What is being tested <span>\\u2014 \\u201cThank you for helping make \\u2026 better\\u201d</span>', 'eSubject', d.subject, 80) +
       field('Who the tester is', 'ePersona', d.persona, 2000, true) +
@@ -3141,6 +3528,39 @@ const RESULTS = `<!doctype html>
         .catch(function (e) { m.className = 'err'; m.textContent = e.message; });
     };
   }
+  function openTourEdit(d, box) {
+    var b = d.button || {};
+    box.innerHTML = '<h2>Edit the tour</h2><p class="soft">Change the words or the button. The links and the password stay the same, and anyone who starts from now on sees the new words.</p>' +
+      field('What it shows <span>\u2014 \u201cA short tour of \u2026\u201d</span>', 'eSubject', d.subject, 80) +
+      field('Who it is for <span>(optional)</span>', 'ePersona', d.persona, 2000) +
+      '<label>The steps <span>\u2014 reword them here; the order and the number stay as they are</span></label>' +
+      (d.tasks || []).map(function (t, i) {
+        return '<div class="task"><input type="text" class="eTitle" maxlength="200" value="' + esc(t.title) + '" aria-label="Step ' + (i + 1) + '">' +
+          '<input type="text" class="eHint" maxlength="300" value="' + esc(t.hint || '') + '" placeholder="What to tell them" aria-label="What step ' + (i + 1) + ' tells them">' +
+          '<input type="text" class="ePoint" maxlength="200" value="' + esc(t.point || '') + '" placeholder="Point at: a CSS selector (optional)" aria-label="What step ' + (i + 1) + ' points at"></div>';
+      }).join('') +
+      field('The button at the end <span>\u2014 its words</span>', 'eBtnLabel', b.label || '', 40) +
+      field('<span>and where it goes</span>', 'eBtnUrl', b.url || '', 600) +
+      '<div class="row"><button type="button" class="primary" id="eSave">Save</button><button type="button" id="eCancel">Cancel</button><span id="eMsg"></span></div>';
+    box.hidden = false;
+    document.getElementById('eCancel').onclick = function () { box.hidden = true; };
+    document.getElementById('eSave').onclick = function () {
+      var val = function (x) { return document.getElementById(x).value; };
+      var get3 = function (c) { return [].slice.call(box.querySelectorAll(c)); };
+      var titlesIn = get3('.eTitle'), hintsIn = get3('.eHint'), pointsIn = get3('.ePoint');
+      var body = {
+        subject: val('eSubject'), persona: val('ePersona'),
+        tasks: (d.tasks || []).map(function (t, i) { return { title: titlesIn[i].value, hint: hintsIn[i].value, point: pointsIn[i].value, check: t.check || 'none' }; }),
+        button: { label: val('eBtnLabel'), url: val('eBtnUrl') },
+      };
+      var m = document.getElementById('eMsg');
+      m.className = 'soft'; m.textContent = 'Saving\u2026';
+      fetch('/api/tests?test=' + encodeURIComponent(id), { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-test-password': pw }, body: JSON.stringify(body) })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'Could not save.'); return j; }); })
+        .then(function () { box.hidden = true; load(); })
+        .catch(function (e) { m.className = 'err'; m.textContent = e.message; });
+    };
+  }
   document.getElementById('editBtn').addEventListener('click', openEdit);
 
   function load() {
@@ -3154,6 +3574,8 @@ const RESULTS = `<!doctype html>
       rows.forEach(function (r) { done += r.done || 0; skipped += r.skipped || 0; });
       current = d;
       document.getElementById('editBtn').hidden = false;
+      document.getElementById('editBtn').textContent = d.mode === 'tour' ? 'Edit the tour' : 'Edit the test';
+      if (d.mode === 'tour') return loadTour(d, rows);
       var counts = { finished: 0, working: 0, stopped: 0 };
       rows.forEach(function (r) { counts[statusOf(r, d.now)]++; });
       sum.textContent = rows.length + ' tester(s): ' + counts.finished + ' finished, ' + counts.working + ' in progress, ' +
@@ -3192,6 +3614,41 @@ const RESULTS = `<!doctype html>
             '<td>' + statusCell(r, d.now) + '</td></tr>' +
             '<tr><td colspan="' + (vs ? 6 : 5) + '" id="d-' + esc(r.id) + '"></td></tr>';
         }).join('') + '</table>';
+      openRows(rows);
+    }).catch(function (e) {
+      auth.hidden = false;
+      pw = '';
+      sessionStorage.removeItem(key);
+      msg.textContent = e.message;
+    });
+  }
+
+  // A tour: the steps first, where people stop and which step needed help,
+  // then one row per visitor.
+  function loadTour(d, rows) {
+    document.getElementById('title').textContent = (d.subject || 'The tour') + ' \u2014 tour numbers';
+    document.querySelector('.wrap > p.soft').textContent = 'Each row below is one visitor. Click a row for their steps.';
+    if (!rows.length) { sum.textContent = ''; out.innerHTML = '<p class="soft">Nobody has started yet.</p>'; return; }
+    get('&digest=1').then(function (dg) {
+      var st = dg.status || {};
+      sum.textContent = '';
+      showAsk(false, true);
+      out.innerHTML = '<p>' + dg.testers + ' started: ' + (st.finished || 0) + ' saw the end, ' + (st.working || 0) + ' still going, ' + (st.stopped || 0) + ' stopped part way.' +
+        (dg.button ? ' ' + dg.buttonPresses + ' pressed \u201c' + esc(dg.button.label) + '\u201d.' : '') + '</p>' +
+        tourTable(d, dg) +
+        '<h2>Each visitor</h2><table><tr><th>When</th><th>Who</th><th>Steps</th><th>Skipped</th><th>Status</th></tr>' +
+        rows.map(function (r) {
+          return '<tr class="s" data-id="' + esc(r.id) + '"><td>' + esc(when(r.first)) + '</td><td>' + esc(r.id) + '</td>' +
+            '<td><span class="bar" style="width:' + (r.done * 14) + 'px"></span> ' + r.done + '</td>' +
+            '<td><span class="bar b" style="width:' + (r.skipped * 14) + 'px"></span> ' + r.skipped + '</td>' +
+            '<td>' + statusCell(r, d.now) + '</td></tr>' +
+            '<tr><td colspan="5" id="d-' + esc(r.id) + '"></td></tr>';
+        }).join('') + '</table>';
+      openRows(rows);
+    }).catch(function () { out.innerHTML = '<p class="err">Could not read the tour numbers.</p>'; });
+  }
+
+  function openRows(rows) {
       [].slice.call(out.querySelectorAll('tr.s')).forEach(function (tr) {
         tr.addEventListener('click', function () {
           var rid = tr.dataset.id;
@@ -3206,12 +3663,6 @@ const RESULTS = `<!doctype html>
             .then(function () { delete holder.dataset.busy; });
         });
       });
-    }).catch(function (e) {
-      auth.hidden = false;
-      pw = '';
-      sessionStorage.removeItem(key);
-      msg.textContent = e.message;
-    });
   }
 
   // Reading a pile of rows is the assistant's job as much as the table's. A
@@ -3219,19 +3670,21 @@ const RESULTS = `<!doctype html>
   // link and a password, the button copies the question with the digest (one
   // answer per task, every note) attached. Any assistant can read that, and
   // the password never leaves this page.
-  function askQuestion(compare) {
+  function askQuestion(compare, tour) {
     var subject = current && current.subject;
+    if (tour) return 'These are the numbers from a guided tour of ' + (subject || 'something in WordPress') + '. Each step says what to do and moves on when it is done. ' +
+      'Tell me where people skip or stop, which step most needs rewording, and how you would word it.';
     return 'These are the results of a user test of ' + (subject || 'something in WordPress') + '. Tell me where people got stuck, ' +
       'which hints they needed most, what they said in their notes, and the three changes that would help most.' +
       (compare ? ' The test compares versions, so tell me which did better and why.' : '');
   }
   // The digest is fetched up front: a clipboard write has to happen inside the
   // click, and Safari refuses one that waits on the network first.
-  function showAsk(compare) {
+  function showAsk(compare, tour) {
     var btn = document.getElementById('askCopy');
     get('&digest=1').then(function (d) {
-      var text = askQuestion(compare) + '\\n\\n' + JSON.stringify(d, null, 1);
-      document.getElementById('askText').textContent = askQuestion(compare) + '\\n\\n[every tester\\u2019s results are attached when you copy]';
+      var text = askQuestion(compare, tour) + '\\n\\n' + JSON.stringify(d, null, 1);
+      document.getElementById('askText').textContent = askQuestion(compare, tour) + '\\n\\n[' + (tour ? 'every step\\u2019s numbers are' : 'every tester\\u2019s results are') + ' attached when you copy]';
       document.getElementById('ask').hidden = false;
       btn.onclick = function () {
         var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy prompt'; }, 1600); };
@@ -3284,7 +3737,7 @@ export default {
     }
 
     if (url.pathname === '/api/task-sets') {
-      return json({ sets: TASK_SETS }, 200, Object.assign({ 'cache-control': 'public, max-age=3600' }, CORS));
+      return json({ sets: TASK_SETS, tours: TOUR_SETS }, 200, Object.assign({ 'cache-control': 'public, max-age=3600' }, CORS));
     }
 
     if (url.pathname === '/api/tests') {
@@ -3350,4 +3803,4 @@ const NOT_FOUND = `<!doctype html>
 </div></body></html>`;
 
 // exported for the tests
-export { TASK_SETS, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };
+export { TASK_SETS, TOUR_SETS, readTour, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };

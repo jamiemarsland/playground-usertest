@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Playground user testing
  * Description:       Shows a tester a small card of things to try, and sends what happens back to the test that sent them.
- * Version:           1.2.0
+ * Version:           1.3.0
  * Requires at least: 6.5
  * Requires PHP:      7.4
  * License:           GPL-2.0-or-later
@@ -18,12 +18,15 @@
  *   { "test": "<id>", "report": "https://…/api/events",
  *     "subject": "my theme", "tasks": [ { "id", "title", "why", "hint" } ] }
  *
+ * A tour adds "mode": "tour", a "button" to end on ({ label, url }), and a
+ * "point" on any step: a CSS selector for the thing to click.
+ *
  * @package PlaygroundUserTest
  */
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'PGUT_VERSION', '1.2.0' );
+define( 'PGUT_VERSION', '1.3.0' );
 
 /**
  * The test this site was booted for, or nothing.
@@ -94,12 +97,24 @@ function pgut_tasks( $tasks ) {
 				$clean[ $extra ] = sanitize_text_field( (string) $task[ $extra ] );
 			}
 		}
+		// a selector only ever goes to querySelector, never into the page as markup
+		if ( ! empty( $task['point'] ) && is_string( $task['point'] ) ) {
+			$clean['point'] = substr( sanitize_text_field( $task['point'] ), 0, 200 );
+		}
 		if ( ! empty( $task['check'] ) && is_array( $task['check'] ) && ! empty( $task['check']['type'] ) ) {
 			$type = preg_replace( '/[^a-z_]/', '', (string) $task['check']['type'] );
 			if ( in_array( $type, pgut_check_types(), true ) ) {
 				$clean['check'] = array( 'type' => $type );
 				if ( 'text' === $type && ! empty( $task['check']['text'] ) ) {
 					$clean['check']['text'] = sanitize_text_field( (string) $task['check']['text'] );
+				}
+				if ( 'block' === $type || 'block_changed' === $type ) {
+					$name = isset( $task['check']['block'] ) ? strtolower( (string) $task['check']['block'] ) : '';
+					if ( ! preg_match( '#^[a-z0-9-]+/[a-z0-9-]+$#', $name ) ) {
+						unset( $clean['check'] );
+					} else {
+						$clean['check']['block'] = $name;
+					}
 				}
 			}
 		}
@@ -136,12 +151,41 @@ function pgut_enqueue() {
 			'session' => pgut_session(),
 			'tasks'   => array_values( $tasks ),
 			'rest'    => esc_url_raw( rest_url( 'pgut/v1/check' ) ),
+			'mark'    => esc_url_raw( rest_url( 'pgut/v1/mark' ) ),
 			'nonce'   => wp_create_nonce( 'wp_rest' ),
 			'home'    => esc_url_raw( home_url( '/' ) ),
 			// the test's own closing questions, if it has any; the card has defaults
 			'questions' => pgut_questions( $test ),
+			'mode'    => pgut_is_tour( $test ) ? 'tour' : 'test',
+			'button'  => pgut_button( $test ),
 		)
 	);
+}
+
+/**
+ * Is this a tour — steps that show something — rather than a test?
+ *
+ * @param array $test The test option.
+ * @return bool
+ */
+function pgut_is_tour( $test ) {
+	return isset( $test['mode'] ) && 'tour' === $test['mode'];
+}
+
+/**
+ * The button a tour ends on, cleaned: words and an https link, or nothing.
+ *
+ * @param array $test The test option.
+ * @return array|null
+ */
+function pgut_button( $test ) {
+	$raw = isset( $test['button'] ) && is_array( $test['button'] ) ? $test['button'] : array();
+	$label = isset( $raw['label'] ) ? sanitize_text_field( (string) $raw['label'] ) : '';
+	$url   = isset( $raw['url'] ) ? esc_url_raw( (string) $raw['url'] ) : '';
+	if ( '' === $label || 0 !== strpos( $url, 'https://' ) ) {
+		return null;
+	}
+	return array( 'label' => substr( $label, 0, 60 ), 'url' => $url );
 }
 
 /**
@@ -177,7 +221,7 @@ add_action( 'admin_enqueue_scripts', 'pgut_enqueue', 20 );
  * @return string[]
  */
 function pgut_check_types() {
-	return array( 'site_name', 'tagline', 'site_icon', 'logo', 'new_page', 'new_post', 'styles', 'menu', 'home', 'text' );
+	return array( 'site_name', 'tagline', 'site_icon', 'logo', 'new_page', 'new_post', 'styles', 'menu', 'home', 'text', 'block', 'block_changed' );
 }
 
 /**
@@ -278,6 +322,23 @@ function pgut_baseline() {
 }
 
 /**
+ * What a step's check compares with. A tour marks the site as each step
+ * begins, so step three is measured from where step two left it: otherwise a
+ * styles change in step two answers "yes" for every later styles step before
+ * anyone has touched it. A test never marks, and so keeps the boot baseline.
+ *
+ * @param string $task Task id.
+ * @return array
+ */
+function pgut_base_for( $task ) {
+	$marks = get_option( 'pgut_marks' );
+	if ( is_array( $marks ) && isset( $marks[ $task ]['max_id'] ) ) {
+		return $marks[ $task ];
+	}
+	return pgut_baseline();
+}
+
+/**
  * Take the baseline before the tester can touch anything.
  *
  * @return void
@@ -296,10 +357,10 @@ add_action( 'init', 'pgut_take_baseline', 99 );
  * @param array $check { type, text? }.
  * @return string
  */
-function pgut_check( $check ) {
+function pgut_check( $check, $base = null ) {
 	global $wpdb;
 	$type = isset( $check['type'] ) ? (string) $check['type'] : '';
-	$base = pgut_baseline();
+	$base = is_array( $base ) ? $base : pgut_baseline();
 	$now  = pgut_snapshot();
 	switch ( $type ) {
 		case 'site_name':
@@ -313,6 +374,13 @@ function pgut_check( $check ) {
 			return ( $now['site_icon'] && $now['site_icon'] !== $base['site_icon'] ) ? 'yes' : 'no';
 		case 'new_page':
 		case 'new_post':
+			// a tour step: published since the step began, counting a draft
+			// the editor saved before it did (the editor saves early and often)
+			$kind = 'new_page' === $type ? 'page' : 'post';
+			if ( isset( $base['fresh'][ $kind ] ) ) {
+				$fresh = pgut_fresh_counts( pgut_baseline() );
+				return $fresh[ $kind ] > (int) $base['fresh'][ $kind ] ? 'yes' : 'no';
+			}
 			$count = (int) $wpdb->get_var(
 				$wpdb->prepare(
 					"SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = %s AND post_status = 'publish' AND ID > %d",
@@ -322,6 +390,10 @@ function pgut_check( $check ) {
 			);
 			return $count ? 'yes' : 'no';
 		case 'text':
+		case 'block':
+		case 'block_changed':
+			// words as a visitor sees them, and blocks in the editor before
+			// anything is saved: the card reads both itself
 			return 'client';
 	}
 	return 'unknown';
@@ -342,10 +414,60 @@ function pgut_rest_check( $req ) {
 	$id = preg_replace( '/[^a-z0-9_-]/', '', strtolower( (string) $req['task'] ) );
 	foreach ( pgut_tasks( $test['tasks'] ) as $task ) {
 		if ( $task['id'] === $id ) {
-			return array( 'result' => empty( $task['check'] ) ? 'unknown' : pgut_check( $task['check'] ) );
+			return array( 'result' => empty( $task['check'] ) ? 'unknown' : pgut_check( $task['check'], pgut_base_for( $id ) ) );
 		}
 	}
 	return array( 'result' => 'unknown' );
+}
+
+/**
+ * How many posts and pages made since the boot are published now.
+ *
+ * @param array $boot The boot baseline.
+ * @return array { post: int, page: int }
+ */
+function pgut_fresh_counts( $boot ) {
+	global $wpdb;
+	$out = array();
+	foreach ( array( 'post', 'page' ) as $kind ) {
+		$out[ $kind ] = (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = %s AND post_status = 'publish' AND ID > %d",
+				$kind,
+				(int) $boot['max_id']
+			)
+		);
+	}
+	return $out;
+}
+
+/**
+ * POST pgut/v1/mark?task=<id> — a tour step has begun; remember the site as
+ * it is now, for that step's check. The first mark stands, so a reload in the
+ * middle of a step does not move the line the step is measured from.
+ *
+ * @param WP_REST_Request $req Request.
+ * @return array|WP_Error
+ */
+function pgut_rest_mark( $req ) {
+	$test = pgut_test();
+	if ( ! $test ) {
+		return new WP_Error( 'pgut_not_a_test', 'This site is not a test.', array( 'status' => 404 ) );
+	}
+	$id    = preg_replace( '/[^a-z0-9_-]/', '', strtolower( (string) $req['task'] ) );
+	$known = wp_list_pluck( pgut_tasks( $test['tasks'] ), 'id' );
+	if ( ! in_array( $id, $known, true ) ) {
+		return array( 'ok' => false );
+	}
+	$marks = get_option( 'pgut_marks' );
+	$marks = is_array( $marks ) ? $marks : array();
+	if ( ! isset( $marks[ $id ] ) ) {
+		$boot          = pgut_baseline(); // the boot baseline is taken first, whatever happens
+		$marks[ $id ]  = pgut_snapshot();
+		$marks[ $id ]['fresh'] = pgut_fresh_counts( $boot );
+		update_option( 'pgut_marks', $marks, false );
+	}
+	return array( 'ok' => true );
 }
 
 /**
@@ -360,6 +482,18 @@ function pgut_routes() {
 		array(
 			'methods'             => 'GET',
 			'callback'            => 'pgut_rest_check',
+			'permission_callback' => function () {
+				return current_user_can( 'edit_posts' );
+			},
+			'args'                => array( 'task' => array( 'type' => 'string', 'required' => true ) ),
+		)
+	);
+	register_rest_route(
+		'pgut/v1',
+		'/mark',
+		array(
+			'methods'             => 'POST',
+			'callback'            => 'pgut_rest_mark',
 			'permission_callback' => function () {
 				return current_user_can( 'edit_posts' );
 			},

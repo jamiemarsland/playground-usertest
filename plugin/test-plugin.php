@@ -117,5 +117,50 @@ case_run(
 	$GLOBALS["opts"]["playground_user_test"] = json_encode( array( "test" => "abc123defg", "report" => "https://example.test/api/events", "tasks" => array( array( "title" => "x" ) ) ) );'
 );
 
+case_run(
+	'a tour',
+	'$GLOBALS["opts"] = array( "playground_user_test" => json_encode( array(
+		"test" => "abc123defg", "report" => "https://example.test/api/events", "mode" => "tour",
+		"button" => array( "label" => "Get the plugin", "url" => "https://wordpress.org/plugins/x/" ),
+		"tasks" => array(
+			array( "id" => "1-a", "title" => "Add the block", "hint" => "Click +", "point" => "[aria-label=\"Add block\"] <b>", "check" => array( "type" => "block", "block" => "Open-Today/hours" ) ),
+			array( "id" => "2-b", "title" => "Change it", "check" => array( "type" => "block_changed", "block" => "not a block name" ) ),
+		),
+	) ) );
+	require "' . $plugin . '";
+	pgut_enqueue();
+	$loc = $GLOBALS["loc"];
+	ok( "tour" === $loc["mode"], "a tour says so to the card" );
+	ok( "Get the plugin" === $loc["button"]["label"] && "https://wordpress.org/plugins/x/" === $loc["button"]["url"], "and passes on the button it ends with" );
+	ok( "[aria-label=\"Add block\"]" === $loc["tasks"][0]["point"], "a step keeps its selector, with any markup stripped: " . $loc["tasks"][0]["point"] );
+	ok( "open-today/hours" === $loc["tasks"][0]["check"]["block"], "a block check keeps its block name" );
+	ok( ! isset( $loc["tasks"][1]["check"] ), "a block check with no proper block name is dropped" );
+	ok( false !== strpos( $loc["mark"], "pgut/v1/mark" ), "the card is told where to mark a step" );'
+);
+
+case_run(
+	'a button that is not https',
+	'$GLOBALS["opts"] = array( "playground_user_test" => json_encode( array(
+		"test" => "abc123defg", "report" => "https://example.test/api/events", "mode" => "tour",
+		"button" => array( "label" => "Go", "url" => "javascript:alert(1)" ),
+		"tasks" => array( array( "title" => "x" ) ),
+	) ) );
+	require "' . $plugin . '";
+	pgut_enqueue();
+	ok( null === $GLOBALS["loc"]["button"], "a button that is not an https link is dropped" );
+	$GLOBALS["opts"]["playground_user_test"] = json_encode( array( "test" => "abc123defg", "report" => "https://example.test/api/events", "tasks" => array( array( "title" => "x" ) ) ) );'
+);
+
+case_run(
+	'a step measured from where it began',
+	'$GLOBALS["opts"] = array(
+		"pgut_baseline" => array( "max_id" => 10, "styles" => "boot" ),
+		"pgut_marks"    => array( "3-font" => array( "max_id" => 14, "styles" => "after-step-2" ) ),
+	);
+	require "' . $plugin . '";
+	ok( "after-step-2" === pgut_base_for( "3-font" )["styles"], "a marked step is checked against the site as the step began" );
+	ok( "boot" === pgut_base_for( "1-name" )["styles"], "an unmarked task (every task in a test) keeps the boot baseline" );'
+);
+
 echo $fails ? "\n$fails case(s) failed\n" : "\nall good\n";
 exit( $fails ? 1 : 0 );

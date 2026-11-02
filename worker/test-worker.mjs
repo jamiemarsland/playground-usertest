@@ -3,7 +3,7 @@
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
 import { DatabaseSync } from 'node:sqlite';
-import worker, { TASK_SETS, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
+import worker, { TASK_SETS, TOUR_SETS, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 
 // A real SQL engine rather than a mock. The worker talks to a D1-shaped
 // binding, which is what both Spacefast Functions and Cloudflare D1 hand it, so
@@ -176,9 +176,9 @@ const home = await r.text();
 // Most people arrive with an assistant to hand, so the front page leads with
 // the sentence to give it; the form is underneath for anyone who would rather type.
 check(r.status === 200 && home.includes('id="promptText"') && home.includes('/llms.txt and set up a user test'), 'the front page leads with the prompt for an assistant');
-check(home.includes('<form id="f">') && home.indexOf('id="promptText"') < home.indexOf('<form id="f">'), 'and the create form is underneath it');
+check(home.includes('<form id="f" data-mode="test">') && home.indexOf('id="promptText"') < home.indexOf('<form id="f" data-mode="test">'), 'and the create form is underneath it');
 check(/\[hidden\] \{ display:none !important; \}/.test(home), 'hidden is spelled out, since the controls throw away the browser rule for it');
-check(/cannot be looked up again/.test(home) && home.indexOf('cannot be looked up again') < home.indexOf('<form id="f">'), 'and it warns, before anything else, that the password cannot be recovered');
+check(/cannot be looked up again/.test(home) && home.indexOf('cannot be looked up again') < home.indexOf('<form id="f" data-mode="test">'), 'and it warns, before anything else, that the password cannot be recovered');
 
 r = await call(e1, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { persona: '' }) });
 check(r.status === 400 && (await r.json()).error.includes('pretend to be'), 'a test with no persona is refused');
@@ -526,7 +526,7 @@ check(ct[1].check && ct[1].check.type === 'text' && ct[1].check.text === 'Open 9
 check(!ct[2].check && !ct[3].check && !ct[4].check, 'none, an unknown kind, and text with no words all mean no check');
 let lt = lintTest({ subject: 's', persona: 'You run a bakery and want a site your neighbours will like, with the hours on it.', tasks: [{ title: 'a', check: 'bogus' }, { title: 'b', check: { type: 'text' } }] });
 check(lt.problems.some((x) => /no check called|there is not/.test(x)) && lt.problems.some((x) => /which words/.test(x)), 'the check tool names a made-up check and text without words');
-check(Object.keys(CHECKS).length === 10, 'ten kinds of check');
+check(Object.keys(CHECKS).length === 12, 'twelve kinds of check, two of them read from the editor');
 
 const eChk = env();
 r = await call(eChk, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { tasks: [{ title: 'Give the site your own name', hint: 'Settings' }, { title: 'Add a page about your prices', hint: 'Pages' }, { title: 'Say hello', hint: 'x', check: 'none' }] }) });
@@ -740,6 +740,119 @@ await call(eCount, '/api/events', { method: 'POST', body: { test: cnt.id, sessio
 st = await (await call(eCount, '/api/stats')).json();
 check(st.tests === 148, 'a tester who tried a task counts once; one who only opened the link does not');
 check(/id="taken"/.test(await (await call(eCount, '/')).text()), 'the home page has the count of tests taken');
+
+/* -------------------------------------------------------------------- tours */
+// A tour shows rather than tests: the hint is the instruction, a checked step
+// moves on by itself, and it ends with a button. Same link, site and card.
+
+const TOUR = {
+  mode: 'tour',
+  subject: 'Open Today',
+  persona: 'For anyone who runs a shop.',
+  button: { label: 'Get the plugin', url: 'https://wordpress.org/plugins/open-today/' },
+  tasks: [
+    { title: 'Add your opening hours', hint: 'Click + at the top left, then choose Opening hours.', point: '[aria-label="Add block"]', check: { type: 'block', block: 'open-today/hours' } },
+    { title: 'Make Saturday a half day', hint: 'Click Saturday in the block and set it to 9:00 till 13:00.', check: { type: 'block_changed', block: 'open-today/hours' } },
+    { title: 'Publish it', hint: 'Press Publish.', check: { type: 'text', text: 'Open today' } },
+    { title: 'Have a look round', hint: 'Open the site as a visitor would.', check: 'none' },
+  ],
+  blueprintJson: JSON.stringify(DEMO),
+  password: 'tour-pass-1',
+};
+
+check(cleanTasks([{ title: 'x', check: { type: 'block', block: 'Core/Heading' } }])[0].check.block === 'core/heading', 'a block check keeps its block name, in the case WordPress uses');
+check(!cleanTasks([{ title: 'x', check: { type: 'block_changed', block: 'heading' } }])[0].check, 'a block check without a proper block name is no check');
+check(cleanTasks([{ title: 'x', point: '  .a   .b ' }])[0].point === '.a .b', 'a step keeps its pointer');
+
+let tl = lintTest(TOUR);
+check(tl.ok && tl.mode === 'tour', 'a tour that names its buttons checks clean: naming the button is the point here ' + JSON.stringify(tl.problems));
+check(/moves on when: a block was added/.test(tl.summary) && /\[Next\]/.test(tl.summary) && /Ends with a button: Get the plugin/.test(tl.summary), 'the read-back says how each step moves on and what it ends with');
+tl = lintTest(Object.assign({}, TOUR, { tasks: [{ title: 'Add your opening hours' }], button: undefined }));
+check(!tl.ok && /nothing to tell them/.test(tl.problems.join()), 'a step with nothing to tell them is a problem in a tour');
+check(tl.notes.some((n) => /no button at the end/.test(n)), 'a tour with no button gets a note');
+tl = lintTest(Object.assign({}, TOUR, { button: { label: 'Go', url: 'http://plain.example' } }));
+check(!tl.ok && /https/.test(tl.problems.join()), 'a button that is not https is a problem');
+for (const set of TOUR_SETS) {
+  const l = lintTest({ subject: 'WordPress', taskSet: set.key });
+  check(l.ok && l.mode === 'tour' && !l.problems.length, `the “${set.name}” tour checks clean: ` + JSON.stringify(l.problems.concat(l.notes)));
+}
+
+const eTour = env();
+r = await call(eTour, '/api/tests', { method: 'POST', body: Object.assign({}, TOUR, { persona: '' }) });
+const tour = await r.json();
+check(r.status === 200 && tour.mode === 'tour' && tour.button.label === 'Get the plugin', 'a tour is made with no persona, and says it is a tour');
+r = await call(eTour, '/api/tests', { method: 'POST', body: Object.assign({}, TOUR, { button: { label: 'Go', url: 'javascript:alert(1)' }, password: 'tour-pass-2' }) });
+check(r.status === 400, 'a button that is not an https link is refused');
+r = await call(eTour, '/api/tests', { method: 'POST', body: Object.assign({}, TOUR, { tasks: [{ title: 'x', point: 'p'.repeat(201) }], password: 'tour-pass-3' }) });
+check(r.status === 400 && /pointer is 201 characters/.test((await r.json()).error), 'an over-long pointer is refused, not cut');
+
+r = await call(eTour, '/t/' + tour.id);
+let tourPage = await r.text();
+check(/A short tour of Open Today/.test(tourPage) && /Start the tour/.test(tourPage) && !/Who you are while you try it/.test(tourPage), 'the welcome page is a tour’s: no persona to play, Start the tour');
+
+r = await call(eTour, '/t/' + tour.id + '/blueprint.json');
+const tourOpt = JSON.parse((await r.json()).steps.slice(-1)[0].options.playground_user_test);
+check(tourOpt.mode === 'tour' && tourOpt.button.url === TOUR.button.url, 'the card is told it is a tour, and the button it ends with');
+check(tourOpt.tasks[0].point === '[aria-label="Add block"]' && tourOpt.tasks[0].check.block === 'open-today/hours', 'and each step’s pointer and block check');
+
+const plainTest = await (await call(eTour, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { password: 'plain-pass-1' }) })).json();
+const plainOpt = JSON.parse((await (await call(eTour, '/t/' + plainTest.id + '/blueprint.json')).json()).steps.slice(-1)[0].options.playground_user_test);
+check(!plainOpt.mode && !plainOpt.button, 'a test’s card is told nothing about tours');
+
+const tSteps = tourOpt.tasks;
+const visit = (session, events) => call(eTour, '/api/events', { method: 'POST', body: { test: tour.id, session, events } });
+await visit('tourvisit01', [
+  { type: 'start' },
+  { type: 'task_start', task: tSteps[0].id },
+  { type: 'task_done', task: tSteps[0].id, data: { secs: 20, how: 'auto', check: 'yes' } },
+  { type: 'task_start', task: tSteps[1].id },
+  { type: 'task_skip', task: tSteps[1].id, data: { secs: 90, how: 'skip' } },
+  { type: 'task_start', task: tSteps[2].id },
+  { type: 'task_done', task: tSteps[2].id, data: { secs: 10, how: 'auto' } },
+  { type: 'task_start', task: tSteps[3].id },
+  { type: 'task_done', task: tSteps[3].id, data: { secs: 5, how: 'next' } },
+  { type: 'wrap', task: 'wrap', data: { tour: true, minutes: 3 } },
+  { type: 'cta', task: 'done', data: { url: TOUR.button.url } },
+]);
+await visit('tourvisit02', [
+  { type: 'start' },
+  { type: 'task_start', task: tSteps[0].id },
+  { type: 'task_done', task: tSteps[0].id, data: { secs: 40, how: 'auto' } },
+  { type: 'task_start', task: tSteps[1].id },
+]);
+await eTour.DB.prepare('UPDATE sessions SET last_at = ? WHERE id = ?').bind(Date.now() - 2 * 60 * 60 * 1000, 'tourvisit02').run();
+const TPW = { 'x-test-password': TOUR.password };
+const td = await (await call(eTour, '/api/results?test=' + tour.id + '&digest=1', { headers: TPW })).json();
+check(td.mode === 'tour' && td.testers === 2 && td.status.finished === 1 && td.status.stopped === 1, 'the tour digest counts who saw the end and who stopped');
+check(td.tasks[0].auto === 2 && td.tasks[1].skipped === 1 && td.tasks[1].stoppedHere === 1 && td.tasks[3].next === 1, 'per step: moved on by itself, skipped, stopped here, Next');
+check(td.buttonPresses === 1 && td.button.label === 'Get the plugin' && td.wrapUps.length === 0, 'and who pressed the button at the end, with no closing answers to report');
+const tr = await (await call(eTour, '/api/results?test=' + tour.id, { headers: TPW })).json();
+check(tr.mode === 'tour' && tr.button.url === TOUR.button.url, 'the results page is told it is reading a tour');
+
+r = await call(eTour, '/api/tests?test=' + tour.id, { method: 'PATCH', headers: TPW, body: { tasks: TOUR.tasks.map((t) => ({ title: t.title + '!', hint: t.hint })), button: { label: 'Try Open Today', url: 'https://example.com/open-today' } } });
+j = await r.json();
+check(r.status === 200 && j.button.label === 'Try Open Today', 'a tour’s button can be changed');
+const afterEdit = JSON.parse((await (await call(eTour, '/t/' + tour.id + '/blueprint.json')).json()).steps.slice(-1)[0].options.playground_user_test);
+check(afterEdit.tasks[0].point === '[aria-label="Add block"]' && afterEdit.tasks[0].check.type === 'block', 'a step reworded without its pointer or check keeps both');
+
+const eTourSet = env();
+r = await call(eTourSet, '/api/tests', { method: 'POST', body: { subject: 'WordPress', taskSet: 'whats-new', blueprintJson: JSON.stringify(DEMO), password: 'tour-set-1' } });
+const fromTourSet = await r.json();
+check(r.status === 200 && fromTourSet.mode === 'tour' && fromTourSet.button.label === 'Read the release post', 'a ready-made tour makes a tour, button and all');
+r = await call(eTourSet, '/api/task-sets');
+check((await r.json()).tours.length === TOUR_SETS.length, 'the ready-made tours are on the API');
+r = await call(eTourSet, '/');
+tourPage = await r.text();
+check(/value="tour"/.test(tourPage) && /Make the tour/.test(tourPage) && /optgroup label="Tours"/.test(tourPage), 'the form has the Show it switch and offers the tours');
+
+m = await rpc({ jsonrpc: '2.0', id: 40, method: 'tools/call', params: { name: 'usertest_create', arguments: { mode: 'tour', subject: 'Open Today', tasks: TOUR.tasks, button: TOUR.button, blueprint_json: JSON.stringify(DEMO) } } });
+check(!m.body.result.isError && /Made a tour/.test(m.body.result.content[0].text), 'an agent can make a tour');
+const agentTour = m.body.result.structuredContent;
+m = await rpc({ jsonrpc: '2.0', id: 41, method: 'tools/call', params: { name: 'usertest_results', arguments: { test: agentTour.id, password: agentTour.password } } });
+check(/Nobody has started/.test(m.body.result.content[0].text), 'and read it back before anyone has been');
+
+const statsBefore = (await (await call(eTour, '/api/stats')).json()).tests;
+check(statsBefore === 147, 'people taking a tour are not counted as tests taken: ' + statsBefore);
 
 /* -------------------------------------------------------------------- misc */
 
