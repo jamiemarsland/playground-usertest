@@ -647,11 +647,16 @@
     var t = tour && !state.nice && state.i < tasks.length ? tasks[state.i] : null;
     var r = t && t.point ? findPoint(t.point) : null;
     if (!r) { ring.hidden = true; return; }
+    // a ring that was not showing appears where it belongs; only a ring that
+    // is already on screen slides to the next thing
+    var fresh = ring.hidden;
+    if (fresh) ring.style.transition = 'none';
     ring.hidden = false;
     ring.style.left = (r.left - 5) + 'px';
     ring.style.top = (r.top - 5) + 'px';
     ring.style.width = (r.width + 10) + 'px';
     ring.style.height = (r.height + 10) + 'px';
+    if (fresh) { void ring.offsetWidth; ring.style.transition = ''; }
     ring.classList.toggle('is-below', r.top < 44);
     // the card steps aside once per step if it is sitting on the thing to click
     if (!state.pos && !state.hidden && !state.aside) {
