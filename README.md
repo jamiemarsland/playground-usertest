@@ -197,6 +197,11 @@ A tour plays itself. Nobody is asked to do anything.
   pointer to press, `type "words" into <pointer>`, `press Escape`,
   `go /wp-admin/some-screen.php`, `wait 2`, and `maybe` in front of any of
   them to pass over one that is not there. One per line in the form.
+- `go` shows the way: the card presses through WordPress's own navigation
+  (the admin menu, the admin bar's Edit Site, the Site Editor's sidebar,
+  stepping out of the editor first) to reach the screen, one press at a time
+  across page loads, so people see how to get around. It only jumps straight
+  there when it can find no way.
 - A pointer is CSS, an element by its words (`button "Styles"`), or
   fallbacks (`a || b`, the first on screen wins).
 - The step's check confirms it really happened before the next step, so a

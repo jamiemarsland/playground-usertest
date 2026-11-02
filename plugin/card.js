@@ -767,14 +767,15 @@
     if (!state.act || state.act.i !== state.i) { state.act = { i: state.i, n: 0 }; save(); }
     var list = acts(t);
     var a = list[state.act.n];
-    // a step that begins by opening another screen opens it first and speaks
-    // when it is there, so the words never talk about a screen not yet shown
-    var opening = !!(a && a.go && state.act.n === 0);
+    // a step that begins by jumping to another screen (no way to show) jumps
+    // first and speaks when it is there, so the words never talk about a
+    // screen not yet shown; one that can show the way speaks as it goes
+    var opening = !!(a && a.go && state.act.n === 0 && !(state.act.hops) && !nextPress(new URL(a.go, cfg.home || location.origin)) && !arrivedAt(new URL(a.go, cfg.home || location.origin)));
     // read once per step, not again when a click loads another page
     if (state.spoken !== state.i && !opening) { state.spoken = state.i; save(); sayStep(); }
     if (state.act.n >= list.length) return settle(t, tok);
     // the first action waits long enough for the words to be read
-    timer = setTimeout(function () { if (tok === runTok) perform(t, a, tok, Date.now()); }, opening ? 500 : state.act.n ? 900 : 2200);
+    timer = setTimeout(function () { if (tok === runTok) perform(t, a, tok, Date.now()); }, opening ? 500 : (state.act.n || state.act.hops) ? 900 : 2200);
   }
 
   function advance(t, tok) {
@@ -794,15 +795,7 @@
 
   function perform(t, a, tok, since) {
     if (a.wait) { state.act.n++; save(); timer = setTimeout(function () { if (tok === runTok) run(); }, a.wait * 1000); return; }
-    if (a.go) {
-      // leaving the page stops the voice, so let it finish first
-      whenQuiet(tok, function () {
-        state.act.n++;
-        save();
-        location.assign(new URL(a.go, cfg.home || location.origin).toString());
-      });
-      return;
-    }
+    if (a.go) return travel(t, a, tok, since);
     if (a.key) {
       var into = document.activeElement || document.body;
       var opts = { key: a.key, code: a.key, bubbles: true, cancelable: true };
@@ -847,6 +840,165 @@
         if (!away) timer = setTimeout(function () { if (tok === runTok) run(); }, 50);
       }, 260);
     }
+  }
+
+  /* ---- finding the way ------------------------------------------------ */
+  // A step that needs another screen is not jumped to: the tour presses its
+  // way there through WordPress's own navigation, the way a person would, so
+  // people see how to get around. The admin menu, the admin bar's Edit Site
+  // and the Site Editor's own sidebar between them reach most screens. Only
+  // when it can find no way does it go straight there.
+  var SITE_EDITOR_SECTIONS = { '/page': 'Pages', '/styles': 'Styles', '/navigation': 'Navigation', '/pattern': 'Patterns', '/wp_template': 'Templates', '/template': 'Templates' };
+
+  function params(u) {
+    var out = {};
+    u.searchParams.forEach(function (v, k) { out[k] = v; });
+    return out;
+  }
+
+  // Is this address the screen we were sent to? Same file, and every setting
+  // the target names is set the same way here.
+  function arrivedAt(target) {
+    var here = new URL(location.href);
+    if (here.pathname.replace(/\/$/, '') !== target.pathname.replace(/\/$/, '')) return false;
+    var want = params(target), have = params(here);
+    return Object.keys(want).every(function (k) { return have[k] === want[k]; });
+  }
+
+  function visible(el) {
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth;
+  }
+
+  // A link on screen to the target: exactly, or at least to the same file
+  // (the Site Editor before its Pages, say), which is a step closer.
+  function linkTo(target, sameFileOk) {
+    var links = document.querySelectorAll('#adminmenu a[href], #wpadminbar a[href], .edit-site-layout a[href], a[href]');
+    var close = null;
+    for (var i = 0; i < links.length && i < 600; i++) {
+      var el = links[i];
+      if (!visible(el) || (el.closest && el.closest('.pgut'))) continue;
+      var u;
+      try { u = new URL(el.getAttribute('href'), location.href); } catch (e) { continue; }
+      if (u.origin !== target.origin || u.pathname !== target.pathname) continue;
+      var want = params(target), have = params(u);
+      if (Object.keys(want).every(function (k) { return have[k] === want[k]; })) return el;
+      if (sameFileOk && !close) close = el;
+    }
+    return close;
+  }
+
+  // An admin bar menu with the target folded inside it (+ New, then Page):
+  // the menu opens on hover, so the pointer goes to it and it opens.
+  function folded(target) {
+    var menus = document.querySelectorAll('#wpadminbar li.menupop');
+    for (var i = 0; i < menus.length; i++) {
+      var head = menus[i].querySelector('a.ab-item, .ab-item');
+      if (!head || !visible(head) || menus[i].classList.contains('hover')) continue;
+      var links = menus[i].querySelectorAll('.ab-sub-wrapper a[href]');
+      for (var j = 0; j < links.length; j++) {
+        var u;
+        try { u = new URL(links[j].getAttribute('href'), location.href); } catch (e) { continue; }
+        if (u.pathname !== target.pathname) continue;
+        var want = params(target), have = params(u);
+        if (Object.keys(want).every(function (k) { return have[k] === want[k]; })) return { open: menus[i], el: head };
+      }
+    }
+    return null;
+  }
+
+  // The one press that gets nearer the target from here, or nothing.
+  function nextPress(target) {
+    var here = new URL(location.href);
+    var exact = linkTo(target, false);
+    if (exact) return exact;
+    var menu = folded(target);
+    if (menu) return menu;
+    var file = target.pathname.split('/').pop();
+    var section = file === 'site-editor.php' ? SITE_EDITOR_SECTIONS[target.searchParams.get('p') || ''] : '';
+    if (section && here.pathname.split('/').pop() === 'site-editor.php') {
+      // inside the Site Editor: its sidebar, after stepping out of editing
+      var item = findPoint('button "' + section + '" || a "' + section + '"');
+      if (item) return item.el;
+      // a sidebar showing one of its own lists (Templates, say): back up a level
+      var up = findPoint('.edit-site-sidebar-button[aria-label="Back"] || .edit-site-sidebar-navigation-screen__back');
+      if (up) return up.el;
+      var out = findPoint('[aria-label="Open Navigation"]');
+      if (out) return out.el;
+      return null;
+    }
+    if (here.pathname.split('/').pop() !== file) {
+      var near = linkTo(target, true);
+      if (near) return near;
+      // a screen in the admin menu whose section is folded away: open the section
+      var hidden = document.querySelector('#adminmenu a[href$="' + file + '"], #adminmenu a[href*="' + file + '?"]');
+      var top = hidden && hidden.closest('li.menu-top');
+      var head = top && top.querySelector('a.menu-top');
+      if (head && visible(head)) return head;
+      // from the site itself, the admin bar: Edit Site for the Site Editor,
+      // the site's name for the dashboard
+      if (file === 'site-editor.php') { var edit = document.querySelector('#wp-admin-bar-site-editor > a'); if (edit && visible(edit)) return edit; }
+      if (here.pathname.indexOf('/wp-admin') === -1) { var dash = document.querySelector('#wp-admin-bar-site-name > a'); if (dash && visible(dash)) return dash; }
+    }
+    return null;
+  }
+
+  // Press the way there one press at a time, across page loads, at most six
+  // presses; past that, or with no way to see, go straight there.
+  function travel(t, a, tok, since) {
+    since = since || Date.now();
+    var target = new URL(a.go, cfg.home || location.origin);
+    if (arrivedAt(target)) { state.act.hops = 0; return advance(t, tok); }
+    var hops = state.act.hops || 0;
+    var el = hops < 6 ? nextPress(target) : null;
+    // a screen that has only just loaded draws its menus a moment later, so
+    // look for a while before deciding there is no way to show
+    if (!el && hops < 6 && Date.now() - since < 8000) {
+      timer = setTimeout(function () { if (tok === runTok) travel(t, a, tok, since); }, 300);
+      return;
+    }
+    if (!el) {
+      whenQuiet(tok, function () {
+        state.act.n++;
+        state.act.hops = 0;
+        save();
+        // the tour maker learns which step could not show the way
+        send('note', t.id, 'Went straight to ' + target.pathname + target.search + ': no way there to show from ' + where());
+        location.assign(target.toString());
+      });
+      return;
+    }
+    if (el.open) {
+      // hover over the menu so it opens, then look again for the way on
+      var hr = el.el.getBoundingClientRect();
+      glide(hr.left + hr.width / 2, hr.top + hr.height / 2, function () {
+        if (tok !== runTok) return;
+        el.open.classList.add('hover');
+        state.act.hops = hops + 1;
+        save();
+        timer = setTimeout(function () { if (tok === runTok) travel(t, a, tok, Date.now()); }, 500);
+      });
+      return;
+    }
+    var r = el.getBoundingClientRect();
+    glide(r.left + r.width / 2, r.top + r.height / 2, function () {
+      if (tok !== runTok) return;
+      var away = leaves(el);
+      var go = function () {
+        var r2 = el.getBoundingClientRect();
+        tap(r2.left + r2.width / 2, r2.top + r2.height / 2);
+        timer = setTimeout(function () {
+          if (tok !== runTok) return;
+          state.act.hops = hops + 1;
+          save();
+          el.click();
+          // a press that stays on this page (the Site Editor moves between
+          // its screens without loading one): look again once it settles
+          if (!away) timer = setTimeout(function () { if (tok === runTok) travel(t, a, tok, Date.now()); }, 1200);
+        }, 260);
+      };
+      if (away) whenQuiet(tok, go); else go();
+    });
   }
 
   // The pointer: starts where it last was (kept across page loads), slides to

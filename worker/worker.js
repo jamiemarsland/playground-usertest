@@ -826,7 +826,7 @@ const TOUR_SETS = [
         say: 'Fonts work the same way. Under Typography there are pairs of fonts chosen to go well together. One click, and every heading and paragraph on the site follows. Let’s try one.',
         do: ['maybe [aria-label="Back"]', 'button "Typography"', '.global-styles-ui-variations_item:not(.is-active)', '.edit-site-save-hub__button || button "Save"', 'maybe .editor-entities-saved-states__save-button'], check: 'styles' },
       { title: 'Every page in one list', hint: 'Pages lists everything on your site. Sort it, filter it, and open any page to edit it right here.', point: 'button "Pages"',
-        say: 'Last stop, your pages. Every page on the site is in this one list. You can sort it, filter it, and open any page to edit it without leaving the Site Editor.',
+        say: 'Last stop, your pages. I’ll step back out of the editor with the button at the top left, then open Pages. Every page on the site is in this one list. You can sort it, filter it, and open any page to edit it from right here.',
         do: ['go /wp-admin/site-editor.php?p=%2Fpage', 'wait 2'], check: { type: 'page', path: 'p=%2Fpage' } },
     ],
   },
@@ -2023,7 +2023,7 @@ const TASKS_SCHEMA = {
       audio: { type: 'string', description: 'Tours only, optional: an https link to a recording of this step’s words (an mp3, say, made with a voice service). Played instead of the browser’s voice when sound is on; if it will not load, the browser reads the words instead.' },
       say: { type: 'string', maxLength: LIMITS.say, description: `Tours only, optional: what the voice says on this step, if the person turns sound on. Write it to be heard: a sentence or three, the way you would say it standing next to them, and words rather than symbols ("Command K", not "⌘K"). Left out, the voice reads the hint. At most ${LIMITS.say} characters.` },
       do: {
-        description: `Tours only: what the step presses by itself while people watch, up to ${LIMITS.actions} actions, as lines (or objects). Each line is a pointer to press (CSS, or button "Styles", or a || b), or: type "words" into <pointer>; press Escape|Enter|Tab; go /wp-admin/some-screen.php; wait 2; and "maybe " in front of any of them to pass over it when it is not there. E.g. ["button \\"Styles\\"", "button \\"Browse styles\\"", ".edit-site-save-hub__button"].`,
+        description: `Tours only: what the step presses by itself while people watch, up to ${LIMITS.actions} actions, as lines (or objects). Each line is a pointer to press (CSS, or button "Styles", or a || b), or: type "words" into <pointer>; press Escape|Enter|Tab; go /wp-admin/some-screen.php (shows the way there through WordPress's own menus, pressing each one); wait 2; and "maybe " in front of any of them to pass over it when it is not there. E.g. ["button \\"Styles\\"", "button \\"Browse styles\\"", ".edit-site-save-hub__button"].`,
         oneOf: [{ type: 'string' }, { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'object' }] } }],
       },
       point: { type: 'string', maxLength: LIMITS.point, description: `Tours only, optional: a CSS selector for the thing to click, e.g. [aria-label="Styles"]. Add words in quotes to match an element by its text, e.g. button "Styles"; separate several with || and the first on screen wins, so the ring can follow them across panels. A ring is drawn round it, inside the editor's canvas too. A selector that finds nothing shows no ring. At most ${LIMITS.point} characters.` },
@@ -2507,6 +2507,10 @@ try it themselves, or skip. It ends with a button instead of the questions.
   button "Styles" by its words; a || b, the first on screen). Or:
   type "words" into <pointer> · press Escape|Enter|Tab · go /wp-admin/x.php ·
   wait 2 · and "maybe " in front to pass over one that is not there.
+  go shows the way: the card presses through WordPress's own navigation
+  (the admin menu, the admin bar's Edit Site, the Site Editor's sidebar) to
+  reach the screen, so people see how to get there. It only jumps straight
+  there when it can find no way. Prefer go over pressing menus by hand.
   audio (optional): an https link to a recording of the step's words, played
   instead of the browser's voice; endAudio does the same for the closing words.
   say (optional): what the voice says, if they turn sound on. Write it to be
