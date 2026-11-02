@@ -205,7 +205,10 @@ A tour plays itself. Nobody is asked to do anything.
   `block_changed` read the editor before anything is saved; `page` is
   reaching a screen.
 - A pointer glides to each thing the tour presses and shows the click, so
-  people see how you get around rather than things just happening.
+  people see how you get around rather than things just happening. With
+  sound on, each press clicks and each typed letter clacks.
+- Restart is in the card's top bar all the way through, and Watch it again
+  is on the end card.
 - People can pause, try a step themselves (it still moves on when the site
   shows it done), or skip. Turn on sound on the card and each step is read
   out: its `say` (words written to be heard), or a recording of them

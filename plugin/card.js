@@ -152,8 +152,6 @@
     '@keyframes pgutTap{from{transform:scale(.3);opacity:1}to{transform:scale(1.5);opacity:0}}' +
     '.pgut-cursor[hidden]{display:none}' +
     '@media (prefers-reduced-motion:reduce){.pgut-cursor{transition:none}.pgut-tap{animation:none;opacity:0}}' +
-    '.pgut-foot-row{display:flex;align-items:center;justify-content:space-between;gap:8px}' +
-    '.pgut-foot-row .pgut-again{margin-top:0;font-size:12px}' +
     '.pgut.is-tour .pgut-again{color:rgba(242,242,240,.65)}' +
     '.pgut-pill.is-tour{background:#16181c;color:#7cf2b0;box-shadow:0 0 0 1px rgba(124,242,176,.45),0 8px 24px rgba(0,0,0,.35)}' +
     '@media (max-width:700px){.pgut,.pgut-pill{top:auto!important;bottom:12px!important;left:12px!important;right:12px!important;width:auto}}';
@@ -292,13 +290,19 @@
       ? '<button type="button" class="pgut-hide pgut-sound" aria-pressed="' + (state.voice ? 'true' : 'false') + '" title="Read each step out loud">' +
         (!state.voice ? 'Turn on sound' : voiceBlocked ? 'Tap for sound' : 'Sound on') + '</button>'
       : '';
+    // once a tour is under way, starting it again is always one press away
+    var again = tour && state.begun && !spectator
+      ? '<button type="button" class="pgut-hide pgut-restart" title="Start the tour again from the beginning">Restart</button>'
+      : '';
     return '<div class="pgut-head"><span class="pgut-lab">' + esc(label) + '</span>' +
-      '<span>' + sound + '<button type="button" class="pgut-hide pgut-away" title="Put this card away for a moment">Hide</button></span></div>';
+      '<span>' + sound + again + '<button type="button" class="pgut-hide pgut-away" title="Put this card away for a moment">Hide</button></span></div>';
   }
 
   function afterRender() {
     var h = card.querySelector('.pgut-head');
     h.querySelector('.pgut-away').addEventListener('click', function () { state.hidden = true; save(); render(); });
+    var again = h.querySelector('.pgut-restart');
+    if (again) again.addEventListener('click', restart);
     var snd = h.querySelector('.pgut-sound');
     if (snd) snd.addEventListener('click', function () {
       // a browser that would not speak without a tap gets its tap here
@@ -619,10 +623,8 @@
           : '<div class="pgut-row"><button type="button" class="pgut-btn pgut-skip">Skip</button>' +
             '<button type="button" class="pgut-btn is-primary pgut-play">' + (state.playing ? 'Pause' : 'Play') + '</button></div>') +
       '</div>' +
-      '<div class="pgut-foot pgut-foot-row">' + dots() + (first ? '' : '<button type="button" class="pgut-again pgut-over">Start over</button>') + '</div>';
+      '<div class="pgut-foot">' + dots() + '</div>';
     afterRender();
-    var over = card.querySelector('.pgut-over');
-    if (over) over.addEventListener('click', restart);
     var pl = card.querySelector('.pgut-play');
     if (pl) pl.addEventListener('click', function () { if (state.playing) pause(); else play(); });
     var sk = card.querySelector('.pgut-skip');
@@ -865,7 +867,50 @@
     timer = setTimeout(done, reduced ? 150 : 800);
   }
 
+  // The sounds of a mouse button and of keys, made on the spot rather than
+  // fetched: short bursts of filtered noise. Only with sound on, like the
+  // voice; without sound the ripple and the letters still show it.
+  var clicker = null;
+  function tick(pitch, loud, after, length) {
+    if (!voiceOk || !state.voice) return;
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      clicker = clicker || new Ctx();
+      if (clicker.state === 'suspended') clicker.resume();
+      var len = Math.floor(clicker.sampleRate * length);
+      var buf = clicker.createBuffer(1, len, clicker.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4);
+      var src = clicker.createBufferSource();
+      src.buffer = buf;
+      var tone = clicker.createBiquadFilter();
+      tone.type = 'bandpass';
+      tone.frequency.value = pitch;
+      tone.Q.value = 1.1;
+      var level = clicker.createGain();
+      level.gain.value = loud;
+      src.connect(tone);
+      tone.connect(level);
+      level.connect(clicker.destination);
+      src.start(clicker.currentTime + after);
+    } catch (e) { /* no sound here */ }
+  }
+
+  // a mouse button: down, then a softer up
+  function clickSound() {
+    tick(2600, 0.55, 0, 0.025);
+    tick(2600, 0.3, 0.07, 0.025);
+  }
+
+  // a key: a typewriter's clack, never quite the same twice
+  function keySound() {
+    tick(1400 + Math.random() * 900, 0.45, 0, 0.03);
+    tick(3800 + Math.random() * 800, 0.18, 0.012, 0.012);
+  }
+
   function tap(x, y) {
+    clickSound();
     var ripple = document.createElement('div');
     ripple.className = 'pgut-tap';
     ripple.style.left = x + 'px';
@@ -893,10 +938,12 @@
     var i = 0;
     (function next() {
       if (i > text.length) return done();
+      if (i > 0) keySound();
       var v = text.slice(0, i++);
       if (desc && desc.set) desc.set.call(el, v); else el.value = v;
       el.dispatchEvent(new Event('input', { bubbles: true }));
-      setTimeout(next, 70);
+      // a person's typing is uneven, and so is this
+      setTimeout(next, 70 + Math.round(Math.random() * 60));
     })();
   }
 
