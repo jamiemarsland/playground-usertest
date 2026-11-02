@@ -10,10 +10,9 @@
  * the published site, because the id comes from the site and the place is kept
  * in localStorage against it.
  *
- * A tour (mode "tour") uses the same card the other way round: each step shows
- * what to do straight away, a ring points at the thing to click, the step moves
- * on by itself when the site shows it done, and it ends with a button instead
- * of questions.
+ * A tour (mode "tour") uses the same card the other way round: it plays
+ * itself, pressing through each step while a ring shows where, checks the site
+ * shows it happened, and ends with a button instead of questions.
  */
 (function () {
   'use strict';
@@ -426,9 +425,12 @@
   }
 
   /* ---- a tour ---------------------------------------------------------- */
-  // The same tasks, shown rather than tested. What to do is on the card from
-  // the start, the step moves on by itself once the site shows it, and Skip
-  // is always there. A step with nothing the card can watch has Next instead.
+  // The same tasks, shown rather than tested. A tour plays itself: each step
+  // says what it shows, the ring goes to each thing in turn and the card
+  // presses it, and the site's check confirms it happened before the next
+  // step. Nobody has to do anything. Pause stops it, and while it is paused
+  // someone can do the step themselves and it still moves on. Skip is always
+  // there.
 
   function dots() {
     return '<span class="pgut-dots" aria-hidden="true">' + tasks.map(function (t, i) {
@@ -438,9 +440,11 @@
     }).join('') + '</span>';
   }
 
+  function acts(t) { return (t && t['do']) || []; }
+
   // Whether the card can see this step happen. Words that were already on the
   // home page when the step began say nothing, and nor does a step the site
-  // could not be marked for; those get Next.
+  // could not be marked for.
   function watchable(t) {
     return !!(t.check && state.base[t.id] !== 'unusable' && state.marked[t.id] !== 'failed');
   }
@@ -448,37 +452,59 @@
   var niceTimer = null;
   function renderStep() {
     var t = tasks[state.i];
-    var watch = watchable(t);
+    var first = !state.begun;
+    var status = '';
+    if (state.nice) status = '<p class="pgut-nice" role="status">✓ Nice, that worked</p>';
+    else if (state.problem) status = '<p class="pgut-wait" role="status">' + esc(state.problem) + '</p>';
+    else if (state.playing) status = '<p class="pgut-wait"><i></i>Playing</p>';
+    else if (!first) status = '<p class="pgut-wait">Paused. Try it yourself if you like, or press Play.</p>';
     card.innerHTML =
       head('Step ' + (state.i + 1) + ' of ' + tasks.length) +
       '<div class="pgut-body">' +
         '<p class="pgut-title">' + esc(t.title) + '</p>' +
         (t.why ? '<p class="pgut-p">' + esc(t.why) + '</p>' : '') +
         (t.hint ? '<div class="pgut-tell">' + esc(t.hint) + '</div>' : '') +
-        (state.nice
-          ? '<p class="pgut-nice" role="status">\u2713 Nice, that worked</p>'
-          : (watch ? '<p class="pgut-wait"><i></i>Moves on by itself once it\u2019s done</p>' : '') +
-            '<div class="pgut-row"><button type="button" class="pgut-btn pgut-skip">Skip</button>' +
-            (watch ? '' : '<button type="button" class="pgut-btn is-primary pgut-next">Next</button>') + '</div>') +
+        status +
+        (state.nice ? '' : first
+          ? '<div class="pgut-row"><button type="button" class="pgut-btn is-primary pgut-play">Start the tour</button></div>'
+          : '<div class="pgut-row"><button type="button" class="pgut-btn pgut-skip">Skip</button>' +
+            '<button type="button" class="pgut-btn is-primary pgut-play">' + (state.playing ? 'Pause' : 'Play') + '</button></div>') +
       '</div>' +
       '<div class="pgut-foot">' + dots() + '</div>';
     afterRender();
+    var pl = card.querySelector('.pgut-play');
+    if (pl) pl.addEventListener('click', function () { if (state.playing) pause(); else play(); });
     var sk = card.querySelector('.pgut-skip');
     if (sk) sk.addEventListener('click', function () { moveOn('task_skip', 'skip'); });
-    var nx = card.querySelector('.pgut-next');
-    if (nx) nx.addEventListener('click', function () { moveOn('task_done', 'next'); });
-    if (!state.taskStart) { state.taskStart = Date.now(); state.aside = false; save(); send('task_start', t.id); }
-    beginStep(t);
-    // "Nice, that worked" stays a moment so it can be read, then the next step
+    if (!state.taskStart && state.begun) { state.taskStart = Date.now(); state.aside = false; save(); send('task_start', t.id); }
+    if (state.begun) beginStep(t);
+    // "Nice, that worked" (they did it themselves) stays a moment, then on
     if (state.nice && !niceTimer) {
       niceTimer = setTimeout(function () { niceTimer = null; moveOn('task_done', 'auto', 'yes'); }, 1500);
     }
+    if (state.playing && !state.nice) run();
     aim();
+  }
+
+  function play() {
+    state.begun = true;
+    state.playing = true;
+    state.problem = '';
+    save();
+    render();
+  }
+
+  function pause() {
+    state.playing = false;
+    stop();
+    save();
+    render();
   }
 
   function moveOn(type, how, seen) {
     var t = tasks[state.i];
     if (!t) return;
+    stop();
     var took = secs();
     var data = { secs: took, how: how };
     if (seen) data.check = seen;
@@ -487,8 +513,11 @@
     state.i += 1;
     state.taskStart = 0;
     state.nice = false;
+    state.problem = '';
+    state.act = null;
     if (state.i >= tasks.length && !state.wrapped) {
       state.wrapped = true;
+      state.playing = false;
       send('wrap', 'wrap', '', { tour: true, minutes: state.started ? Math.round((Date.now() - state.started) / 60000) : 0 });
     }
     save();
@@ -499,7 +528,7 @@
     var b = cfg.button && cfg.button.url && cfg.button.label ? cfg.button : null;
     card.innerHTML =
       head('All done') +
-      '<div class="pgut-body"><p class="pgut-title">That\u2019s the tour.</p>' +
+      '<div class="pgut-body"><p class="pgut-title">That’s the tour.</p>' +
       '<p class="pgut-p">The site is yours until you close the tab, so carry on for as long as you like.</p>' +
       (b ? '<a class="pgut-btn is-primary pgut-cta" href="' + esc(b.url) + '" target="_blank" rel="noopener">' + esc(b.label) + '</a>' : '') +
       '</div>' +
@@ -510,8 +539,123 @@
     aim();
   }
 
+  /* ---- playing a step --------------------------------------------------- */
+  // state.act remembers which of the step's actions comes next, and is moved
+  // on BEFORE an action happens: a click that loads another page carries on
+  // from the next action there, and never presses the same thing twice.
+  var timer = null, runTok = 0;
+  function stop() { runTok++; clearTimeout(timer); }
+
+  function run() {
+    stop();
+    var tok = runTok;
+    if (!state.playing || state.i >= tasks.length) return;
+    var t = tasks[state.i];
+    if (!state.act || state.act.i !== state.i) { state.act = { i: state.i, n: 0 }; save(); }
+    var list = acts(t);
+    if (state.act.n >= list.length) return settle(t, tok);
+    // the first action waits long enough for the words to be read
+    var a = list[state.act.n];
+    timer = setTimeout(function () { if (tok === runTok) perform(t, a, tok, Date.now()); }, state.act.n ? 900 : 2200);
+  }
+
+  function advance(t, tok) {
+    state.act.n++;
+    save();
+    timer = setTimeout(function () { if (tok === runTok) run(); }, 50);
+  }
+
+  function trouble(words) {
+    state.playing = false;
+    state.problem = words;
+    stop();
+    save();
+    render();
+  }
+
+  function perform(t, a, tok, since) {
+    if (a.wait) { state.act.n++; save(); timer = setTimeout(function () { if (tok === runTok) run(); }, a.wait * 1000); return; }
+    if (a.go) {
+      state.act.n++;
+      save();
+      location.assign(new URL(a.go, cfg.home || location.origin).toString());
+      return;
+    }
+    if (a.key) {
+      var into = document.activeElement || document.body;
+      var opts = { key: a.key, code: a.key, bubbles: true, cancelable: true };
+      into.dispatchEvent(new KeyboardEvent('keydown', opts));
+      into.dispatchEvent(new KeyboardEvent('keyup', opts));
+      return advance(t, tok);
+    }
+    var sel = a.click || a.into;
+    var got = findPoint(sel);
+    if (!got) {
+      // pages and panels take a moment to arrive, so look again for a while;
+      // an action marked "maybe" is let go sooner and passed over
+      var wait = a.maybe ? 2500 : 12000;
+      if (Date.now() - since < wait) { timer = setTimeout(function () { if (tok === runTok) perform(t, a, tok, since); }, 250); return; }
+      if (a.maybe) return advance(t, tok);
+      return trouble('This step could not find what to press on this site. Skip it, or try it yourself.');
+    }
+    // the ring goes there first, so people see what is about to happen
+    aim();
+    timer = setTimeout(function () {
+      if (tok !== runTok) return;
+      var el = findPoint(sel);
+      if (!el) return perform(t, a, tok, since);
+      if (a.click) {
+        state.act.n++;
+        save();
+        el.el.click();
+        timer = setTimeout(function () { if (tok === runTok) run(); }, 50);
+        return;
+      }
+      typeInto(el.el, a.type, function () { if (tok === runTok) advance(t, tok); });
+    }, 700);
+  }
+
+  // Types into a field the way the editor hears a person type, a character
+  // at a time, through the native setter so its own listeners see it.
+  function typeInto(el, text, done) {
+    el.focus();
+    var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    var i = 0;
+    (function next() {
+      if (i > text.length) return done();
+      var v = text.slice(0, i++);
+      if (desc && desc.set) desc.set.call(el, v); else el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      setTimeout(next, 70);
+    })();
+  }
+
+  // Once a step's actions are done: let the site confirm it, then hold so the
+  // words can be read, then the next step. A step whose check never comes is
+  // paused with a word, rather than carried past as if it had worked.
+  function settle(t, tok) {
+    var hold = 2600;
+    if (!t.check || !watchable(t)) {
+      timer = setTimeout(function () { if (tok === runTok) moveOn('task_done', 'played'); }, hold);
+      return;
+    }
+    var since = Date.now();
+    (function poll() {
+      if (tok !== runTok) return;
+      if (state.marked[t.id] !== 'yes' && state.marked[t.id] !== 'failed') { timer = setTimeout(poll, 400); return; }
+      look(t).then(function (seen) {
+        if (tok !== runTok) return;
+        if (seen === 'yes') { timer = setTimeout(function () { if (tok === runTok) moveOn('task_done', 'played', 'yes'); }, hold); return; }
+        if (Date.now() - since > 15000) return trouble('That did not work on this site. Skip it, or try it yourself.');
+        timer = setTimeout(poll, 900);
+      }, function () { if (tok === runTok) timer = setTimeout(poll, 900); });
+    })();
+  }
+
   // As a step begins: mark the site, so the step's check is measured from
-  // here rather than from the boot, and note what the card itself can see.
+  // here rather than from the boot, and note what the card itself can see
+  // before anything is pressed.
   function beginStep(t) {
     if (!t.check || state.marked[t.id]) return;
     state.marked[t.id] = 'pending';
@@ -521,11 +665,12 @@
     }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); });
     mark
       .then(function () {
+        if (t.check.type === 'block' || t.check.type === 'block_changed') return look(t);
         if (t.check.type !== 'text') return;
         return homeHas(t.check.text).then(function (yes) { state.base[t.id] = yes ? 'unusable' : 'absent'; });
       })
       .then(function () { state.marked[t.id] = 'yes'; }, function () { state.marked[t.id] = 'failed'; })
-      .then(function () { save(); if (tasks[state.i] === t && !state.hidden) render(); });
+      .then(function () { save(); });
   }
 
   // The blocks of one kind in the editor, each as its settings and its inner
@@ -551,7 +696,10 @@
 
   // Is this the screen they were sent to? Part of its address is enough.
   function onScreen(path) {
-    return !!path && String(location.pathname + location.search).indexOf(path) !== -1;
+    if (!path) return false;
+    var here = String(location.pathname + location.search);
+    var plain = function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } };
+    return here.indexOf(path) !== -1 || plain(here).indexOf(plain(path)) !== -1;
   }
 
   // Is the step done? yes, no, or wait (nothing to go on yet).
@@ -575,19 +723,20 @@
     return askSite(t);
   }
 
-  // Every couple of seconds while a step is open and the tab is in front. The
-  // words check reads the whole home page, so it looks half as often.
+  // While a tour is paused, someone may do the step themselves; every couple
+  // of seconds the card looks. The words check reads the whole home page, so
+  // it looks half as often.
   var looking = false, ticks = 0;
   function watch() {
     ticks++;
-    if (!tour || looking || document.hidden || state.nice || state.i >= tasks.length) return;
+    if (!tour || !state.begun || state.playing || looking || document.hidden || state.nice || state.i >= tasks.length) return;
     var t = tasks[state.i];
     if (!watchable(t) || state.marked[t.id] !== 'yes') return;
     if (t.check.type === 'text' && ticks % 2) return;
     looking = true;
     look(t)
       .then(function (seen) {
-        if (seen === 'yes' && tasks[state.i] === t && !state.nice) {
+        if (seen === 'yes' && tasks[state.i] === t && !state.nice && !state.playing) {
           state.nice = true;
           save();
           render();
@@ -596,9 +745,9 @@
       .then(function () { looking = false; });
   }
 
-  // The ring: the step's selector, looked for on the page and inside the
-  // editor's canvas frame, which is the same origin. A selector that finds
-  // nothing, or something with no size, shows no ring rather than a wrong one.
+  // The ring: a selector, looked for on the page and inside the editor's
+  // canvas frame, which is the same origin. A selector that finds nothing, or
+  // something with no size, shows no ring rather than a wrong one.
   //
   // Two additions to plain CSS, because the editor's own buttons often carry
   // no class or label worth relying on, and a step can cross two panels:
@@ -629,7 +778,7 @@
         if (words !== null && el.textContent.replace(/\s+/g, ' ').trim() !== words && el.getAttribute('aria-label') !== words) continue;
         var r = el.getBoundingClientRect();
         if (!r.width || !r.height) continue;
-        return { left: r.left + dx, top: r.top + dy, width: r.width, height: r.height };
+        return { el: el, left: r.left + dx, top: r.top + dy, width: r.width, height: r.height };
       }
       return null;
     };
@@ -650,9 +799,22 @@
     return a.left < b.left + b.width && a.left + a.width > b.left && a.top < b.top + b.height && a.top + a.height > b.top;
   }
 
+  // While playing, the ring is on whatever is about to be pressed; otherwise
+  // on the step's own pointer, if it has one.
+  function target() {
+    if (!tour || state.nice || state.i >= tasks.length) return null;
+    var t = tasks[state.i];
+    var list = acts(t);
+    if (state.playing && state.act && state.act.i === state.i && state.act.n < list.length) {
+      var a = list[state.act.n];
+      if (a.click || a.into) return a.click || a.into;
+    }
+    return t.point || null;
+  }
+
   function aim() {
-    var t = tour && !state.nice && state.i < tasks.length ? tasks[state.i] : null;
-    var r = t && t.point ? findPoint(t.point) : null;
+    var sel = target();
+    var r = sel ? findPoint(sel) : null;
     if (!r) { ring.hidden = true; return; }
     // a ring that was not showing appears where it belongs; only a ring that
     // is already on screen slides to the next thing
@@ -665,7 +827,7 @@
     ring.style.height = (r.height + 10) + 'px';
     if (fresh) { void ring.offsetWidth; ring.style.transition = ''; }
     ring.classList.toggle('is-below', r.top < 44);
-    // the card steps aside once per step if it is sitting on the thing to click
+    // the card steps aside once per step if it is sitting on the thing to press
     if (!state.pos && !state.hidden && !state.aside) {
       var c = card.getBoundingClientRect();
       if (overlaps({ left: c.left, top: c.top, width: c.width, height: c.height }, r)) {

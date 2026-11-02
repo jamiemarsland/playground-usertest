@@ -3,7 +3,7 @@
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
 import { DatabaseSync } from 'node:sqlite';
-import worker, { TASK_SETS, TOUR_SETS, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
+import worker, { TASK_SETS, TOUR_SETS, cleanActions, actionLines, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 
 // A real SQL engine rather than a mock. The worker talks to a D1-shaped
 // binding, which is what both Spacefast Functions and Cloudflare D1 hand it, so
@@ -767,12 +767,20 @@ check(cleanTasks([{ title: 'x', check: { type: 'page', path: 'site-editor.php' }
 check(!cleanTasks([{ title: 'x', check: { type: 'page' } }])[0].check, 'a screen check with no address is no check');
 check(/does not say which/.test(lintTest(Object.assign({}, TOUR, { tasks: [{ title: 'Go there', hint: 'Open it.', check: { type: 'page' } }] })).problems.join()), 'the check says when a screen check names no screen');
 check(TOUR_SETS[0].tasks[0].check.type === 'page', 'the ready-made tour’s first step moves on once they reach the Site Editor');
+const acts = cleanActions('button "Styles"\n  \nclick .save\ntype "styles" into input\npress escape\npress Delete\ngo /wp-admin/site-editor.php\ngo javascript:alert(1)\nwait 30\nmaybe .panel-save');
+check(acts.length === 7 && acts[0].click === 'button "Styles"' && acts[1].click === '.save' && acts[2].type === 'styles' && acts[2].into === 'input', 'a step’s actions are read from lines: press, type into: ' + JSON.stringify(acts));
+check(acts[3].key === 'Escape' && acts[4].go === '/wp-admin/site-editor.php' && acts[5].wait === 10 && acts[6].maybe && acts[6].click === '.panel-save', 'keys, a path on the site, a capped wait and maybe; an unknown key and a non-path go are dropped');
+check(actionLines(acts).split('\n')[2] === 'type "styles" into input', 'and written back as the same lines');
+check(cleanActions(Array(20).fill('a')).length === 10, 'at most ten actions to a step');
+check(cleanTasks([{ title: 'x', do: ['button "A"'] }])[0].do[0].click === 'button "A"', 'a step keeps its actions');
+check(TOUR_SETS.every((set) => set.tasks.every((t) => cleanTasks([t])[0].do)), 'every step of the ready-made tours plays itself');
 
 let tl = lintTest(TOUR);
 check(tl.ok && tl.mode === 'tour', 'a tour that names its buttons checks clean: naming the button is the point here ' + JSON.stringify(tl.problems));
-check(/moves on when: a block was added/.test(tl.summary) && /\[Next\]/.test(tl.summary) && /Ends with a button: Get the plugin/.test(tl.summary), 'the read-back says how each step moves on and what it ends with');
+check(/checked: a block was added/.test(tl.summary) && /\[only talks\]/.test(tl.summary) && /Ends with a button: Get the plugin/.test(tl.summary), 'the read-back says what each step does, how it is checked, and what it ends with');
+check(tl.notes.some((n) => /only talks/.test(n)), 'a tour where no step does anything by itself gets a note');
 tl = lintTest(Object.assign({}, TOUR, { tasks: [{ title: 'Add your opening hours' }], button: undefined }));
-check(!tl.ok && /nothing to tell them/.test(tl.problems.join()), 'a step with nothing to tell them is a problem in a tour');
+check(!tl.ok && /nothing to say/.test(tl.problems.join()), 'a step with nothing to say is a problem in a tour');
 check(tl.notes.some((n) => /no button at the end/.test(n)), 'a tour with no button gets a note');
 tl = lintTest(Object.assign({}, TOUR, { button: { label: 'Go', url: 'http://plain.example' } }));
 check(!tl.ok && /https/.test(tl.problems.join()), 'a button that is not https is a problem');

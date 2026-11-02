@@ -190,24 +190,29 @@ and card, but for showing people something rather than watching them try it.
 A "What's new in WordPress" walkthrough, say, or a plugin maker's tour of
 their plugin from the demo blueprint they already have.
 
-- Each step's hint is the instruction, on the card from the start. Naming the
-  button is right here, so the check that warns about it is off for tours.
-- A step with a check moves on by itself once the check sees it done ("Nice,
-  that worked"); one without shows Next. Skip is always there.
-- `point` draws a ring round the thing to click, inside the editor's canvas
-  too. It takes CSS, an element by its words (`button "Styles"`), and
-  fallbacks (`a || b`, first on screen wins) so the ring can follow someone
-  across panels. Pin the WordPress version in the blueprint: a release can
-  move what a selector finds, and a selector that finds nothing shows no ring.
-- Checks in a tour are measured from when the step began (the card asks the
-  plugin to mark the site), so a styles change in one step does not answer
-  for the next. Two checks are read from the editor in the browser, before
-  anything is saved: `block` (a block of that kind was added) and
-  `block_changed` (one's settings changed).
-- It ends with a button (`button: { label, url }`) instead of the four
-  questions, and the results page shows tour numbers: per step, who reached
-  it, moved on by itself, pressed Next, skipped or stopped there, and who
-  pressed the button.
+A tour plays itself. Nobody is asked to do anything.
+
+- Each step's hint is what the card says while the step plays.
+- Its actions (`do`) are pressed one by one while a ring shows where: a
+  pointer to press, `type "words" into <pointer>`, `press Escape`,
+  `go /wp-admin/some-screen.php`, `wait 2`, and `maybe` in front of any of
+  them to pass over one that is not there. One per line in the form.
+- A pointer is CSS, an element by its words (`button "Styles"`), or
+  fallbacks (`a || b`, the first on screen wins).
+- The step's check confirms it really happened before the next step, so a
+  click that missed pauses the tour with a word instead of carrying on as if
+  it had worked. Checks are measured from when the step began; `block` and
+  `block_changed` read the editor before anything is saved; `page` is
+  reaching a screen.
+- People can pause, try a step themselves (it still moves on when the site
+  shows it done), or skip. It ends with a button (`button: { label, url }`)
+  instead of the four questions.
+- The results page shows tour numbers: per step, who reached it, moved on by
+  itself, skipped or stopped there, and who pressed the button.
+
+Pin the WordPress version in the blueprint: a release can move what a
+selector finds. The ready-made What's new tour was checked against the Site
+Editor of the day, and will need its steps rewritten for each release anyway.
 
 ## Running it
 

@@ -125,7 +125,8 @@ case_run(
 		"tasks" => array(
 			array( "id" => "1-a", "title" => "Add the block", "hint" => "Click +", "point" => "[aria-label=\"Add block\"] <b>", "check" => array( "type" => "block", "block" => "Open-Today/hours" ) ),
 			array( "id" => "2-b", "title" => "Change it", "check" => array( "type" => "block_changed", "block" => "not a block name" ) ),
-			array( "id" => "3-c", "title" => "Open the Site Editor", "check" => array( "type" => "page", "path" => "site-editor.php" ) ),
+			array( "id" => "3-c", "title" => "Open the Site Editor", "check" => array( "type" => "page", "path" => "site-editor.php?p=%2Fpage<b>" ),
+				"do" => array( array( "click" => "button \"Styles\"" ), array( "type" => "styles", "into" => "input" ), array( "key" => "Escape" ), array( "key" => "Delete" ), array( "go" => "javascript:alert(1)" ), array( "go" => "/wp-admin/site-editor.php" ), array( "wait" => 99 ), array( "click" => "x", "maybe" => 1 ) ) ),
 		),
 	) ) );
 	require "' . $plugin . '";
@@ -136,7 +137,10 @@ case_run(
 	ok( "[aria-label=\"Add block\"]" === $loc["tasks"][0]["point"], "a step keeps its selector, with any markup stripped: " . $loc["tasks"][0]["point"] );
 	ok( "open-today/hours" === $loc["tasks"][0]["check"]["block"], "a block check keeps its block name" );
 	ok( ! isset( $loc["tasks"][1]["check"] ), "a block check with no proper block name is dropped" );
-	ok( "site-editor.php" === $loc["tasks"][2]["check"]["path"], "a screen check keeps the address it looks for" );
+	ok( "site-editor.php?p=%2Fpageb" === $loc["tasks"][2]["check"]["path"], "a screen check keeps its address, %2F and all, and nothing that is not an address: " . $loc["tasks"][2]["check"]["path"] );
+	$do = $loc["tasks"][2]["do"];
+	ok( 6 === count( $do ) && "button \"Styles\"" === $do[0]["click"] && "styles" === $do[1]["type"] && "Escape" === $do[2]["key"], "a step keeps its clicks, typing and keys, and drops a key it does not know: " . count( $do ) );
+	ok( "/wp-admin/site-editor.php" === $do[3]["go"] && 10.0 === $do[4]["wait"] && ! empty( $do[5]["maybe"] ), "go only takes a path on this site, a wait is capped, maybe is kept" );
 	ok( false !== strpos( $loc["mark"], "pgut/v1/mark" ), "the card is told where to mark a step" );'
 );
 

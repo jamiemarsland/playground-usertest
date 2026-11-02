@@ -406,6 +406,7 @@ const LIMITS = {
   intro: 300,       // one line of the test's own under the persona
   question: 120,    // a closing question in the test's own words
   point: 200,       // a tour step's CSS selector for the thing to click
+  actions: 10,      // what one tour step presses by itself
   buttonLabel: 40,  // the words on the button a tour ends with
   tasksMin: 1,
   tasksMax: 12,
@@ -551,6 +552,61 @@ function cleanCheck(raw, title) {
   return { type };
 }
 
+// What a tour step does by itself, so nobody has to: press things, type into
+// a field, press a key, open a screen, wait. Given as a list of objects, or as
+// lines a person can write, one action each:
+//
+//   button "Styles"                      press it (any pointer works here)
+//   click .edit-site-save-hub__button    the same, said out loud
+//   type "styles" into input             type into a field
+//   press Escape                         Escape, Enter or Tab
+//   go /wp-admin/site-editor.php         open a screen on the site
+//   wait 2                               seconds, up to ten
+//   maybe <any of those>                 pass over it if it is not there
+const ACTION_KEYS = ['Escape', 'Enter', 'Tab'];
+
+function parseAction(line) {
+  let text = String(line == null ? '' : line).trim();
+  if (!text) return null;
+  const a = {};
+  if (/^maybe\s+/i.test(text)) { a.maybe = true; text = text.replace(/^maybe\s+/i, ''); }
+  let m;
+  if ((m = text.match(/^go\s+(\/\S*)$/i))) return Object.assign(a, { go: m[1] });
+  if (/^go\s/i.test(text)) return null; // only a screen on the site, never another address
+  if ((m = text.match(/^press\s+(\w+)$/i))) return Object.assign(a, { key: m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase() });
+  if ((m = text.match(/^wait\s+([\d.]+)/i))) return Object.assign(a, { wait: parseFloat(m[1]) });
+  if ((m = text.match(/^type\s+"([^"]*)"\s+into\s+(.+)$/i))) return Object.assign(a, { type: m[1], into: m[2] });
+  if ((m = text.match(/^click\s+(.+)$/i))) return Object.assign(a, { click: m[1] });
+  return Object.assign(a, { click: text });
+}
+
+function cleanActions(raw) {
+  const list = typeof raw === 'string' ? raw.split('\n') : (Array.isArray(raw) ? raw : []);
+  const out = [];
+  for (const item of list) {
+    if (out.length >= LIMITS.actions) break;
+    const a = typeof item === 'string' ? parseAction(item) : (item && typeof item === 'object' ? item : null);
+    if (!a) continue;
+    const one = {};
+    if (typeof a.click === 'string' && trim(a.click, LIMITS.point)) one.click = trim(a.click, LIMITS.point);
+    else if (typeof a.type === 'string' && typeof a.into === 'string' && trim(a.into, LIMITS.point)) { one.type = trim(a.type, 120); one.into = trim(a.into, LIMITS.point); }
+    else if (typeof a.key === 'string' && ACTION_KEYS.includes(a.key)) one.key = a.key;
+    else if (typeof a.go === 'string' && /^\/[^\s<>"]*$/.test(a.go.trim())) one.go = a.go.trim().slice(0, 200);
+    else if (typeof a.wait === 'number' && isFinite(a.wait)) one.wait = Math.min(10, Math.max(0.5, a.wait));
+    else continue;
+    if (a.maybe) one.maybe = true;
+    out.push(one);
+  }
+  return out;
+}
+
+// The same actions written back as lines, for the forms.
+function actionLines(list) {
+  return (list || []).map((a) => (a.maybe ? 'maybe ' : '') + (
+    a.click ? a.click : a.into ? `type "${a.type}" into ${a.into}` : a.key ? `press ${a.key}` : a.go ? `go ${a.go}` : `wait ${a.wait}`
+  )).join('\n');
+}
+
 function cleanTasks(input) {
   const list = Array.isArray(input) ? input : [];
   const out = [];
@@ -565,6 +621,8 @@ function cleanTasks(input) {
     // a tour step's pointer: only ever handed to querySelector by the card
     const point = trim(raw && raw.point, LIMITS.point);
     if (point) task.point = point;
+    const actions = cleanActions(raw && raw.do);
+    if (actions.length) task.do = actions;
     const check = cleanCheck(raw && raw.check, title);
     if (check) task.check = check;
     out.push(task);
@@ -733,9 +791,10 @@ const TASK_SETS = [
   },
 ];
 
-// Ready-made tours. A tour shows rather than tests, so here the hint is the
-// instruction and naming the button is the point. The steps of this one are a
-// starting place for a release showcase, to be rewritten for each release.
+// Ready-made tours. A tour plays itself: the hint is what the card says, and
+// each step presses through its own actions while people watch. The steps of
+// this one are a starting place for a release showcase, to be rewritten for
+// each release. Its selectors were checked against the Site Editor of the day.
 const TOUR_SETS = [
   {
     key: 'whats-new',
@@ -745,11 +804,16 @@ const TOUR_SETS = [
     persona: 'Anyone who runs a site on WordPress and wants to see what it can do now.',
     button: { label: 'Read the release post', url: 'https://wordpress.org/news/' },
     tasks: [
-      { title: 'Open the Site Editor', hint: 'Choose Edit site in the bar at the top. From the dashboard it is Appearance → Editor.', point: '#wp-admin-bar-site-editor > a', check: { type: 'page', path: 'site-editor.php' } },
-      { title: 'Find anything with the command palette', hint: 'Press ⌘K, or Ctrl+K on Windows, and type “styles”.', point: '#wp-admin-bar-command-palette > .ab-item', check: 'none' },
-      { title: 'Give the site a new look in one click', hint: 'Open Styles, then Browse styles. Pick one of the looks, then Save.', point: '.global-styles-ui-variations_item:not(.is-active) || button "Browse styles" || button "Styles"', check: 'styles' },
-      { title: 'Try a new pair of fonts', hint: 'In Styles, open Typography and pick one of the font pairs, then Save.', point: 'button "Typography"', check: 'styles' },
-      { title: 'Drop a ready-made pattern onto the home page', hint: 'Click the page to edit it. Press + at the top left, choose Patterns and click one to add it, then Save.', point: '.editor-document-tools__inserter-toggle', check: 'home' },
+      { title: 'The Site Editor', hint: 'Everything about how your site looks lives in one place: the Site Editor.', point: '#wp-admin-bar-site-editor > a',
+        do: ['#wp-admin-bar-site-editor > a'], check: { type: 'page', path: 'site-editor.php' } },
+      { title: 'Find anything with ⌘K', hint: 'Press ⌘K anywhere to find a screen or a setting by name. Here it looks for Styles.', point: '#wp-admin-bar-command-palette > .ab-item',
+        do: ['#wp-admin-bar-command-palette > .ab-item', 'type "styles" into .commands-command-menu input || [cmdk-input]', 'wait 1.5', 'press Escape'], check: 'none' },
+      { title: 'A new look in one click', hint: 'Styles has ready-made looks. One click changes the colours and fonts across the whole site.', point: '.global-styles-ui-variations_item:not(.is-active) || button "Browse styles" || button "Styles"',
+        do: ['button "Styles"', 'button "Browse styles"', '.global-styles-ui-variations_item:not(.is-active)', '.edit-site-save-hub__button || button "Save"', 'maybe .editor-entities-saved-states__save-button'], check: 'styles' },
+      { title: 'Fonts that go together', hint: 'Typography has pairs of fonts chosen to work together. Pick one and every heading and paragraph follows.', point: 'button "Typography"',
+        do: ['maybe [aria-label="Back"]', 'button "Typography"', '.global-styles-ui-variations_item:not(.is-active)', '.edit-site-save-hub__button || button "Save"', 'maybe .editor-entities-saved-states__save-button'], check: 'styles' },
+      { title: 'Every page in one list', hint: 'Pages lists everything on your site. Sort it, filter it, and open any page to edit it right here.', point: 'button "Pages"',
+        do: ['go /wp-admin/site-editor.php?p=%2Fpage', 'wait 2'], check: { type: 'page', path: 'p=%2Fpage' } },
     ],
   },
 ];
@@ -840,13 +904,13 @@ function lintTest(input) {
 }
 
 // A tour is checked the other way round. Naming the button is right here: the
-// instruction is shown from the start. What goes wrong is a step with nothing
-// to tell them, and a tour where every step needs Next.
+// tour presses it. What goes wrong is a step with nothing to say, a tour that
+// only talks, and a step that presses things nobody checks happened.
 function lintTour(input, subject, tasks, tour, problems, notes) {
   if (!subject) problems.push('Say what the tour shows — it heads the welcome page: “A short tour of X”.');
   if (!tasks.length) problems.push('There are no steps.');
   tasks.forEach((task, i) => {
-    if (!task.hint) problems.push(`Step ${i + 1} has nothing to tell them. In a tour the hint is the instruction, shown straight away: say what to do, button and all.`);
+    if (!task.hint) problems.push(`Step ${i + 1} has nothing to say. In a tour the hint is what the card says while the step plays: what this shows, and why it is good.`);
   });
   const titles = tasks.map((t) => t.title.toLowerCase());
   titles.forEach((t, i) => { if (titles.indexOf(t) !== i) problems.push(`Step ${i + 1} repeats an earlier one.`); });
@@ -859,10 +923,11 @@ function lintTour(input, subject, tasks, tour, problems, notes) {
     if (type === 'page' && !(c && String(c.path || '').trim())) problems.push(`Step ${i + 1} checks for a screen but does not say which: give part of its address, like “site-editor.php”.`);
   });
   if (tasks.length > 6) notes.push(`${tasks.length} steps is a long tour. Most people stop somewhere around five.`);
-  if (tasks.length && tasks.every((t) => !t.check)) notes.push('No step has a check, so every step needs Next. Where the site or the editor can show it (the colours, a page, your block), give it a check and the step moves on by itself.');
+  if (tasks.length && tasks.every((t) => !t.do)) notes.push('No step does anything by itself, so the tour only talks. Give steps their clicks (do) and it presses through them while people watch.');
+  if (tasks.some((t) => t.do && !t.check)) notes.push('A step that presses things but has no check carries on whether it worked or not. Where the site or the editor can show it (the colours, a page, your block), give it a check.');
   if (!tour.button) notes.push('There is no button at the end. Say what they should do once they have seen it: “Get the plugin”, “Read the release post”.');
   const summary = tasks.length
-    ? `A tour of ${subject || 'something'} in ${tasks.length} step(s):\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.check ? `  [moves on when: ${checkLabel(t.check).toLowerCase()}]` : '  [Next]'}${t.point ? '  [points at ' + t.point + ']' : ''}`).join('\n') +
+    ? `A tour of ${subject || 'something'} in ${tasks.length} step(s):\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.do ? `  [presses ${t.do.length} thing(s) by itself]` : '  [only talks]'}${t.check ? `  [checked: ${checkLabel(t.check).toLowerCase()}]` : ''}${t.point ? '  [points at ' + t.point + ']' : ''}`).join('\n') +
       (tour.button ? `\n  Ends with a button: ${tour.button.label} → ${tour.button.url}` : '')
     : '';
   return { ok: problems.length === 0, problems, notes, summary, mode: 'tour' };
@@ -1531,7 +1596,7 @@ function tourSummary(test, events, origin) {
   const tasks = [];
   for (const t of test.tasks) {
     const last = events.filter((e) => e.task === t.id && (e.type === 'task_done' || e.type === 'task_skip')).slice(-1)[0];
-    const how = !last ? 'not reached' : last.type === 'task_skip' ? 'skipped' : (last.data && last.data.how === 'auto') ? 'moved on by itself' : 'pressed Next';
+    const how = !last ? 'not reached' : last.type === 'task_skip' ? 'skipped' : (last.data && (last.data.how === 'auto' || last.data.how === 'played')) ? 'moved on by itself' : 'pressed Next';
     tasks.push({ title: t.title, result: how });
     lines.push(`${how === 'skipped' ? '↷' : how === 'not reached' ? '·' : '✓'} ${t.title} (${how})`);
   }
@@ -1680,7 +1745,7 @@ async function buildDigest(env, id, test, only) {
       if (e.type === 'task_done' || e.type === 'task_skip') {
         ended.add(e.task);
         if (e.type === 'task_done') t.done++; else t.couldnt++;
-        if (e.type === 'task_done' && e.data && e.data.how === 'auto') t.auto++;
+        if (e.type === 'task_done' && e.data && (e.data.how === 'auto' || e.data.how === 'played')) t.auto++;
         if (e.type === 'task_done' && e.data && e.data.how === 'next') t.next++;
         // what the site said, when the task had a check: yes, no or unknown
         const seen = e.data && e.data.check;
@@ -1792,8 +1857,9 @@ async function updateTest(env, test, body) {
       if (!raw || !old) return raw;
       const kept = Object.assign({}, raw);
       if (raw.check === undefined) kept.check = old.check || 'none';
-      // and a step sent without a pointer keeps the one it had
+      // and a step sent without a pointer or actions keeps the ones it had
       if (raw.point === undefined && old.point) kept.point = old.point;
+      if (raw.do === undefined && old.do) kept.do = old.do;
       return kept;
     });
     const fresh = cleanTasks(given);
@@ -1919,6 +1985,10 @@ const TASKS_SCHEMA = {
     properties: {
       title: { type: 'string', maxLength: LIMITS.taskTitle, description: `What they are trying to get done, in their words. "Give the site your own name", not "click Settings". In a tour, the step's heading. At most ${LIMITS.taskTitle} characters — longer is refused, not cut.` },
       hint: { type: 'string', maxLength: LIMITS.taskHint, description: `Shown only if they ask for it. This is where a control may be named. In a tour it is the instruction, shown straight away: say what to do, button and all. At most ${LIMITS.taskHint} characters.` },
+      do: {
+        description: `Tours only: what the step presses by itself while people watch, up to ${LIMITS.actions} actions, as lines (or objects). Each line is a pointer to press (CSS, or button "Styles", or a || b), or: type "words" into <pointer>; press Escape|Enter|Tab; go /wp-admin/some-screen.php; wait 2; and "maybe " in front of any of them to pass over it when it is not there. E.g. ["button \\"Styles\\"", "button \\"Browse styles\\"", ".edit-site-save-hub__button"].`,
+        oneOf: [{ type: 'string' }, { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'object' }] } }],
+      },
       point: { type: 'string', maxLength: LIMITS.point, description: `Tours only, optional: a CSS selector for the thing to click, e.g. [aria-label="Styles"]. Add words in quotes to match an element by its text, e.g. button "Styles"; separate several with || and the first on screen wins, so the ring can follow them across panels. A ring is drawn round it, inside the editor's canvas too. A selector that finds nothing shows no ring. At most ${LIMITS.point} characters.` },
       why: { type: 'string', maxLength: LIMITS.taskWhy, description: `Optional one line of context under the task. At most ${LIMITS.taskWhy} characters.` },
       check: {
@@ -1966,7 +2036,7 @@ const WORDING_SCHEMA = {
 // site and card, but each step's hint is the instruction, a checked step moves
 // on by itself, and it ends with a button instead of questions.
 const TOUR_SCHEMA = {
-  mode: { type: 'string', enum: ['test', 'tour'], description: 'test (the default) watches people try things on their own. tour walks people through it: each step shows its hint as the instruction, can point at the thing to click, moves on by itself when its check sees it done, and ends with a button instead of the closing questions. For a tour, persona is optional: one line on who it is for.' },
+  mode: { type: 'string', enum: ['test', 'tour'], description: 'test (the default) watches people try things on their own. tour shows people around and plays itself: each step says what it shows (its hint), presses through its own actions (do) while a ring shows where, waits for its check to confirm it, and the tour ends with a button instead of the closing questions. Nobody has to do anything; they can pause and try. For a tour, persona is optional: one line on who it is for.' },
   button: { type: 'object', description: `Tours only: the button at the end, { label, url }. The label at most ${LIMITS.buttonLabel} characters, the url https. E.g. { "label": "Get the plugin", "url": "https://wordpress.org/plugins/…" }.`, properties: { label: { type: 'string', maxLength: LIMITS.buttonLabel }, url: { type: 'string' } } },
 };
 
@@ -2265,8 +2335,8 @@ async function mcpMessage(env, req, msg) {
           'they do comes back here. Draft the persona and tasks with the person, usertest_check them, ' +
           'then usertest_create and hand over both links and the password. Come back later for ' +
           'usertest_results — real testers take days, not minutes. ' +
-          'To show people a thing instead of testing them on it, make a tour (mode: "tour"): each ' +
-          'step says what to do, can point at it, moves on by itself when done, and ends with a button.',
+          'To show people a thing instead of testing them on it, make a tour (mode: "tour"): it plays ' +
+          'itself, each step pressing through its own actions (do) while people watch, and ends with a button.',
       });
     }
     if (method === 'ping') return ok({});
@@ -2380,26 +2450,30 @@ DELETE ${origin}/api/results?test=<id>
 
 ## Show it instead: a tour
 
-The same thing with mode: "tour" walks people through it rather than testing
-them. Each step's hint is the instruction, shown straight away (naming the
-button is right here). A step with a check moves on by itself once the check
-sees it done; one without shows Next. Skip is always there. It ends with a
-button instead of the four questions.
+The same thing with mode: "tour" shows people around rather than testing
+them, and plays itself: nobody has to do anything. Each step's hint is what
+the card says; its actions (do) are pressed one by one while a ring shows
+where; its check confirms it happened before the next step. People can pause,
+try it themselves, or skip. It ends with a button instead of the questions.
 
   { mode: "tour", subject: "Open Today", persona: "For anyone who runs a shop.",
     button: { label: "Get the plugin", url: "https://…" },
-    tasks: [{ title: "Add your opening hours", hint: "Press + then choose Opening hours.",
-              point: "[aria-label=\"Add block\"]",
+    tasks: [{ title: "Your opening hours",
+              hint: "One block shows your hours and whether you are open now.",
+              do: ["[aria-label=\\"Block Inserter\\"]", "type \\"hours\\" into [placeholder=\\"Search\\"]",
+                   "button \\"Opening hours\\""],
               check: { type: "block", block: "open-today/hours" } }] }
 
-  point (optional): a CSS selector; a ring is drawn round it, inside the
-  editor's canvas too. button "Styles" matches a button by its words, and
-  a || b uses the first one on screen. Pin the WordPress version in the
-  blueprint, or a new release can move what the selector finds.
-  block / block_changed checks read the editor in the visitor's browser, so a
-  step can be done before anything is saved. page { type: "page", path:
-  "site-editor.php" } moves on once they reach a screen whose address has it. Every other check is measured
-  from when the step began, not from the start.
+  do: up to ${LIMITS.actions} actions, one per line. A pointer presses it (CSS;
+  button "Styles" by its words; a || b, the first on screen). Or:
+  type "words" into <pointer> · press Escape|Enter|Tab · go /wp-admin/x.php ·
+  wait 2 · and "maybe " in front to pass over one that is not there.
+  point (optional): where the ring sits when the tour is paused.
+  Pin the WordPress version in the blueprint: a release can move what a
+  selector finds, and a step that cannot find its button pauses with a word.
+  Checks: block / block_changed read the editor before anything is saved;
+  page { type: "page", path: "site-editor.php" } is reaching a screen; every
+  other check is measured from when the step began.
   The digest of a tour gives, per step: auto (moved on by itself), next,
   skipped, stoppedHere, onItNow, medianSecs; plus buttonPresses.
   Ready-made: taskSet "${TOUR_SETS.map((x) => x.key).join('", "')}".
@@ -2498,13 +2572,13 @@ function tourIntroPage(test, playground) {
 <title>A short tour of ${esc(test.subject)}</title>
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
 <h1>A short tour of ${esc(test.subject)}</h1>
-<p>You are about to get a real WordPress in your browser, already set up, with a small card that walks you through it in ${n} step${n === 1 ? '' : 's'}.</p>
+<p>You are about to get a real WordPress in your browser, already set up, with a small card that shows you round it in ${n} step${n === 1 ? '' : 's'}. You do not have to do anything.</p>
 ${test.persona ? `<p class="soft">${esc(test.persona)}</p>` : ''}
 ${test.wording && test.wording.intro ? `<p class="soft">${esc(test.wording.intro)}</p>` : ''}
 <div class="card"><h2>How it goes</h2>
 <ol><li>Press Start. Give it a minute to build.</li>
-<li>The card says what to do, and a ring shows where. Once it sees you have done it, it moves on by itself. You can skip any step, and drag the card out of the way.</li>
-<li>When you have seen it all, the site is yours to keep playing with until you close the tab.</li></ol></div>
+<li>Press Start the tour on the card, then sit back. It clicks through each step by itself while a ring shows where.</li>
+<li>Pause whenever you like and try it yourself, or skip a step. When it is done, the site is yours to keep playing with until you close the tab.</li></ol></div>
 <a class="go" href="${esc(playground)}" target="_blank" rel="noopener">Start the tour</a>
 <p class="fine">Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is which steps you did, how long they took and which page you were on. Nothing you write in WordPress is kept.</p>
 </div></body></html>`;
@@ -2836,7 +2910,7 @@ const HOME = `<!doctype html>
     <div><p class="label">→ compare</p><h3>Test two versions</h3><p>Same tasks, two or three sites. One link shares testers out evenly, and the results come back side by side.</p></div>
     <div><p class="label">→ webhook</p><h3>Hear when they finish</h3><p>Each tester who finishes is posted to Slack, Discord or any HTTPS endpoint. Never the password.</p></div>
     <div><p class="label">→ nothing to install</p><h3>At either end</h3><p>Testers need a browser and nothing else. You need a blueprint, the one you already demo with.</p></div>
-    <div><p class="label">→ show it</p><h3>Or walk them through it</h3><p>Turn it round into a tour: each step says what to do, points at it and moves on by itself once it is done. It ends with your button.</p></div>
+    <div><p class="label">→ show it</p><h3>Or show them round</h3><p>Turn it round into a tour that plays itself: each step clicks through in a real WordPress while people watch. It ends with your button.</p></div>
   </div>
 </section>
 
@@ -2852,7 +2926,7 @@ const HOME = `<!doctype html>
   <label>What is this link for?</label>
   <div class="modes" role="radiogroup" aria-label="What is this link for?">
     <label class="mode" for="mTest"><input type="radio" name="mode" id="mTest" value="test" checked><strong>Test it</strong><span>People try things on their own. Hints stay hidden until they are stuck, and four questions come at the end.</span></label>
-    <label class="mode" for="mShow"><input type="radio" name="mode" id="mShow" value="tour"><strong>Show it</strong><span>People are walked through it. Each step says what to do and moves on when it is done. It ends with a button.</span></label>
+    <label class="mode" for="mShow"><input type="radio" name="mode" id="mShow" value="tour"><strong>Show it</strong><span>A tour that plays itself. Each step clicks through while people watch, and they can pause and try. It ends with a button.</span></label>
   </div>
 </fieldset>
 
@@ -2877,7 +2951,7 @@ const HOME = `<!doctype html>
 
 <fieldset>
   <label data-test="What should they try?" data-tour="What should they see?">What should they try?</label>
-  <p class="hint" data-test="Five to seven works well. Say what they want, not which button to press — the hint is there for when they are stuck." data-tour="Three to six steps. Here, do name the button: what you tell them is on the card from the start. Give a step a check and it moves on by itself; without one they press Next.">Five to seven works well. Say what they want, not which button to press — the hint is there for when they are stuck.</p>
+  <p class="hint" data-test="Five to seven works well. Say what they want, not which button to press — the hint is there for when they are stuck." data-tour="Three to six steps. Each says what it shows, and lists what it presses, one per line: a CSS selector or button &quot;Styles&quot;, or type &quot;words&quot; into …, press Escape, go /wp-admin/…, wait 2. A check confirms each step worked.">Five to seven works well. Say what they want, not which button to press — the hint is there for when they are stuck.</p>
   <div id="tasks"></div>
   <button type="button" class="add" id="add" data-test="Add another" data-tour="Add a step">Add another</button>
 </fieldset>
@@ -2991,7 +3065,7 @@ const HOME = `<!doctype html>
   var form = document.getElementById('f');
   var WORDS = {
     test: { title: 'Give the site your own name', hint: 'Hint, shown only if they ask (optional)', none: 'Don\u2019t check this one', know: 'How we\u2019ll know they did it' },
-    tour: { title: 'Give the site a new look in one click', hint: 'What to tell them, e.g. Open Styles, pick a look, then Save', none: 'Nothing: they press Next', know: 'Moves on when' },
+    tour: { title: 'A new look in one click', hint: 'What the card says, e.g. Styles has ready-made looks for the whole site.', none: 'Don\\u2019t check this one', know: 'Check it worked' },
   };
   function wordsFor(d) {
     var w = WORDS[form.dataset.mode];
@@ -3000,7 +3074,7 @@ const HOME = `<!doctype html>
     d.querySelector('.t-none').textContent = w.none;
     d.querySelector('.t-know').textContent = w.know;
   }
-  function addTask(title, hint, check, point) {
+  function addTask(title, hint, check, point, does) {
     var d = document.createElement('div');
     d.className = 'task';
     d.innerHTML =
@@ -3015,7 +3089,8 @@ const HOME = `<!doctype html>
         '<input type="text" class="t-block" maxlength="100" placeholder="The block, e.g. my-plugin/my-block" hidden>' +
         '<input type="text" class="t-path" maxlength="120" placeholder="Part of its address, e.g. site-editor.php" hidden></label>' +
       // a tour step can point at the thing to click
-      '<label class="chk t-point">Point at <input type="text" class="t-words t-sel" maxlength="200" placeholder="A CSS selector, or button &quot;Styles&quot; (optional)"></label>';
+      '<label class="chk t-point">It presses <textarea class="t-words t-do" rows="3" placeholder="One per line, e.g.&#10;button &quot;Styles&quot;&#10;button &quot;Browse styles&quot;"></textarea></label>' +
+      '<label class="chk t-point">Ring when paused <input type="text" class="t-words t-sel" maxlength="200" placeholder="A CSS selector, or button &quot;Styles&quot; (optional)"></label>';
     var drop = document.createElement('button');
     drop.type = 'button';
     drop.className = 'drop';
@@ -3026,6 +3101,7 @@ const HOME = `<!doctype html>
     if (title) d.querySelector('.t-title').value = title;
     if (hint) d.querySelector('.t-hint').value = hint;
     if (point) d.querySelector('.t-sel').value = point;
+    if (does) d.querySelector('.t-do').value = typeof does === 'string' ? does : does.map(function (a) { return typeof a === 'string' ? a : (a.click || ''); }).join('\\n');
     var sel = d.querySelector('.t-check');
     var shape = function () {
       d.querySelector('.t-words').hidden = sel.value !== 'text';
@@ -3075,7 +3151,7 @@ const HOME = `<!doctype html>
     var persona = document.getElementById('persona');
     if (!persona.value.trim() || persona.value === lastSetPersona) { persona.value = set.persona; lastSetPersona = set.persona; }
     tasksEl.innerHTML = '';
-    set.tasks.forEach(function (t) { addTask(t.title, t.hint, t.check, t.point); });
+    set.tasks.forEach(function (t) { addTask(t.title, t.hint, t.check, t.point, t.do); });
   });
   document.getElementById('add').addEventListener('click', function () { addTask(); });
 
@@ -3111,6 +3187,7 @@ const HOME = `<!doctype html>
         : (c || undefined);
       var t = { title: d.querySelector('.t-title').value, hint: d.querySelector('.t-hint').value, check: check };
       if (touring && d.querySelector('.t-sel').value.trim()) t.point = d.querySelector('.t-sel').value.trim();
+      if (touring && d.querySelector('.t-do').value.trim()) t.do = d.querySelector('.t-do').value;
       return t;
     }).filter(function (t) { return t.title.trim(); });
     if (!tasks.length) { msg.textContent = touring ? 'Give the tour at least one step.' : 'Give the tester at least one thing to try.'; return; }
@@ -3542,6 +3619,12 @@ const RESULTS = `<!doctype html>
         .catch(function (e) { m.className = 'err'; m.textContent = e.message; });
     };
   }
+  // A step's actions as the lines they were written in.
+  function lines(list) {
+    return (list || []).map(function (a) {
+      return (a.maybe ? 'maybe ' : '') + (a.click ? a.click : a.into ? 'type "' + a.type + '" into ' + a.into : a.key ? 'press ' + a.key : a.go ? 'go ' + a.go : 'wait ' + a.wait);
+    }).join('\\n');
+  }
   function openTourEdit(d, box) {
     var b = d.button || {};
     box.innerHTML = '<h2>Edit the tour</h2><p class="soft">Change the words or the button. The links and the password stay the same, and anyone who starts from now on sees the new words.</p>' +
@@ -3550,8 +3633,9 @@ const RESULTS = `<!doctype html>
       '<label>The steps <span>\u2014 reword them here; the order and the number stay as they are</span></label>' +
       (d.tasks || []).map(function (t, i) {
         return '<div class="task"><input type="text" class="eTitle" maxlength="200" value="' + esc(t.title) + '" aria-label="Step ' + (i + 1) + '">' +
-          '<input type="text" class="eHint" maxlength="300" value="' + esc(t.hint || '') + '" placeholder="What to tell them" aria-label="What step ' + (i + 1) + ' tells them">' +
-          '<input type="text" class="ePoint" maxlength="200" value="' + esc(t.point || '') + '" placeholder="Point at: a CSS selector (optional)" aria-label="What step ' + (i + 1) + ' points at"></div>';
+          '<input type="text" class="eHint" maxlength="300" value="' + esc(t.hint || '') + '" placeholder="What the card says" aria-label="What step ' + (i + 1) + ' says">' +
+          '<textarea class="eDo" placeholder="What it presses, one per line" aria-label="What step ' + (i + 1) + ' presses">' + esc(lines(t.do)) + '</textarea>' +
+          '<input type="text" class="ePoint" maxlength="200" value="' + esc(t.point || '') + '" placeholder="Ring when paused: a CSS selector (optional)" aria-label="What step ' + (i + 1) + ' points at"></div>';
       }).join('') +
       field('The button at the end <span>\u2014 its words</span>', 'eBtnLabel', b.label || '', 40) +
       field('<span>and where it goes</span>', 'eBtnUrl', b.url || '', 600) +
@@ -3561,10 +3645,10 @@ const RESULTS = `<!doctype html>
     document.getElementById('eSave').onclick = function () {
       var val = function (x) { return document.getElementById(x).value; };
       var get3 = function (c) { return [].slice.call(box.querySelectorAll(c)); };
-      var titlesIn = get3('.eTitle'), hintsIn = get3('.eHint'), pointsIn = get3('.ePoint');
+      var titlesIn = get3('.eTitle'), hintsIn = get3('.eHint'), pointsIn = get3('.ePoint'), doesIn = get3('.eDo');
       var body = {
         subject: val('eSubject'), persona: val('ePersona'),
-        tasks: (d.tasks || []).map(function (t, i) { return { title: titlesIn[i].value, hint: hintsIn[i].value, point: pointsIn[i].value, check: t.check || 'none' }; }),
+        tasks: (d.tasks || []).map(function (t, i) { return { title: titlesIn[i].value, hint: hintsIn[i].value, point: pointsIn[i].value, do: doesIn[i].value, check: t.check || 'none' }; }),
         button: { label: val('eBtnLabel'), url: val('eBtnUrl') },
       };
       var m = document.getElementById('eMsg');
@@ -3817,4 +3901,4 @@ const NOT_FOUND = `<!doctype html>
 </div></body></html>`;
 
 // exported for the tests
-export { TASK_SETS, TOUR_SETS, readTour, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };
+export { TASK_SETS, TOUR_SETS, readTour, cleanActions, actionLines, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };

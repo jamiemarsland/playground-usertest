@@ -101,6 +101,10 @@ function pgut_tasks( $tasks ) {
 		if ( ! empty( $task['point'] ) && is_string( $task['point'] ) ) {
 			$clean['point'] = substr( sanitize_text_field( $task['point'] ), 0, 200 );
 		}
+		$actions = pgut_actions( isset( $task['do'] ) ? $task['do'] : null );
+		if ( $actions ) {
+			$clean['do'] = $actions;
+		}
 		if ( ! empty( $task['check'] ) && is_array( $task['check'] ) && ! empty( $task['check']['type'] ) ) {
 			$type = preg_replace( '/[^a-z_]/', '', (string) $task['check']['type'] );
 			if ( in_array( $type, pgut_check_types(), true ) ) {
@@ -109,7 +113,8 @@ function pgut_tasks( $tasks ) {
 					$clean['check']['text'] = sanitize_text_field( (string) $task['check']['text'] );
 				}
 				if ( 'page' === $type ) {
-					$path = isset( $task['check']['path'] ) ? substr( sanitize_text_field( (string) $task['check']['path'] ), 0, 120 ) : '';
+					// address characters only; sanitize_text_field would eat %2F
+					$path = isset( $task['check']['path'] ) ? substr( preg_replace( '/[^A-Za-z0-9_\-.\/%?=&#]/', '', (string) $task['check']['path'] ), 0, 120 ) : '';
 					if ( '' === $path ) {
 						unset( $clean['check'] );
 					} else {
@@ -127,6 +132,43 @@ function pgut_tasks( $tasks ) {
 			}
 		}
 		$out[] = $clean;
+	}
+	return $out;
+}
+
+/**
+ * What a tour step presses, types or opens by itself, cleaned: up to ten
+ * actions, each one of click, type + into, key, go (a path on this site) or
+ * wait. The service cleaned them already; a blueprint is a file anyone writes.
+ *
+ * @param mixed $raw Actions as they came in.
+ * @return array
+ */
+function pgut_actions( $raw ) {
+	$out = array();
+	foreach ( array_slice( is_array( $raw ) ? $raw : array(), 0, 10 ) as $a ) {
+		if ( ! is_array( $a ) ) {
+			continue;
+		}
+		$one = array();
+		if ( ! empty( $a['click'] ) && is_string( $a['click'] ) ) {
+			$one['click'] = substr( sanitize_text_field( $a['click'] ), 0, 200 );
+		} elseif ( isset( $a['type'], $a['into'] ) && is_string( $a['type'] ) && is_string( $a['into'] ) ) {
+			$one['type'] = substr( sanitize_text_field( $a['type'] ), 0, 120 );
+			$one['into'] = substr( sanitize_text_field( $a['into'] ), 0, 200 );
+		} elseif ( isset( $a['key'] ) && in_array( $a['key'], array( 'Escape', 'Enter', 'Tab' ), true ) ) {
+			$one['key'] = $a['key'];
+		} elseif ( isset( $a['go'] ) && is_string( $a['go'] ) && preg_match( '#^/[^\s<>"]*$#', $a['go'] ) ) {
+			$one['go'] = substr( $a['go'], 0, 200 );
+		} elseif ( isset( $a['wait'] ) && is_numeric( $a['wait'] ) ) {
+			$one['wait'] = (float) min( 10, max( 0.5, (float) $a['wait'] ) );
+		} else {
+			continue;
+		}
+		if ( ! empty( $a['maybe'] ) ) {
+			$one['maybe'] = true;
+		}
+		$out[] = $one;
 	}
 	return $out;
 }
