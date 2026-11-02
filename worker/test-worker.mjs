@@ -3,7 +3,7 @@
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
 import { DatabaseSync } from 'node:sqlite';
-import worker, { TASK_SETS, TOUR_SETS, cleanActions, actionLines, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
+import worker, { TASK_SETS, TOUR_SETS, readTour, cleanActions, actionLines, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 
 // A real SQL engine rather than a mock. The worker talks to a D1-shaped
 // binding, which is what both Spacefast Functions and Cloudflare D1 hand it, so
@@ -773,6 +773,9 @@ check(acts[3].key === 'Escape' && acts[4].go === '/wp-admin/site-editor.php' && 
 check(actionLines(acts).split('\n')[2] === 'type "styles" into input', 'and written back as the same lines');
 check(cleanActions(Array(20).fill('a')).length === 10, 'at most ten actions to a step');
 check(cleanTasks([{ title: 'x', do: ['button "A"'] }])[0].do[0].click === 'button "A"', 'a step keeps its actions');
+check(cleanTasks([{ title: 'x', say: 'Hello there.', audio: 'https://cdn.example/one.mp3' }])[0].audio === 'https://cdn.example/one.mp3', 'a step keeps its spoken words and its recording');
+check(!cleanTasks([{ title: 'x', audio: 'http://localhost/one.mp3' }])[0].audio, 'a recording that is not a public https link is dropped');
+check(readTour({ mode: 'tour', endAudio: 'https://cdn.example/end.mp3' }).tour.endAudio === 'https://cdn.example/end.mp3', 'a tour keeps a recording of its closing words');
 check(TOUR_SETS.every((set) => set.tasks.every((t) => cleanTasks([t])[0].do)), 'every step of the ready-made tours plays itself');
 
 let tl = lintTest(TOUR);

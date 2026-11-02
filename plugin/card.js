@@ -135,6 +135,13 @@
     '.pgut.is-tour .pgut-nice{background:rgba(124,242,176,.15);color:#b5f8d3}' +
     '.pgut.is-tour .pgut-foot{color:rgba(242,242,240,.5)}' +
     '.pgut.is-tour .pgut-dots i{background:rgba(255,255,255,.2)}.pgut.is-tour .pgut-dots i.is-done{background:#2f8f5b}.pgut.is-tour .pgut-dots i.is-now{background:#7cf2b0}' +
+    // the pointer a tour moves to each thing it presses, and the ripple of the press
+    '.pgut-cursor{position:fixed;left:0;top:0;z-index:2147483001;pointer-events:none;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));transition:transform .75s cubic-bezier(.3,.7,.2,1)}' +
+    '.pgut-cursor svg{display:block;transition:transform .12s}.pgut-cursor.is-down svg{transform:scale(.86)}' +
+    '.pgut-tap{position:fixed;z-index:2147483000;width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;border:3px solid #7cf2b0;background:rgba(124,242,176,.25);pointer-events:none;animation:pgutTap .55s ease-out forwards}' +
+    '@keyframes pgutTap{from{transform:scale(.3);opacity:1}to{transform:scale(1.5);opacity:0}}' +
+    '.pgut-cursor[hidden]{display:none}' +
+    '@media (prefers-reduced-motion:reduce){.pgut-cursor{transition:none}.pgut-tap{animation:none;opacity:0}}' +
     '.pgut-pill.is-tour{background:#16181c;color:#7cf2b0;box-shadow:0 0 0 1px rgba(124,242,176,.45),0 8px 24px rgba(0,0,0,.35)}' +
     '@media (max-width:700px){.pgut,.pgut-pill{top:auto!important;bottom:12px!important;left:12px!important;right:12px!important;width:auto}}';
   var style = document.createElement('style');
@@ -158,6 +165,12 @@
   ring.setAttribute('aria-hidden', 'true');
   ring.innerHTML = '<span>Here</span>';
   document.body.appendChild(ring);
+  var pointer = document.createElement('div');
+  pointer.className = 'pgut-cursor';
+  pointer.hidden = true;
+  pointer.setAttribute('aria-hidden', 'true');
+  pointer.innerHTML = '<svg width="24" height="28" viewBox="0 0 22 26"><path d="M2 2 L2 20 L7 15.5 L10.5 23 L13.6 21.6 L10.1 14.3 L17 14.3 Z" fill="#fff" stroke="#16181c" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  if (tour) document.body.appendChild(pointer);
 
   /* ---- where it sits --------------------------------------------------- */
   // The one thing a card like this gets wrong is landing on top of the site's
@@ -503,18 +516,53 @@
     } catch (e) { /* no voice here: the words are on the card */ }
   }
 
+  // What the voice says: the step's own script, written to be heard, or else
+  // the card's line (the heading on its own sounds clipped when read out).
   function sayStep() {
     var t = tasks[state.i];
-    if (t) say(t.title + '. ' + (t.hint || ''));
-    else if (state.wrapped) say('That\u2019s the tour.');
+    if (t) speak(t.audio, t.say || t.hint || t.title);
+    else if (state.wrapped) speak(cfg.endAudio, endWords());
+  }
+
+  // A step can carry a recording of its words, in a real voice. It plays
+  // instead of the browser's voice; a recording that will not load falls back
+  // to the browser reading the same words.
+  var player = null;
+  function speak(url, words) {
+    if (!voiceOk || !state.voice) return;
+    if (!url) return say(words);
+    hush();
+    try {
+      player = new Audio(url);
+      player.onplaying = function () { if (voiceBlocked) { voiceBlocked = false; render(); } };
+      var started = player.play();
+      if (started && started.catch) {
+        started.catch(function (e) {
+          if (e && e.name === 'NotAllowedError') { if (!voiceBlocked) { voiceBlocked = true; render(); } return; }
+          player = null;
+          say(words);
+        });
+      }
+    } catch (e) {
+      player = null;
+      say(words);
+    }
+  }
+
+  function endWords() {
+    return 'That\u2019s the tour. The site is yours to keep exploring until you close this tab.' +
+      (cfg.button && cfg.button.label ? ' There\u2019s a link on the card if you want to go further.' : '');
   }
 
   function hush() {
+    if (player) { try { player.pause(); } catch (e) {} player = null; }
     if (voiceOk) { try { window.speechSynthesis.cancel(); } catch (e) {} }
   }
 
   function speaking() {
-    return voiceOk && state.voice && !voiceBlocked && window.speechSynthesis.speaking;
+    if (!voiceOk || !state.voice || voiceBlocked) return false;
+    if (player && !player.paused && !player.ended) return true;
+    return window.speechSynthesis.speaking || window.speechSynthesis.pending;
   }
 
   // Carry on once the voice has finished, so a step's words are never cut
@@ -585,6 +633,7 @@
     state.playing = false;
     stop();
     hush();
+    pointer.hidden = true;
     save();
     render();
   }
@@ -605,7 +654,7 @@
     state.act = null;
     if (type === 'task_skip') hush();
     if (state.i >= tasks.length && !state.wrapped) {
-      if (state.playing) say('That\u2019s the tour.');
+      if (state.playing) speak(cfg.endAudio, endWords());
       state.wrapped = true;
       state.playing = false;
       send('wrap', 'wrap', '', { tour: true, minutes: state.started ? Math.round((Date.now() - state.started) / 60000) : 0 });
@@ -615,6 +664,7 @@
   }
 
   function renderEnd() {
+    pointer.hidden = true;
     var b = cfg.button && cfg.button.url && cfg.button.label ? cfg.button : null;
     card.innerHTML =
       head('All done') +
@@ -658,6 +708,7 @@
   }
 
   function trouble(words) {
+    pointer.hidden = true;
     state.playing = false;
     state.problem = words;
     stop();
@@ -668,9 +719,12 @@
   function perform(t, a, tok, since) {
     if (a.wait) { state.act.n++; save(); timer = setTimeout(function () { if (tok === runTok) run(); }, a.wait * 1000); return; }
     if (a.go) {
-      state.act.n++;
-      save();
-      location.assign(new URL(a.go, cfg.home || location.origin).toString());
+      // leaving the page stops the voice, so let it finish first
+      whenQuiet(tok, function () {
+        state.act.n++;
+        save();
+        location.assign(new URL(a.go, cfg.home || location.origin).toString());
+      });
       return;
     }
     if (a.key) {
@@ -690,21 +744,70 @@
       if (a.maybe) return advance(t, tok);
       return trouble('This step could not find what to press on this site. Skip it, or try it yourself.');
     }
-    // the ring goes there first, so people see what is about to happen
+    // the ring goes there, and the pointer glides over to it and presses, so
+    // people see how you get around rather than things just happening
     aim();
-    timer = setTimeout(function () {
+    glide(got.left + got.width / 2, got.top + got.height / 2, function () {
       if (tok !== runTok) return;
       var el = findPoint(sel);
       if (!el) return perform(t, a, tok, since);
-      if (a.click) {
+      // a link to another page would cut the voice off mid-sentence, so the
+      // pointer waits on it until the voice has finished
+      var away = a.click && leaves(el.el);
+      if (away) whenQuiet(tok, function () { press(findPoint(sel) || el, true); });
+      else press(el, false);
+    });
+
+    function press(el, away) {
+      tap(el.left + el.width / 2, el.top + el.height / 2);
+      timer = setTimeout(function () {
+        if (tok !== runTok) return;
+        if (!a.click) { typeInto(el.el, a.type, function () { if (tok === runTok) advance(t, tok); }); return; }
         state.act.n++;
         save();
         el.el.click();
-        timer = setTimeout(function () { if (tok === runTok) run(); }, 50);
-        return;
-      }
-      typeInto(el.el, a.type, function () { if (tok === runTok) advance(t, tok); });
-    }, 700);
+        // a link to another page: the next page carries on from here, so
+        // nothing more happens on this one, the next step's words included
+        if (!away) timer = setTimeout(function () { if (tok === runTok) run(); }, 50);
+      }, 260);
+    }
+  }
+
+  // The pointer: starts where it last was (kept across page loads), slides to
+  // the thing to press, and shows the press.
+  var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function glide(x, y, done) {
+    var from = state.cur || { x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) };
+    if (pointer.hidden) {
+      pointer.style.transition = 'none';
+      pointer.style.transform = 'translate(' + (from.x - 3) + 'px,' + (from.y - 3) + 'px)';
+      pointer.hidden = false;
+      void pointer.offsetWidth;
+      pointer.style.transition = '';
+    }
+    pointer.style.transform = 'translate(' + (x - 3) + 'px,' + (y - 3) + 'px)';
+    state.cur = { x: Math.round(x), y: Math.round(y) };
+    save();
+    timer = setTimeout(done, reduced ? 150 : 800);
+  }
+
+  function tap(x, y) {
+    var ripple = document.createElement('div');
+    ripple.className = 'pgut-tap';
+    ripple.style.left = x + 'px';
+    ripple.style.top = y + 'px';
+    document.body.appendChild(ripple);
+    setTimeout(function () { ripple.remove(); }, 650);
+    pointer.classList.add('is-down');
+    setTimeout(function () { pointer.classList.remove('is-down'); }, 200);
+  }
+
+  // Does pressing this load another page? A link somewhere else does.
+  function leaves(el) {
+    var link = el.closest ? el.closest('a[href]') : null;
+    if (!link || link.target === '_blank') return false;
+    var href = link.getAttribute('href') || '';
+    return !!href && href.charAt(0) !== '#' && href.indexOf('javascript:') !== 0;
   }
 
   // Types into a field the way the editor hears a person type, a character
@@ -750,6 +853,9 @@
   // before anything is pressed.
   function beginStep(t) {
     if (!t.check || state.marked[t.id]) return;
+    // reaching a screen is read from the address alone; the site has nothing
+    // to remember for it
+    if (t.check.type === 'page') { state.marked[t.id] = 'yes'; save(); return; }
     state.marked[t.id] = 'pending';
     save();
     var mark = !cfg.mark ? Promise.resolve() : fetch(cfg.mark + (cfg.mark.indexOf('?') === -1 ? '?' : '&') + 'task=' + encodeURIComponent(t.id), {

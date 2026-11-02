@@ -92,14 +92,18 @@ function pgut_tasks( $tasks ) {
 			'id'    => $id ? substr( $id, 0, 40 ) : 'task-' . ( $i + 1 ),
 			'title' => sanitize_text_field( (string) $task['title'] ),
 		);
-		foreach ( array( 'why', 'hint' ) as $extra ) {
+		foreach ( array( 'why', 'hint', 'say' ) as $extra ) {
 			if ( ! empty( $task[ $extra ] ) ) {
-				$clean[ $extra ] = sanitize_text_field( (string) $task[ $extra ] );
+				$clean[ $extra ] = substr( sanitize_text_field( (string) $task[ $extra ] ), 0, 600 );
 			}
 		}
 		// a selector only ever goes to querySelector, never into the page as markup
 		if ( ! empty( $task['point'] ) && is_string( $task['point'] ) ) {
 			$clean['point'] = substr( sanitize_text_field( $task['point'] ), 0, 200 );
+		}
+		// a recording of the step's words; only ever an audio source
+		if ( ! empty( $task['audio'] ) && is_string( $task['audio'] ) && preg_match( '#^https?://#', $task['audio'] ) ) {
+			$clean['audio'] = esc_url_raw( $task['audio'] );
 		}
 		$actions = pgut_actions( isset( $task['do'] ) ? $task['do'] : null );
 		if ( $actions ) {
@@ -208,6 +212,7 @@ function pgut_enqueue() {
 			'questions' => pgut_questions( $test ),
 			'mode'    => pgut_is_tour( $test ) ? 'tour' : 'test',
 			'button'  => pgut_button( $test ),
+			'endAudio' => isset( $test['endAudio'] ) && is_string( $test['endAudio'] ) && preg_match( '#^https?://#', $test['endAudio'] ) ? esc_url_raw( $test['endAudio'] ) : '',
 		)
 	);
 }

@@ -407,6 +407,7 @@ const LIMITS = {
   question: 120,    // a closing question in the test's own words
   point: 200,       // a tour step's CSS selector for the thing to click
   actions: 10,      // what one tour step presses by itself
+  say: 600,         // what the voice says on a tour step, written to be heard
   buttonLabel: 40,  // the words on the button a tour ends with
   tasksMin: 1,
   tasksMax: 12,
@@ -442,6 +443,7 @@ function overLimits(body) {
     over(t && t.hint, LIMITS.taskHint, `Task ${i + 1}’s hint`);
     over(t && t.why, LIMITS.taskWhy, `Task ${i + 1}’s note`);
     over(t && t.point, LIMITS.point, `Task ${i + 1}’s pointer`);
+    over(t && t.say, LIMITS.say, `Task ${i + 1}’s spoken words`);
   });
   over(body.button && body.button.label, LIMITS.buttonLabel, 'The button’s words');
   const qs = body.questions && typeof body.questions === 'object' ? body.questions : {};
@@ -618,6 +620,13 @@ function cleanTasks(input) {
     const hint = trim(raw && raw.hint, LIMITS.taskHint);
     if (why) task.why = why;
     if (hint) task.hint = hint;
+    // a tour step's words for the voice, longer and looser than the card's
+    const say = trim(raw && raw.say, LIMITS.say);
+    if (say) task.say = say;
+    // a recording of those words, in a real voice, played instead of the
+    // browser's; https only, like every other address handed to the service
+    const audio = trim(raw && raw.audio, 600);
+    if (audio && !checkPublicUrl(audio, 'recording').error) task.audio = checkPublicUrl(audio, 'recording').url;
     // a tour step's pointer: only ever handed to querySelector by the card
     const point = trim(raw && raw.point, LIMITS.point);
     if (point) task.point = point;
@@ -805,14 +814,19 @@ const TOUR_SETS = [
     button: { label: 'Read the release post', url: 'https://wordpress.org/news/' },
     tasks: [
       { title: 'The Site Editor', hint: 'Everything about how your site looks lives in one place: the Site Editor.', point: '#wp-admin-bar-site-editor > a',
+        say: 'Let’s start in the Site Editor. This is where everything about how your site looks lives, from the header right down to the footer. I’ll open it for you.',
         do: ['#wp-admin-bar-site-editor > a'], check: { type: 'page', path: 'site-editor.php' } },
       { title: 'Find anything with ⌘K', hint: 'Press ⌘K anywhere to find a screen or a setting by name. Here it looks for Styles.', point: '#wp-admin-bar-command-palette > .ab-item',
+        say: 'Here’s a shortcut worth knowing. Press Command K, or Control K on Windows, and you can jump to any screen or setting just by typing its name. Watch, I’ll look for Styles.',
         do: ['#wp-admin-bar-command-palette > .ab-item', 'type "styles" into .commands-command-menu input || [cmdk-input]', 'wait 1.5', 'press Escape'], check: 'none' },
       { title: 'A new look in one click', hint: 'Styles has ready-made looks. One click changes the colours and fonts across the whole site.', point: '.global-styles-ui-variations_item:not(.is-active) || button "Browse styles" || button "Styles"',
+        say: 'Styles is where the look of the whole site comes together. These are ready-made styles. Pick one and the colours and fonts change everywhere at once. I’ll choose one and save it.',
         do: ['button "Styles"', 'button "Browse styles"', '.global-styles-ui-variations_item:not(.is-active)', '.edit-site-save-hub__button || button "Save"', 'maybe .editor-entities-saved-states__save-button'], check: 'styles' },
       { title: 'Fonts that go together', hint: 'Typography has pairs of fonts chosen to work together. Pick one and every heading and paragraph follows.', point: 'button "Typography"',
+        say: 'Fonts work the same way. Under Typography there are pairs of fonts chosen to go well together. One click, and every heading and paragraph on the site follows. Let’s try one.',
         do: ['maybe [aria-label="Back"]', 'button "Typography"', '.global-styles-ui-variations_item:not(.is-active)', '.edit-site-save-hub__button || button "Save"', 'maybe .editor-entities-saved-states__save-button'], check: 'styles' },
       { title: 'Every page in one list', hint: 'Pages lists everything on your site. Sort it, filter it, and open any page to edit it right here.', point: 'button "Pages"',
+        say: 'Last stop, your pages. Every page on the site is in this one list. You can sort it, filter it, and open any page to edit it without leaving the Site Editor.',
         do: ['go /wp-admin/site-editor.php?p=%2Fpage', 'wait 2'], check: { type: 'page', path: 'p=%2Fpage' } },
     ],
   },
@@ -825,12 +839,16 @@ function readTour(body, set) {
   const isTour = (body && body.mode === 'tour') || (!(body && body.mode) && set && set.mode === 'tour');
   if (!isTour) return { tour: null };
   const raw = body && body.button && typeof body.button === 'object' ? body.button : (set && set.button) || null;
-  if (!raw || (!trim(raw.label, 100) && !trim(raw.url, 600))) return { tour: { button: null } };
+  // a recording of the closing words, if the tour has its own voice
+  const endRaw = trim((body && body.endAudio) || (set && set.endAudio), 600);
+  const endAudio = endRaw && !checkPublicUrl(endRaw, 'recording').error ? checkPublicUrl(endRaw, 'recording').url : '';
+  const withEnd = (tour) => (endAudio ? Object.assign(tour, { endAudio }) : tour);
+  if (!raw || (!trim(raw.label, 100) && !trim(raw.url, 600))) return { tour: withEnd({ button: null }) };
   const label = trim(raw.label, LIMITS.buttonLabel);
   if (!label) return { error: 'The button at the end needs some words, like “Get the plugin”.' };
   const checked = checkPublicUrl(trim(raw.url, 600), 'button’s link');
   if (checked.error) return { error: checked.error };
-  return { tour: { button: { label, url: checked.url } } };
+  return { tour: withEnd({ button: { label, url: checked.url } }) };
 }
 
 const BUTTON_WORDS = /\b(click|press|tap|hit|select|choose|drag|navigate to|go to the|open the)\b/i;
@@ -1352,6 +1370,7 @@ function wrapBlueprint(base, test, origin, pluginZipUrl, version) {
         questions: (test.wording && test.wording.questions) || undefined,
         mode: test.tour ? 'tour' : undefined,
         button: test.tour && test.tour.button ? test.tour.button : undefined,
+        endAudio: test.tour && test.tour.endAudio ? test.tour.endAudio : undefined,
       }),
     },
   });
@@ -1866,6 +1885,8 @@ async function updateTest(env, test, body) {
       // and a step sent without a pointer or actions keeps the ones it had
       if (raw.point === undefined && old.point) kept.point = old.point;
       if (raw.do === undefined && old.do) kept.do = old.do;
+      if (raw.say === undefined && old.say) kept.say = old.say;
+      if (raw.audio === undefined && old.audio) kept.audio = old.audio;
       return kept;
     });
     const fresh = cleanTasks(given);
@@ -1991,6 +2012,8 @@ const TASKS_SCHEMA = {
     properties: {
       title: { type: 'string', maxLength: LIMITS.taskTitle, description: `What they are trying to get done, in their words. "Give the site your own name", not "click Settings". In a tour, the step's heading. At most ${LIMITS.taskTitle} characters — longer is refused, not cut.` },
       hint: { type: 'string', maxLength: LIMITS.taskHint, description: `Shown only if they ask for it. This is where a control may be named. In a tour it is the instruction, shown straight away: say what to do, button and all. At most ${LIMITS.taskHint} characters.` },
+      audio: { type: 'string', description: 'Tours only, optional: an https link to a recording of this step’s words (an mp3, say, made with a voice service). Played instead of the browser’s voice when sound is on; if it will not load, the browser reads the words instead.' },
+      say: { type: 'string', maxLength: LIMITS.say, description: `Tours only, optional: what the voice says on this step, if the person turns sound on. Write it to be heard: a sentence or three, the way you would say it standing next to them, and words rather than symbols ("Command K", not "⌘K"). Left out, the voice reads the hint. At most ${LIMITS.say} characters.` },
       do: {
         description: `Tours only: what the step presses by itself while people watch, up to ${LIMITS.actions} actions, as lines (or objects). Each line is a pointer to press (CSS, or button "Styles", or a || b), or: type "words" into <pointer>; press Escape|Enter|Tab; go /wp-admin/some-screen.php; wait 2; and "maybe " in front of any of them to pass over it when it is not there. E.g. ["button \\"Styles\\"", "button \\"Browse styles\\"", ".edit-site-save-hub__button"].`,
         oneOf: [{ type: 'string' }, { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'object' }] } }],
@@ -2086,6 +2109,7 @@ const TOOLS = [
         questions: WORDING_SCHEMA.questions,
         mode: TOUR_SCHEMA.mode,
         button: TOUR_SCHEMA.button,
+        end_audio: { type: 'string', description: 'Tours only, optional: an https link to a recording of the closing words, to go with the steps’ own recordings.' },
         blueprint_url: { type: 'string', description: 'An https URL to an existing Playground blueprint. Re-read each time a tester starts, so it can keep changing.' },
         blueprint_json: { type: 'string', description: 'A Playground blueprint as a JSON string, kept as-is.' },
         password: { type: 'string', description: 'For the results page. One is made for you if you leave it out.' },
@@ -2179,6 +2203,7 @@ async function mcpCall(env, req, name, args) {
       questions: args && args.questions,
       mode: args && args.mode,
       button: args && args.button,
+      endAudio: args && args.end_audio,
       boot: args && args.boot,
       blueprintUrl: args && args.blueprint_url,
       blueprintJson: args && args.blueprint_json,
@@ -2474,6 +2499,11 @@ try it themselves, or skip. It ends with a button instead of the questions.
   button "Styles" by its words; a || b, the first on screen). Or:
   type "words" into <pointer> · press Escape|Enter|Tab · go /wp-admin/x.php ·
   wait 2 · and "maybe " in front to pass over one that is not there.
+  audio (optional): an https link to a recording of the step's words, played
+  instead of the browser's voice; endAudio does the same for the closing words.
+  say (optional): what the voice says, if they turn sound on. Write it to be
+  heard: a sentence or three, words not symbols ("Command K", not "⌘K").
+  Left out, the voice reads the hint.
   point (optional): where the ring sits when the tour is paused.
   Pin the WordPress version in the blueprint: a release can move what a
   selector finds, and a step that cannot find its button pauses with a word.
@@ -3080,7 +3110,7 @@ const HOME = `<!doctype html>
     d.querySelector('.t-none').textContent = w.none;
     d.querySelector('.t-know').textContent = w.know;
   }
-  function addTask(title, hint, check, point, does) {
+  function addTask(title, hint, check, point, does, said) {
     var d = document.createElement('div');
     d.className = 'task';
     d.innerHTML =
@@ -3095,6 +3125,7 @@ const HOME = `<!doctype html>
         '<input type="text" class="t-block" maxlength="100" placeholder="The block, e.g. my-plugin/my-block" hidden>' +
         '<input type="text" class="t-path" maxlength="120" placeholder="Part of its address, e.g. site-editor.php" hidden></label>' +
       // a tour step can point at the thing to click
+      '<label class="chk t-point">The voice says <textarea class="t-words t-say" rows="2" maxlength="600" placeholder="Optional. Written to be heard, e.g. Styles is where the look of the whole site comes together."></textarea></label>' +
       '<label class="chk t-point">It presses <textarea class="t-words t-do" rows="3" placeholder="One per line, e.g.&#10;button &quot;Styles&quot;&#10;button &quot;Browse styles&quot;"></textarea></label>' +
       '<label class="chk t-point">Ring when paused <input type="text" class="t-words t-sel" maxlength="200" placeholder="A CSS selector, or button &quot;Styles&quot; (optional)"></label>';
     var drop = document.createElement('button');
@@ -3107,6 +3138,7 @@ const HOME = `<!doctype html>
     if (title) d.querySelector('.t-title').value = title;
     if (hint) d.querySelector('.t-hint').value = hint;
     if (point) d.querySelector('.t-sel').value = point;
+    if (said) d.querySelector('.t-say').value = said;
     if (does) d.querySelector('.t-do').value = typeof does === 'string' ? does : does.map(function (a) { return typeof a === 'string' ? a : (a.click || ''); }).join('\\n');
     var sel = d.querySelector('.t-check');
     var shape = function () {
@@ -3157,7 +3189,7 @@ const HOME = `<!doctype html>
     var persona = document.getElementById('persona');
     if (!persona.value.trim() || persona.value === lastSetPersona) { persona.value = set.persona; lastSetPersona = set.persona; }
     tasksEl.innerHTML = '';
-    set.tasks.forEach(function (t) { addTask(t.title, t.hint, t.check, t.point, t.do); });
+    set.tasks.forEach(function (t) { addTask(t.title, t.hint, t.check, t.point, t.do, t.say); });
   });
   document.getElementById('add').addEventListener('click', function () { addTask(); });
 
@@ -3194,6 +3226,7 @@ const HOME = `<!doctype html>
       var t = { title: d.querySelector('.t-title').value, hint: d.querySelector('.t-hint').value, check: check };
       if (touring && d.querySelector('.t-sel').value.trim()) t.point = d.querySelector('.t-sel').value.trim();
       if (touring && d.querySelector('.t-do').value.trim()) t.do = d.querySelector('.t-do').value;
+      if (touring && d.querySelector('.t-say').value.trim()) t.say = d.querySelector('.t-say').value.trim();
       return t;
     }).filter(function (t) { return t.title.trim(); });
     if (!tasks.length) { msg.textContent = touring ? 'Give the tour at least one step.' : 'Give the tester at least one thing to try.'; return; }
@@ -3640,6 +3673,7 @@ const RESULTS = `<!doctype html>
       (d.tasks || []).map(function (t, i) {
         return '<div class="task"><input type="text" class="eTitle" maxlength="200" value="' + esc(t.title) + '" aria-label="Step ' + (i + 1) + '">' +
           '<input type="text" class="eHint" maxlength="300" value="' + esc(t.hint || '') + '" placeholder="What the card says" aria-label="What step ' + (i + 1) + ' says">' +
+          '<textarea class="eSay" maxlength="600" placeholder="What the voice says (optional)" aria-label="What the voice says on step ' + (i + 1) + '">' + esc(t.say || '') + '</textarea>' +
           '<textarea class="eDo" placeholder="What it presses, one per line" aria-label="What step ' + (i + 1) + ' presses">' + esc(lines(t.do)) + '</textarea>' +
           '<input type="text" class="ePoint" maxlength="200" value="' + esc(t.point || '') + '" placeholder="Ring when paused: a CSS selector (optional)" aria-label="What step ' + (i + 1) + ' points at"></div>';
       }).join('') +
@@ -3651,10 +3685,10 @@ const RESULTS = `<!doctype html>
     document.getElementById('eSave').onclick = function () {
       var val = function (x) { return document.getElementById(x).value; };
       var get3 = function (c) { return [].slice.call(box.querySelectorAll(c)); };
-      var titlesIn = get3('.eTitle'), hintsIn = get3('.eHint'), pointsIn = get3('.ePoint'), doesIn = get3('.eDo');
+      var titlesIn = get3('.eTitle'), hintsIn = get3('.eHint'), pointsIn = get3('.ePoint'), doesIn = get3('.eDo'), saysIn = get3('.eSay');
       var body = {
         subject: val('eSubject'), persona: val('ePersona'),
-        tasks: (d.tasks || []).map(function (t, i) { return { title: titlesIn[i].value, hint: hintsIn[i].value, point: pointsIn[i].value, do: doesIn[i].value, check: t.check || 'none' }; }),
+        tasks: (d.tasks || []).map(function (t, i) { return { title: titlesIn[i].value, hint: hintsIn[i].value, say: saysIn[i].value, point: pointsIn[i].value, do: doesIn[i].value, check: t.check || 'none' }; }),
         button: { label: val('eBtnLabel'), url: val('eBtnUrl') },
       };
       var m = document.getElementById('eMsg');

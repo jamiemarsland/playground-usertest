@@ -204,9 +204,14 @@ A tour plays itself. Nobody is asked to do anything.
   it had worked. Checks are measured from when the step began; `block` and
   `block_changed` read the editor before anything is saved; `page` is
   reaching a screen.
+- A pointer glides to each thing the tour presses and shows the click, so
+  people see how you get around rather than things just happening.
 - People can pause, try a step themselves (it still moves on when the site
   shows it done), or skip. Turn on sound on the card and each step is read
-  out with the browser's own voice; it is off until someone turns it on. It ends with a button (`button: { label, url }`)
+  out: its `say` (words written to be heard), or a recording of them
+  (`audio`, an https link to an mp3 in any voice, and `endAudio` for the
+  closing words), falling back to the browser's own voice. Sound is off until
+  someone turns it on, and the voice always finishes before a page changes. It ends with a button (`button: { label, url }`)
   instead of the four questions.
 - The results page shows tour numbers: per step, who reached it, moved on by
   itself, skipped or stopped there, and who pressed the button.
