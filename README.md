@@ -37,6 +37,7 @@ No account. Nothing to host. No JSON to edit.
 worker/worker.js               the service: form, intro page, blueprint, events, results, MCP
 worker/wrangler.jsonc          Cloudflare config — worker.js deploys as it stands
 worker/test-worker.mjs         the whole thing against a real SQL engine
+skills/wordpress-tours/        a skill for assistants that write tours, with a map of WordPress
 
 spacefast/sf.jsonc             Spacefast config: Functions, with a database
 spacefast/build.sh             assembles the two files Spacefast publishes
@@ -225,7 +226,13 @@ A tour plays itself. Nobody is asked to do anything.
   itself, skipped or stopped there, and who pressed the button.
 
 Pin the WordPress version in the blueprint: a release can move what a
-selector finds. The ready-made What's new tour was checked against the Site
+selector finds.
+
+`skills/wordpress-tours/` is a skill for assistants that write tours:
+planning, the step format, how to write the voice script, and a map of
+where things are in WordPress (screens, addresses, buttons and selectors,
+marked where they were checked against a real WordPress). The test suite
+re-checks its example against the service. The ready-made What's new tour was checked against the Site
 Editor of the day, and will need its steps rewritten for each release anyway.
 
 ## Running it

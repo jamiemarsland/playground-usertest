@@ -2525,6 +2525,10 @@ try it themselves, or skip. It ends with a button instead of the questions.
   The digest of a tour gives, per step: auto (moved on by itself), next,
   skipped, stoppedHere, onItNow, medianSecs; plus buttonPresses.
   Ready-made: taskSet "${TOUR_SETS.map((x) => x.key).join('", "')}".
+  Writing one? The skill at
+  https://github.com/jamiemarsland/playground-usertest/tree/main/skills/wordpress-tours
+  covers planning, the voice script, and a map of where things are in
+  WordPress, with selectors checked against a real one.
 
 ## Two things that quietly ruin a test
 

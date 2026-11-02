@@ -878,6 +878,13 @@ const agentTour = m.body.result.structuredContent;
 m = await rpc({ jsonrpc: '2.0', id: 41, method: 'tools/call', params: { name: 'usertest_results', arguments: { test: agentTour.id, password: agentTour.password } } });
 check(/Nobody has started/.test(m.body.result.content[0].text), 'and read it back before anyone has been');
 
+// the skill for assistants that write tours carries an example; it has to
+// stay something the service accepts as it stands
+const skill = (await import('node:fs')).readFileSync(new URL('../skills/wordpress-tours/SKILL.md', import.meta.url), 'utf8');
+const skillExample = JSON.parse(skill.match(/```json\n([\s\S]*?)```/)[1]);
+const skillLint = lintTest(skillExample);
+check(skillLint.ok && skillLint.mode === 'tour' && !skillLint.notes.length, 'the tour-writing skill’s example checks clean: ' + JSON.stringify(skillLint.problems.concat(skillLint.notes)));
+
 const statsBefore = (await (await call(eTour, '/api/stats')).json()).tests;
 check(statsBefore === 147, 'people taking a tour are not counted as tests taken: ' + statsBefore);
 
