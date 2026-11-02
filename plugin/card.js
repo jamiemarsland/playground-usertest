@@ -23,11 +23,17 @@
   var state = load() || { i: 0, started: 0, taskStart: 0, results: {}, wrapped: false, hidden: false, pos: null, queue: [] };
   var tasks = cfg.tasks;
   var tour = cfg.mode === 'tour';
+  // a tour reads each step out loud, with the browser's own voice
+  var voiceOk = tour && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
+  var voiceBlocked = false;
   // a tour's own memory: which steps the site was marked for, what the card
   // saw when a step began (words on the home page, blocks in the editor), and
   // whether the card stepped aside for the ring
   state.marked = state.marked || {};
   state.base = state.base || {};
+  // sound is off until someone turns it on: a page that starts talking is
+  // not what anyone expects from a website
+  if (state.voice === undefined) state.voice = false;
 
   function load() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
@@ -114,17 +120,33 @@
     '.pgut-ring.is-below span{bottom:auto;top:calc(100% + 8px)}' +
     '@keyframes pgutRing{0%{box-shadow:0 0 0 2px rgba(124,242,176,.7)}70%{box-shadow:0 0 0 12px rgba(124,242,176,0)}100%{box-shadow:0 0 0 2px rgba(124,242,176,0)}}' +
     '@media (prefers-reduced-motion:reduce){.pgut-ring,.pgut-wait i{animation:none;transition:none}}' +
+    // a tour's card is dark, in the service's own colours, so it never reads
+    // as part of the site underneath, light or dark
+    '.pgut.is-tour{background:#16181c;color:#f2f2f0;border:1px solid rgba(124,242,176,.45);box-shadow:0 0 0 4px rgba(124,242,176,.14),0 18px 50px rgba(0,0,0,.4)}' +
+    '.pgut.is-tour .pgut-head{border-bottom-color:rgba(255,255,255,.1)}' +
+    '.pgut.is-tour .pgut-lab{color:#7cf2b0}' +
+    '.pgut.is-tour .pgut-hide{color:rgba(242,242,240,.65)}.pgut.is-tour .pgut-hide:hover{background:rgba(255,255,255,.08);color:#f2f2f0}' +
+    '.pgut.is-tour .pgut-hide+.pgut-hide{margin-left:4px}' +
+    '.pgut.is-tour .pgut-p,.pgut.is-tour .pgut-wait{color:rgba(242,242,240,.7)}' +
+    '.pgut.is-tour .pgut-tell{background:rgba(255,255,255,.07);color:#f2f2f0}' +
+    '.pgut.is-tour .pgut-btn{border-color:rgba(255,255,255,.25);color:#f2f2f0}' +
+    '.pgut.is-tour .pgut-btn.is-primary{background:#7cf2b0;color:#0e0f12;border-color:#7cf2b0}' +
+    '.pgut.is-tour .pgut-btn:focus-visible,.pgut.is-tour .pgut-hide:focus-visible{outline-color:#7cf2b0}' +
+    '.pgut.is-tour .pgut-nice{background:rgba(124,242,176,.15);color:#b5f8d3}' +
+    '.pgut.is-tour .pgut-foot{color:rgba(242,242,240,.5)}' +
+    '.pgut.is-tour .pgut-dots i{background:rgba(255,255,255,.2)}.pgut.is-tour .pgut-dots i.is-done{background:#2f8f5b}.pgut.is-tour .pgut-dots i.is-now{background:#7cf2b0}' +
+    '.pgut-pill.is-tour{background:#16181c;color:#7cf2b0;box-shadow:0 0 0 1px rgba(124,242,176,.45),0 8px 24px rgba(0,0,0,.35)}' +
     '@media (max-width:700px){.pgut,.pgut-pill{top:auto!important;bottom:12px!important;left:12px!important;right:12px!important;width:auto}}';
   var style = document.createElement('style');
   style.textContent = css;
   document.head.appendChild(style);
 
   var card = document.createElement('div');
-  card.className = 'pgut';
+  card.className = tour ? 'pgut is-tour' : 'pgut';
   card.setAttribute('role', 'complementary');
   card.setAttribute('aria-label', tour ? 'Tour' : 'Testing tasks');
   var pill = document.createElement('button');
-  pill.className = 'pgut-pill';
+  pill.className = tour ? 'pgut-pill is-tour' : 'pgut-pill';
   pill.type = 'button';
   pill.hidden = true;
   pill.addEventListener('click', function () { state.hidden = false; save(); render(); });
@@ -240,13 +262,26 @@
   function secs() { return state.taskStart ? Math.round((Date.now() - state.taskStart) / 1000) : 0; }
 
   function head(label) {
+    var sound = voiceOk
+      ? '<button type="button" class="pgut-hide pgut-sound" aria-pressed="' + (state.voice ? 'true' : 'false') + '" title="Read each step out loud">' +
+        (!state.voice ? 'Turn on sound' : voiceBlocked ? 'Tap for sound' : 'Sound on') + '</button>'
+      : '';
     return '<div class="pgut-head"><span class="pgut-lab">' + esc(label) + '</span>' +
-      '<button type="button" class="pgut-hide" title="Put this card away for a moment">Hide</button></div>';
+      '<span>' + sound + '<button type="button" class="pgut-hide pgut-away" title="Put this card away for a moment">Hide</button></span></div>';
   }
 
   function afterRender() {
     var h = card.querySelector('.pgut-head');
-    h.querySelector('.pgut-hide').addEventListener('click', function () { state.hidden = true; save(); render(); });
+    h.querySelector('.pgut-away').addEventListener('click', function () { state.hidden = true; save(); render(); });
+    var snd = h.querySelector('.pgut-sound');
+    if (snd) snd.addEventListener('click', function () {
+      // a browser that would not speak without a tap gets its tap here
+      if (state.voice && voiceBlocked) { voiceBlocked = false; sayStep(); render(); return; }
+      state.voice = !state.voice;
+      save();
+      if (state.voice) sayStep(); else hush();
+      render();
+    });
     draggable(h, card);
     place();
   }
@@ -442,6 +477,58 @@
 
   function acts(t) { return (t && t['do']) || []; }
 
+  /* ---- the voice -------------------------------------------------------- */
+  // Each step is read out as it starts playing: its title, then what it says.
+  // The browser's own voice, so nothing to fetch and nothing to pay for; it
+  // sounds like the computer it runs on. A browser that will not speak until
+  // the page has been tapped says so on the switch, and one tap starts it.
+  function pickVoice() {
+    var all = window.speechSynthesis.getVoices() || [];
+    var lang = String(document.documentElement.lang || navigator.language || 'en').slice(0, 2).toLowerCase();
+    var mine = all.filter(function (v) { return String(v.lang || '').slice(0, 2).toLowerCase() === lang; });
+    var good = mine.filter(function (v) { return /natural|premium|enhanced|google|samantha|daniel/i.test(v.name); });
+    return good[0] || mine[0] || null;
+  }
+
+  function say(text) {
+    if (!voiceOk || !state.voice || !text) return;
+    try {
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      var v = pickVoice();
+      if (v) { u.voice = v; u.lang = v.lang; }
+      u.onstart = function () { if (voiceBlocked) { voiceBlocked = false; render(); } };
+      u.onerror = function (e) { if (e && e.error === 'not-allowed' && !voiceBlocked) { voiceBlocked = true; render(); } };
+      window.speechSynthesis.speak(u);
+    } catch (e) { /* no voice here: the words are on the card */ }
+  }
+
+  function sayStep() {
+    var t = tasks[state.i];
+    if (t) say(t.title + '. ' + (t.hint || ''));
+    else if (state.wrapped) say('That\u2019s the tour.');
+  }
+
+  function hush() {
+    if (voiceOk) { try { window.speechSynthesis.cancel(); } catch (e) {} }
+  }
+
+  function speaking() {
+    return voiceOk && state.voice && !voiceBlocked && window.speechSynthesis.speaking;
+  }
+
+  // Carry on once the voice has finished, so a step's words are never cut
+  // off by the next one; a voice that never says it is done is waited on for
+  // twenty seconds at most.
+  function whenQuiet(tok, next) {
+    var since = Date.now();
+    (function wait() {
+      if (tok !== runTok) return;
+      if (speaking() && Date.now() - since < 20000) { timer = setTimeout(wait, 300); return; }
+      next();
+    })();
+  }
+
   // Whether the card can see this step happen. Words that were already on the
   // home page when the step began say nothing, and nor does a step the site
   // could not be marked for.
@@ -497,6 +584,7 @@
   function pause() {
     state.playing = false;
     stop();
+    hush();
     save();
     render();
   }
@@ -515,7 +603,9 @@
     state.nice = false;
     state.problem = '';
     state.act = null;
+    if (type === 'task_skip') hush();
     if (state.i >= tasks.length && !state.wrapped) {
+      if (state.playing) say('That\u2019s the tour.');
       state.wrapped = true;
       state.playing = false;
       send('wrap', 'wrap', '', { tour: true, minutes: state.started ? Math.round((Date.now() - state.started) / 60000) : 0 });
@@ -552,6 +642,8 @@
     if (!state.playing || state.i >= tasks.length) return;
     var t = tasks[state.i];
     if (!state.act || state.act.i !== state.i) { state.act = { i: state.i, n: 0 }; save(); }
+    // read once per step, not again when a click loads another page
+    if (state.spoken !== state.i) { state.spoken = state.i; save(); sayStep(); }
     var list = acts(t);
     if (state.act.n >= list.length) return settle(t, tok);
     // the first action waits long enough for the words to be read
@@ -637,7 +729,7 @@
   function settle(t, tok) {
     var hold = 2600;
     if (!t.check || !watchable(t)) {
-      timer = setTimeout(function () { if (tok === runTok) moveOn('task_done', 'played'); }, hold);
+      timer = setTimeout(function () { whenQuiet(tok, function () { moveOn('task_done', 'played'); }); }, hold);
       return;
     }
     var since = Date.now();
@@ -646,7 +738,7 @@
       if (state.marked[t.id] !== 'yes' && state.marked[t.id] !== 'failed') { timer = setTimeout(poll, 400); return; }
       look(t).then(function (seen) {
         if (tok !== runTok) return;
-        if (seen === 'yes') { timer = setTimeout(function () { if (tok === runTok) moveOn('task_done', 'played', 'yes'); }, hold); return; }
+        if (seen === 'yes') { timer = setTimeout(function () { whenQuiet(tok, function () { moveOn('task_done', 'played', 'yes'); }); }, hold); return; }
         if (Date.now() - since > 15000) return trouble('That did not work on this site. Skip it, or try it yourself.');
         timer = setTimeout(poll, 900);
       }, function () { if (tok === runTok) timer = setTimeout(poll, 900); });

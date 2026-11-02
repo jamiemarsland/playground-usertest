@@ -205,7 +205,8 @@ A tour plays itself. Nobody is asked to do anything.
   `block_changed` read the editor before anything is saved; `page` is
   reaching a screen.
 - People can pause, try a step themselves (it still moves on when the site
-  shows it done), or skip. It ends with a button (`button: { label, url }`)
+  shows it done), or skip. Turn on sound on the card and each step is read
+  out with the browser's own voice; it is off until someone turns it on. It ends with a button (`button: { label, url }`)
   instead of the four questions.
 - The results page shows tour numbers: per step, who reached it, moved on by
   itself, skipped or stopped there, and who pressed the button.

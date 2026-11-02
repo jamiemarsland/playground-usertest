@@ -2577,7 +2577,7 @@ ${test.persona ? `<p class="soft">${esc(test.persona)}</p>` : ''}
 ${test.wording && test.wording.intro ? `<p class="soft">${esc(test.wording.intro)}</p>` : ''}
 <div class="card"><h2>How it goes</h2>
 <ol><li>Press Start. Give it a minute to build.</li>
-<li>Press Start the tour on the card, then sit back. It clicks through each step by itself while a ring shows where.</li>
+<li>Press Start the tour on the card, then sit back. It clicks through each step by itself while a ring shows where. Turn on sound on the card and it reads each step out too.</li>
 <li>Pause whenever you like and try it yourself, or skip a step. When it is done, the site is yours to keep playing with until you close the tab.</li></ol></div>
 <a class="go" href="${esc(playground)}" target="_blank" rel="noopener">Start the tour</a>
 <p class="fine">Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is which steps you did, how long they took and which page you were on. Nothing you write in WordPress is kept.</p>
