@@ -1741,7 +1741,7 @@ async function buildDigest(env, id, test, only) {
   }
 
   for (const row of rows) {
-    const events = bySession.get(row.id) || [];
+    const events = test.tour ? lastRunOnly(bySession.get(row.id) || []) : (bySession.get(row.id) || []);
     if (!events.length) continue;
     lastEventAt = Math.max(lastEventAt, row.last || 0);
 
@@ -1823,6 +1823,14 @@ async function buildDigest(env, id, test, only) {
     wrapUps: test.tour ? [] : wrapUps,
     ...(test.tour ? { mode: 'tour', button: test.tour.button || null, buttonPresses: ctaPresses } : {}),
   };
+}
+
+// Someone can watch a tour twice (Start over). Each step counts once per
+// person, as it went the last time they reached it.
+function lastRunOnly(events) {
+  const last = new Map();
+  events.forEach((e, i) => { if (e.type === 'task_done' || e.type === 'task_skip') last.set(e.task, i); });
+  return events.filter((e, i) => !((e.type === 'task_done' || e.type === 'task_skip') && last.get(e.task) !== i));
 }
 
 // A compared test: the whole digest once per version, side by side.

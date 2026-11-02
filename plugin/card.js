@@ -26,6 +26,16 @@
   // a tour reads each step out loud, with the browser's own voice
   var voiceOk = tour && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
   var voiceBlocked = false;
+  // one tab plays a tour; another tab on the same site shows where it is
+  // playing rather than pressing buttons in the same editor at the same time
+  var tabId = (function () {
+    try {
+      var id = sessionStorage.getItem('pgut:tab');
+      if (!id) { id = Math.random().toString(36).slice(2, 10); sessionStorage.setItem('pgut:tab', id); }
+      return id;
+    } catch (e) { return 'tab'; }
+  })();
+  var spectator = false;
   // a tour's own memory: which steps the site was marked for, what the card
   // saw when a step began (words on the home page, blocks in the editor), and
   // whether the card stepped aside for the ring
@@ -142,6 +152,9 @@
     '@keyframes pgutTap{from{transform:scale(.3);opacity:1}to{transform:scale(1.5);opacity:0}}' +
     '.pgut-cursor[hidden]{display:none}' +
     '@media (prefers-reduced-motion:reduce){.pgut-cursor{transition:none}.pgut-tap{animation:none;opacity:0}}' +
+    '.pgut-foot-row{display:flex;align-items:center;justify-content:space-between;gap:8px}' +
+    '.pgut-foot-row .pgut-again{margin-top:0;font-size:12px}' +
+    '.pgut.is-tour .pgut-again{color:rgba(242,242,240,.65)}' +
     '.pgut-pill.is-tour{background:#16181c;color:#7cf2b0;box-shadow:0 0 0 1px rgba(124,242,176,.45),0 8px 24px rgba(0,0,0,.35)}' +
     '@media (max-width:700px){.pgut,.pgut-pill{top:auto!important;bottom:12px!important;left:12px!important;right:12px!important;width:auto}}';
   var style = document.createElement('style');
@@ -313,6 +326,7 @@
     }
     card.hidden = false;
     pill.hidden = true;
+    if (tour && spectator) return renderElsewhere();
     if (tour) return state.i >= tasks.length ? renderEnd() : renderStep();
     if (state.wrapped) return renderThanks();
     if (state.i >= tasks.length) return renderWrap();
@@ -605,8 +619,10 @@
           : '<div class="pgut-row"><button type="button" class="pgut-btn pgut-skip">Skip</button>' +
             '<button type="button" class="pgut-btn is-primary pgut-play">' + (state.playing ? 'Pause' : 'Play') + '</button></div>') +
       '</div>' +
-      '<div class="pgut-foot">' + dots() + '</div>';
+      '<div class="pgut-foot pgut-foot-row">' + dots() + (first ? '' : '<button type="button" class="pgut-again pgut-over">Start over</button>') + '</div>';
     afterRender();
+    var over = card.querySelector('.pgut-over');
+    if (over) over.addEventListener('click', restart);
     var pl = card.querySelector('.pgut-play');
     if (pl) pl.addEventListener('click', function () { if (state.playing) pause(); else play(); });
     var sk = card.querySelector('.pgut-skip');
@@ -621,7 +637,37 @@
     aim();
   }
 
+  // Back to the beginning: the first step on the page the tour began on. The
+  // site keeps whatever the tour changed; the steps work from wherever it is.
+  function restart() {
+    stop();
+    hush();
+    pointer.hidden = true;
+    state.i = 0;
+    state.results = {};
+    state.marked = {};
+    state.base = {};
+    state.act = null;
+    state.spoken = null;
+    state.nice = false;
+    state.problem = '';
+    state.wrapped = false;
+    state.taskStart = 0;
+    state.cur = null;
+    state.aside = false;
+    state.begun = true;
+    state.playing = true;
+    state.hidden = false;
+    save();
+    send('note', '', 'Started the tour again');
+    var start = cfg.home || '/';
+    if (location.href.split('#')[0] !== start) location.assign(start);
+    else render();
+  }
+
   function play() {
+    state.tab = tabId;
+    state.beat = Date.now();
     state.begun = true;
     state.playing = true;
     state.problem = '';
@@ -671,12 +717,37 @@
       '<div class="pgut-body"><p class="pgut-title">That’s the tour.</p>' +
       '<p class="pgut-p">The site is yours until you close the tab, so carry on for as long as you like.</p>' +
       (b ? '<a class="pgut-btn is-primary pgut-cta" href="' + esc(b.url) + '" target="_blank" rel="noopener">' + esc(b.label) + '</a>' : '') +
+      '<button type="button" class="pgut-again pgut-over">Watch it again</button>' +
       '</div>' +
       '<div class="pgut-foot">' + dots() + '</div>';
     afterRender();
+    card.querySelector('.pgut-over').addEventListener('click', restart);
     var cta = card.querySelector('.pgut-cta');
     if (cta) cta.addEventListener('click', function () { send('cta', 'done', '', { url: b.url }); });
     aim();
+  }
+
+  function playingElsewhere(s) {
+    return !!(s && s.playing && s.tab && s.tab !== tabId && Date.now() - (s.beat || 0) < 6000);
+  }
+
+  function renderElsewhere() {
+    pointer.hidden = true;
+    ring.hidden = true;
+    card.innerHTML =
+      head('Tour') +
+      '<div class="pgut-body"><p class="pgut-title">Playing in another tab</p>' +
+      '<p class="pgut-p">This tour is playing in another tab of this site.</p>' +
+      '<div class="pgut-row"><button type="button" class="pgut-btn is-primary pgut-here">Play it here</button></div></div>';
+    afterRender();
+    card.querySelector('.pgut-here').addEventListener('click', function () {
+      state = load() || state;
+      state.tab = tabId;
+      state.beat = Date.now();
+      spectator = false;
+      save();
+      render();
+    });
   }
 
   /* ---- playing a step --------------------------------------------------- */
@@ -692,13 +763,16 @@
     if (!state.playing || state.i >= tasks.length) return;
     var t = tasks[state.i];
     if (!state.act || state.act.i !== state.i) { state.act = { i: state.i, n: 0 }; save(); }
-    // read once per step, not again when a click loads another page
-    if (state.spoken !== state.i) { state.spoken = state.i; save(); sayStep(); }
     var list = acts(t);
+    var a = list[state.act.n];
+    // a step that begins by opening another screen opens it first and speaks
+    // when it is there, so the words never talk about a screen not yet shown
+    var opening = !!(a && a.go && state.act.n === 0);
+    // read once per step, not again when a click loads another page
+    if (state.spoken !== state.i && !opening) { state.spoken = state.i; save(); sayStep(); }
     if (state.act.n >= list.length) return settle(t, tok);
     // the first action waits long enough for the words to be read
-    var a = list[state.act.n];
-    timer = setTimeout(function () { if (tok === runTok) perform(t, a, tok, Date.now()); }, state.act.n ? 900 : 2200);
+    timer = setTimeout(function () { if (tok === runTok) perform(t, a, tok, Date.now()); }, opening ? 500 : state.act.n ? 900 : 2200);
   }
 
   function advance(t, tok) {
@@ -1037,6 +1111,22 @@
   }
 
   if (tour) {
+    // the playing tab says it is still there; a watching tab takes over once
+    // the playing one has gone quiet
+    setInterval(function () {
+      if (spectator) {
+        var s = load();
+        if (!playingElsewhere(s)) { state = s || state; spectator = false; render(); }
+        return;
+      }
+      if (state.playing) {
+        var now = load();
+        if (playingElsewhere(now)) { state = now; spectator = true; stop(); hush(); render(); return; }
+        state.tab = tabId;
+        state.beat = Date.now();
+        save();
+      }
+    }, 2000);
     setInterval(watch, 2500);
     setInterval(aim, 400);
     window.addEventListener('scroll', aim, true);
@@ -1049,6 +1139,8 @@
   }
 
   /* ---- go -------------------------------------------------------------- */
+  if (tour && playingElsewhere(state)) spectator = true;
+  else if (tour && state.playing) { state.tab = tabId; state.beat = Date.now(); save(); }
   if (!state.started) {
     state.started = Date.now();
     save();

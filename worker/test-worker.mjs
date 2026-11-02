@@ -839,10 +839,19 @@ await visit('tourvisit02', [
   { type: 'task_start', task: tSteps[1].id },
 ]);
 await eTour.DB.prepare('UPDATE sessions SET last_at = ? WHERE id = ?').bind(Date.now() - 2 * 60 * 60 * 1000, 'tourvisit02').run();
+// a third person skips step one, starts over, and lets it play the second time
+await visit('tourvisit03', [
+  { type: 'start' },
+  { type: 'task_start', task: tSteps[0].id },
+  { type: 'task_skip', task: tSteps[0].id, data: { secs: 3, how: 'skip' } },
+  { type: 'note', note: 'Started the tour again' },
+  { type: 'task_start', task: tSteps[0].id },
+  { type: 'task_done', task: tSteps[0].id, data: { secs: 9, how: 'played' } },
+]);
 const TPW = { 'x-test-password': TOUR.password };
 const td = await (await call(eTour, '/api/results?test=' + tour.id + '&digest=1', { headers: TPW })).json();
-check(td.mode === 'tour' && td.testers === 2 && td.status.finished === 1 && td.status.stopped === 1, 'the tour digest counts who saw the end and who stopped');
-check(td.tasks[0].auto === 2 && td.tasks[1].skipped === 1 && td.tasks[1].stoppedHere === 1 && td.tasks[3].next === 1, 'per step: moved on by itself, skipped, stopped here, Next');
+check(td.mode === 'tour' && td.testers === 3 && td.status.finished === 1 && td.status.stopped === 1, 'the tour digest counts who saw the end and who stopped');
+check(td.tasks[0].auto === 3 && td.tasks[0].skipped === 0 && td.tasks[1].skipped === 1 && td.tasks[1].stoppedHere === 1 && td.tasks[3].next === 1, 'per step: moved on by itself (played counts), skipped, stopped here, Next; someone who started over counts as their last run');
 check(td.buttonPresses === 1 && td.button.label === 'Get the plugin' && td.wrapUps.length === 0, 'and who pressed the button at the end, with no closing answers to report');
 const tr = await (await call(eTour, '/api/results?test=' + tour.id, { headers: TPW })).json();
 check(tr.mode === 'tour' && tr.button.url === TOUR.button.url, 'the results page is told it is reading a tour');
