@@ -810,6 +810,9 @@ check(tourOpt.tasks[0].point === '[aria-label="Add block"]' && tourOpt.tasks[0].
 const plainTest = await (await call(eTour, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { password: 'plain-pass-1' }) })).json();
 const plainOpt = JSON.parse((await (await call(eTour, '/t/' + plainTest.id + '/blueprint.json')).json()).steps.slice(-1)[0].options.playground_user_test);
 check(!plainOpt.mode && !plainOpt.button, 'a test’s card is told nothing about tours');
+const plainBp = await (await call(eTour, '/t/' + plainTest.id + '/blueprint.json')).json();
+check(plainBp.login === true, 'a blueprint that does not log them in gets Playground’s login added, so the card shows with nobody logging in');
+check(wrapBlueprint({ steps: [{ step: 'login', username: 'admin' }] }, { id: 'x', subject: 's', tasks: [] }, ORIGIN, 'z', '').login === undefined, 'one that logs in by itself is left as it is');
 
 const tSteps = tourOpt.tasks;
 const visit = (session, events) => call(eTour, '/api/events', { method: 'POST', body: { test: tour.id, session, events } });

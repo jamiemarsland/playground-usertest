@@ -1326,6 +1326,12 @@ function wrapBlueprint(base, test, origin, pluginZipUrl, version) {
   // Networking is what lets the card reach this Worker from inside the sandbox.
   out.features = Object.assign({}, base.features, { networking: true });
 
+  // The card only shows to someone logged in, and nobody should have to log
+  // in to take a test or watch a tour. A blueprint that does not log them in
+  // itself gets Playground's own login added.
+  const logsIn = base.login || steps.some((st) => st && st.step === 'login');
+  if (!logsIn) out.login = true;
+
   steps.push({
     step: 'installPlugin',
     pluginData: { resource: 'url', url: pluginZipUrl },
