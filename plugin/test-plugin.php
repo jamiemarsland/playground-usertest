@@ -39,6 +39,11 @@ function rest_url( $p = '' ) { return 'http://example.test/wp-json/' . $p; }
 function home_url( $p = '' ) { return 'http://example.test' . $p; }
 function wp_create_nonce( $a ) { return 'nonce'; }
 function wp_generate_password( $l, $s ) { return substr( str_shuffle( str_repeat( 'abcdefghijklmnopqrstuvwxyz0123456789', 3 ) ), 0, $l ); }
+function get_current_user_id() { return 1; }
+function get_user_meta( $u, $k, $s ) { return isset( $GLOBALS['umeta'][ $k ] ) ? $GLOBALS['umeta'][ $k ] : ''; }
+function update_user_meta( $u, $k, $v ) { $GLOBALS['umeta'][ $k ] = $v; return true; }
+class PGUT_Fake_DB { public function get_blog_prefix() { return 'wp_'; } }
+$GLOBALS['wpdb'] = new PGUT_Fake_DB();
 function ok( $cond, $msg ) { echo $cond ? "ok   $msg\n" : "FAIL $msg\n"; }
 STUBS;
 	$code = $stubs . "\n" . $setup;
@@ -74,7 +79,9 @@ case_run(
 	ok( preg_match( "/^[a-z0-9]{8,32}$/", $loc["session"] ) === 1, "a session id is made and kept" );
 	$before = $loc["session"];
 	pgut_enqueue();
-	ok( $GLOBALS["loc"]["session"] === $before, "the same session id comes back on the next page" );'
+	ok( $GLOBALS["loc"]["session"] === $before, "the same session id comes back on the next page" );
+	pgut_quiet_guides();
+	ok( empty( $GLOBALS["umeta"] ), "a test leaves the editors’ welcome guides alone" );'
 );
 
 case_run(
@@ -141,7 +148,12 @@ case_run(
 	$do = $loc["tasks"][2]["do"];
 	ok( 6 === count( $do ) && "button \"Styles\"" === $do[0]["click"] && "styles" === $do[1]["type"] && "Escape" === $do[2]["key"], "a step keeps its clicks, typing and keys, and drops a key it does not know: " . count( $do ) );
 	ok( "/wp-admin/site-editor.php" === $do[3]["go"] && 10.0 === $do[4]["wait"] && ! empty( $do[5]["maybe"] ), "go only takes a path on this site, a wait is capped, maybe is kept" );
-	ok( false !== strpos( $loc["mark"], "pgut/v1/mark" ), "the card is told where to mark a step" );'
+	ok( false !== strpos( $loc["mark"], "pgut/v1/mark" ), "the card is told where to mark a step" );
+	$GLOBALS["umeta"]["wp_persisted_preferences"] = array( "core/edit-post" => array( "fixedToolbar" => true ) );
+	pgut_quiet_guides();
+	$p = $GLOBALS["umeta"]["wp_persisted_preferences"];
+	ok( false === $p["core/edit-site"]["welcomeGuide"] && false === $p["core/edit-post"]["welcomeGuide"] && false === $p["core/edit-site"]["welcomeGuideStyles"], "on a tour the editors’ welcome guides are turned off" );
+	ok( true === $p["core/edit-post"]["fixedToolbar"] && ! empty( $p["_modified"] ), "without touching the user’s other editor settings" );'
 );
 
 case_run(

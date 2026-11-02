@@ -259,6 +259,48 @@ function pgut_questions( $test ) {
 	return (object) $out;
 }
 add_action( 'wp_enqueue_scripts', 'pgut_enqueue', 20 );
+
+/**
+ * On a tour, the editors' welcome guides stay shut. A tour presses through
+ * the editor by itself, and a popup over the middle of it is in the way. A
+ * test leaves them alone: someone new to WordPress would meet them.
+ *
+ * They are the user's saved editor preferences, so they are turned off there,
+ * dated now so they win over anything the browser kept from before.
+ *
+ * @return void
+ */
+function pgut_quiet_guides() {
+	$test = pgut_test();
+	if ( ! $test || ! pgut_is_tour( $test ) || ! is_user_logged_in() ) {
+		return;
+	}
+	global $wpdb;
+	$user  = get_current_user_id();
+	$key   = $wpdb->get_blog_prefix() . 'persisted_preferences';
+	$prefs = get_user_meta( $user, $key, true );
+	$prefs = is_array( $prefs ) ? $prefs : array();
+	$off   = array(
+		'core/edit-site'         => array( 'welcomeGuide', 'welcomeGuideStyles', 'welcomeGuidePage', 'welcomeGuideTemplate' ),
+		'core/edit-post'         => array( 'welcomeGuide', 'welcomeGuideTemplate' ),
+		'core/edit-widgets'      => array( 'welcomeGuide' ),
+		'core/customize-widgets' => array( 'welcomeGuide' ),
+	);
+	$changed = false;
+	foreach ( $off as $scope => $names ) {
+		foreach ( $names as $name ) {
+			if ( ! isset( $prefs[ $scope ][ $name ] ) || false !== $prefs[ $scope ][ $name ] ) {
+				$prefs[ $scope ][ $name ] = false;
+				$changed                  = true;
+			}
+		}
+	}
+	if ( $changed ) {
+		$prefs['_modified'] = gmdate( 'Y-m-d\TH:i:s.000\Z' );
+		update_user_meta( $user, $key, $prefs );
+	}
+}
+add_action( 'admin_init', 'pgut_quiet_guides' );
 add_action( 'admin_enqueue_scripts', 'pgut_enqueue', 20 );
 
 /* ------------------------------------------------------------- the checks */
