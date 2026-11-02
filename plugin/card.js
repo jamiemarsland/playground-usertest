@@ -681,6 +681,11 @@
     setInterval(aim, 400);
     window.addEventListener('scroll', aim, true);
     window.addEventListener('resize', aim);
+    // a click usually slides a panel in; look again as it settles, so the
+    // ring keeps up rather than trailing it
+    document.addEventListener('click', function () {
+      [60, 250, 500].forEach(function (t) { setTimeout(aim, t); });
+    }, true);
   }
 
   /* ---- go -------------------------------------------------------------- */
