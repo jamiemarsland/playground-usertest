@@ -962,5 +962,17 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   check(lintTest(Object.assign({}, GOOD, { lang: 'zz zz' })).problems.some((x) => /locale/.test(x)), 'language: the check refuses a made-up one too');
 }
 
+// For an assistant that cannot open links: a prompt that carries the whole
+// format, and a box on the page that fills the form from what it hands back.
+{
+  const home = await (await call(env(), '/')).text();
+  const i = home.indexOf('var PLAIN = '), j = home.indexOf(';\n', i);
+  const plain = JSON.parse(home.slice(i + 12, j));
+  check(/You cannot open that site/.test(plain.test) && /"mode":"test"/.test(plain.test) && /never which button/.test(plain.test), 'no links: the test prompt carries the format and the rule about buttons');
+  check(/"mode":"tour"/.test(plain.tour) && /type "words" into/.test(plain.tour) && /"Paste from your assistant"/.test(plain.tour), 'no links: the tour prompt carries the step actions and says where to paste');
+  check(!/\bfetch\b|llms\.txt|\/mcp/i.test(plain.test + plain.tour), 'no links: neither prompt asks it to open anything');
+  check(home.includes('id="pasted"') && home.includes('id="copyPlain"') && home.includes('custom connector'), 'home: the paste box, the no-links prompt and the connector are all there');
+}
+
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');
 process.exit(failures ? 1 : 0);

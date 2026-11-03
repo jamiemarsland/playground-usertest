@@ -2924,6 +2924,34 @@ ${test.wording && test.wording.intro ? `<p class="soft">${esc(test.wording.intro
 </div></body></html>`;
 }
 
+// For an assistant that cannot open links (ChatGPT's web tool turns most
+// addresses away): the whole format travels in the prompt, and what comes
+// back is one block the owner pastes into the form. Nothing is made until they
+// press the form's own button.
+function plainPrompt(mode) {
+  const checks = Object.keys(CHECKS).filter((k) => !['text', 'page', 'block', 'block_changed'].includes(k)).join(', ');
+  const lang = 'lang is a WordPress locale such as fr_FR or es_ES if it should be in another language, and then everything you write goes in that language. Leave it out for English.';
+  const end = 'Draft it with me first and ask for anything you need. When I say it is ready, give me the finished JSON in one code block. I will paste it into the "Paste from your assistant" box on the site, which fills in the form for me to check.';
+  if (mode === 'tour') {
+    return [
+      'Help me make a guided tour of my WordPress plugin with Playground user testing (playground-usertest.view.fast). The tour plays itself in a real WordPress in the visitor\u2019s browser: each step presses through its own actions while a pointer shows where, and a voice can read a script. You cannot open that site, so do not try: everything you need is here.',
+      'The JSON looks like this:',
+      '{"mode":"tour","subject":"…","persona":"…","blueprint_url":"…","button":{"label":"Get the plugin","url":"https://…"},"theme":{"accent":"#6b3fa0","card":"dark"},"tasks":[{"title":"…","hint":"…","say":"…","do":["#some-id","button \\"Label\\"","type \\"words\\" into input.search","press Escape","go /wp-admin/options-general.php","wait 2"],"check":"none"}]}',
+      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. blueprint_url is the Playground blueprint I already use to demo my plugin: ask me for it. Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. Prefer ids and classes; ask me for the exact labels you are unsure of. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: my brand colour as a hex accent, and a dark or light card.`,
+      lang,
+      end,
+    ].join('\n\n');
+  }
+  return [
+    'Help me set up a user test for my WordPress plugin with Playground user testing (playground-usertest.view.fast). Testers open a link, get a real WordPress in their browser with my plugin set up, and work through a card of tasks while it records what happens. You cannot open that site, so do not try: everything you need is here.',
+    'The JSON looks like this:',
+    '{"mode":"test","subject":"…","persona":"…","blueprint_url":"…","tasks":[{"title":"…","hint":"…","check":"site_name"}]}',
+    `subject is what is being tested (the tester reads "Thank you for helping make X better"), up to ${LIMITS.subject} characters. persona is a paragraph in the second person that gives the tester a reason to want the site; do not name them after the demo site. blueprint_url is the Playground blueprint I already use to demo my plugin: ask me for it. Five to seven tasks. Each title says what they want to end up with, never which button to press: the button goes in the hint, so the results show who needed it. check is optional: one of ${checks}, or {"type":"text","text":"words on the home page"}, or {"type":"page","path":"part of the address"}, or none.`,
+    lang,
+    end,
+  ].join('\n\n');
+}
+
 // The owner's whole flow. Most people arrive with an assistant to hand, so the
 // page leads with the one sentence to give it; the form is right underneath for
 // anyone who would rather type. Between them, a tester's-eye demo: the card
@@ -2932,7 +2960,7 @@ const DEMO = TASK_SETS.find((x) => x.key === 'make-it-yours');
 const HOME = `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WordPress user testing, made easy</title>
+<title>WordPress user testing and tours, made easy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -3009,6 +3037,9 @@ const HOME = `<!doctype html>
     .tourshow .looks { left:16px; right:16px; }
     .tourshow .tcard2 { left:16px; right:16px; width:auto; }
   }
+  .linkish { all:unset; cursor:pointer; color:var(--mint); text-decoration:underline; text-underline-offset:3px; }
+  .linkish:hover { color:var(--mint-hi); }
+  .linkish:focus-visible { outline:2px solid var(--mint); outline-offset:2px; border-radius:4px; }
   .or { margin:24px 0 0; font-size:15px; color:var(--dim); }
   .taken { display:inline-flex; align-items:center; gap:10px; margin:22px 0 0; font:500 15px/1 "JetBrains Mono",ui-monospace,monospace; color:var(--dim); }
   .taken[hidden] { display:none; }
@@ -3174,7 +3205,7 @@ const HOME = `<!doctype html>
 
 <div class="shell hero">
   <p class="eyebrow">NO INSTALL · NO ACCOUNTS · BUILT ON WORDPRESS PLAYGROUND</p>
-  <h1>WordPress user testing, made easy.</h1>
+  <h1>WordPress user testing and tours, made easy.</h1>
   <p class="sub" id="askSub">Watch real people try your plugin in a real WordPress. Paste this into Claude Code, Cursor or any assistant that can run commands: it drafts the test with you and hands you the links.</p>
   <div class="ask" role="radiogroup" aria-label="What do you want to do?">
     <button type="button" role="radio" aria-checked="true" data-ask="test"><b>Test it</b><span>people try it on their own</span></button>
@@ -3183,10 +3214,11 @@ const HOME = `<!doctype html>
   <div class="prompt">
     <p id="promptText">Fetch https://playground-usertest.view.fast/llms.txt and set up a user test for my plugin. Draft the persona and tasks with me, check them, then give me both links and the password.</p>
     <div class="under">
-      <span>Rather connect it properly? It is an MCP server too: <span class="addr" id="mcpAddr">https://playground-usertest.view.fast/mcp</span></span>
+      <span>Or add it to ChatGPT or Claude as a custom connector: <span class="addr" id="mcpAddr">https://playground-usertest.view.fast/mcp</span></span>
       <button type="button" class="copy" id="copy">Copy prompt</button>
     </div>
   </div>
+  <p class="or">Using ChatGPT, or an assistant that can’t open links? <button type="button" class="linkish" id="copyPlain">Copy a prompt that needs no links</button>, then <a href="#paste">paste what it gives you</a>.</p>
   <p class="or">Rather type it yourself? <a href="#start">Fill in the form</a>. It takes about half a minute.</p>
   <p class="taken" id="taken" hidden aria-live="polite"><i aria-hidden="true"></i><span><b id="takenN">0</b> tests taken so far</span></p>
 </div>
@@ -3349,6 +3381,13 @@ const HOME = `<!doctype html>
   <h2 class="big">Or fill it in yourself.</h2>
   <p class="lede">The same test, made by hand. About half a minute.</p>
 </div>
+<div class="panel" id="paste" style="margin-bottom:24px">
+  <label for="pasted">Paste from your assistant</label>
+  <p class="hint">The block of text it gave you. It fills in the form below; nothing is made until you press the button at the bottom.</p>
+  <textarea id="pasted" rows="5" spellcheck="false" placeholder='{ "mode": "tour", "subject": "…", "tasks": [ … ] }'></textarea>
+  <button type="button" class="go" id="usePasted" style="margin-top:12px">Fill in the form</button>
+  <p class="hint" id="pasteMsg" role="status" aria-live="polite" style="margin:10px 0 0"></p>
+</div>
 <div class="panel">
 <form id="f" data-mode="test">
 <fieldset>
@@ -3459,6 +3498,14 @@ const HOME = `<!doctype html>
   var tourText = 'Fetch ' + origin + '/llms.txt and make a guided tour of my plugin that plays itself. ' +
     'Use my brand colour, write the steps and the voice script with me, check it, then give me both links and the password.';
   var testText = document.getElementById('promptText').textContent;
+  var PLAIN = ${JSON.stringify({ test: plainPrompt('test'), tour: plainPrompt('tour') })};
+  document.getElementById('copyPlain').addEventListener('click', function () {
+    var btn = this, was = btn.textContent;
+    var on = document.querySelector('.ask button[aria-checked="true"]');
+    var text = PLAIN[on && on.getAttribute('data-ask') === 'tour' ? 'tour' : 'test'];
+    var done = function () { btn.textContent = 'Copied. Paste it into ChatGPT'; setTimeout(function () { btn.textContent = was; }, 2200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
+  });
   var subs = {
     test: document.getElementById('askSub').textContent,
     tour: 'Show people round your plugin in a real WordPress, in your colours and your voice. Paste this into your assistant: it writes the tour with you and hands you the link.'
@@ -3642,6 +3689,52 @@ const HOME = `<!doctype html>
     set.tasks.forEach(function (t) { addTask(t.title, t.hint, t.check, t.point, t.do, t.say); });
   });
   document.getElementById('add').addEventListener('click', function () { addTask(); });
+
+  // What an assistant handed back, pasted whole: the JSON is found inside
+  // whatever came with it (a code fence, a sentence either side), and fills
+  // the form the way a ready-made set does. The password stays the owner's.
+  var LOCALES = ${JSON.stringify(LOCALES)};
+  var pasteMsg = document.getElementById('pasteMsg');
+  document.getElementById('usePasted').addEventListener('click', function () {
+    var raw = document.getElementById('pasted').value;
+    var a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+    var d;
+    try { d = JSON.parse(raw.slice(a, b + 1)); } catch (e) { d = null; }
+    if (!d || typeof d !== 'object' || Array.isArray(d)) { pasteMsg.textContent = 'That doesn’t read as the JSON block. Paste the whole block your assistant gave you, from { to }.'; return; }
+    var tasks = Array.isArray(d.tasks) ? d.tasks : [];
+    if (!tasks.length) { pasteMsg.textContent = 'There are no tasks in it. Ask your assistant to include them.'; return; }
+    setMode(d.mode === 'tour' ? 'tour' : 'test');
+    setPick.value = ''; setFor.hidden = true;
+    var put = function (id, v) { if (v != null && v !== '') document.getElementById(id).value = String(v); };
+    put('subject', d.subject);
+    put('persona', d.persona);
+    var lang = String(d.lang || '').replace('-', '_');
+    if (LOCALES[lang.toLowerCase()]) lang = LOCALES[lang.toLowerCase()];
+    var langPick = document.getElementById('lang');
+    if (lang && lang !== 'en_US' && !langPick.querySelector('option[value="' + lang.replace(/"/g, '') + '"]')) {
+      var o = document.createElement('option'); o.value = lang; o.textContent = lang; langPick.appendChild(o);
+    }
+    langPick.value = lang === 'en_US' ? '' : lang;
+    tasksEl.innerHTML = '';
+    tasks.forEach(function (t) { if (t && t.title) addTask(t.title, t.hint, t.check, t.point, t['do'], t.say); });
+    if (d.button) { put('btnLabel', d.button.label); put('btnUrl', d.button.url); }
+    if (d.theme) {
+      if (/^#[0-9a-f]{6}$/i.test(String(d.theme.accent || ''))) document.getElementById('accent').value = d.theme.accent.toLowerCase();
+      if (d.theme.card === 'light' || d.theme.card === 'dark') document.getElementById('cardTone').value = d.theme.card;
+    }
+    var bpUrl = d.blueprint_url || d.blueprintUrl;
+    var bpJson = d.blueprint_json || d.blueprintJson || d.blueprint;
+    if (bpJson) {
+      document.querySelector('[data-bp="json"]').click();
+      put('bpjson', typeof bpJson === 'string' ? bpJson : JSON.stringify(bpJson, null, 2));
+    } else if (bpUrl) {
+      document.querySelector('[data-bp="url"]').click();
+      put('bpurl', bpUrl);
+    }
+    var missing = bpJson || bpUrl ? '' : ' It didn’t include a blueprint, so add yours below.';
+    pasteMsg.textContent = 'Filled in: ' + tasks.length + (d.mode === 'tour' ? ' steps.' : ' tasks.') + missing + ' Check it, choose a results password, then press the button at the bottom.';
+    document.getElementById('f').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 
   var mode2 = 'url';
   document.getElementById('compare').addEventListener('change', function () { document.getElementById('second').hidden = !this.checked; });
