@@ -156,7 +156,7 @@ let r = await call(e1, '/');
 const home = await r.text();
 // Most people arrive with an assistant to hand, so the front page leads with
 // the sentence to give it; the form is underneath for anyone who would rather type.
-check(r.status === 200 && home.includes('id="promptText"') && home.includes('/llms.txt and set up a user test'), 'the front page leads with the prompt for an assistant');
+check(r.status === 200 && home.includes('id="promptText"') && home.includes('Help me set up a user test for my WordPress plugin'), 'the front page leads with the prompt for an assistant');
 check(home.includes('<form id="f" data-mode="test">') && home.indexOf('id="promptText"') < home.indexOf('<form id="f" data-mode="test">'), 'and the create form is underneath it');
 check(/\[hidden\] \{ display:none !important; \}/.test(home), 'hidden is spelled out, since the controls throw away the browser rule for it');
 check(/cannot be looked up again/.test(home) && home.indexOf('cannot be looked up again') < home.indexOf('<form id="f" data-mode="test">'), 'and it warns, before anything else, that the password cannot be recovered');
@@ -962,16 +962,23 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   check(lintTest(Object.assign({}, GOOD, { lang: 'zz zz' })).problems.some((x) => /locale/.test(x)), 'language: the check refuses a made-up one too');
 }
 
-// For an assistant that cannot open links: a prompt that carries the whole
-// format, and a box on the page that fills the form from what it hands back.
+// One prompt for any assistant: the whole format inside it, and two ways to
+// finish, by creating the test itself or by handing back a block to paste.
 {
   const home = await (await call(env(), '/')).text();
   const i = home.indexOf('var PLAIN = '), j = home.indexOf(';\n', i);
   const plain = JSON.parse(home.slice(i + 12, j));
-  check(/You cannot open that site/.test(plain.test) && /"mode":"test"/.test(plain.test) && /never which button/.test(plain.test), 'no links: the test prompt carries the format and the rule about buttons');
-  check(/"mode":"tour"/.test(plain.tour) && /type "words" into/.test(plain.tour) && /"Paste from your assistant"/.test(plain.tour), 'no links: the tour prompt carries the step actions and says where to paste');
-  check(!/\bfetch\b|llms\.txt|\/mcp/i.test(plain.test + plain.tour), 'no links: neither prompt asks it to open anything');
-  check(home.includes('id="pasted"') && home.includes('id="copyPlain"') && home.includes('custom connector'), 'home: the paste box, the no-links prompt and the connector are all there');
+  check(/"mode":"test"/.test(plain.test) && /never which button/.test(plain.test) && /"mode":"tour"/.test(plain.tour) && /type "words" into/.test(plain.tour), 'one prompt: it carries the whole format for a test and for a tour');
+  check([plain.test, plain.tour].every((x) => x.includes('{ORIGIN}/api/tests') && x.includes('"Paste from your assistant"') && /do not keep trying/.test(x)), 'one prompt: create it if you can reach the service, otherwise hand back the block to paste');
+  check(![plain.test, plain.tour].some((x) => /llms\.txt|\bFetch\b/.test(x)), 'one prompt: nothing depends on opening a page first');
+  check(home.includes('id="pasted"') && home.includes('custom connector') && !home.includes('copyPlain'), 'home: one Copy prompt, the paste box and the connector');
+
+  // what the prompt tells an assistant to send is what the service takes
+  const eP = env();
+  const r = await call(eP, '/api/tests', { method: 'POST', body: { mode: 'test', subject: 'my plugin', persona: GOOD.persona, password: GOOD.password, blueprint: JSON.parse(GOOD.blueprintJson), tasks: GOOD.tasks } });
+  check(r.status === 200, 'one prompt: the API takes a blueprint as an object, the way the prompt shows it');
+  const r2 = await call(eP, '/api/tests', { method: 'POST', body: { subject: 'my plugin', persona: GOOD.persona, password: GOOD.password, blueprint_url: 'https://example.com/blueprint.json', task_set: 'make-it-yours' } });
+  check(r2.status === 200, 'one prompt: and blueprint_url and task_set, the tools\u2019 own names');
 }
 
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');

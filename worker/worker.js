@@ -1401,7 +1401,20 @@ function blueprintFromBoot(boot) {
 async function createTest(env, req) {
   let body = {};
   try { body = JSON.parse(await req.text()) || {}; } catch (e) { body = {}; }
-  return makeTest(env, req, body);
+  return makeTest(env, req, sameAsPaste(body));
+}
+
+// The prompt gives assistants one shape for both ways of finishing: pasted
+// into the form, or sent here. That shape is the tools' (blueprint_url,
+// task_set, a blueprint as an object), so it is read here too.
+function sameAsPaste(body) {
+  const out = Object.assign({}, body);
+  if (out.blueprintUrl == null && out.blueprint_url != null) out.blueprintUrl = out.blueprint_url;
+  if (out.blueprintJson == null && out.blueprint_json != null) out.blueprintJson = out.blueprint_json;
+  if (out.blueprintJson == null && out.blueprint != null) out.blueprintJson = out.blueprint;
+  if (out.blueprintJson && typeof out.blueprintJson === 'object') out.blueprintJson = JSON.stringify(out.blueprintJson);
+  if (out.taskSet == null && out.task_set != null) out.taskSet = out.task_set;
+  return out;
 }
 
 // Everything past the parsing, so MCP can hand in a body it already has rather
@@ -2924,17 +2937,22 @@ ${test.wording && test.wording.intro ? `<p class="soft">${esc(test.wording.intro
 </div></body></html>`;
 }
 
-// For an assistant that cannot open links (ChatGPT's web tool turns most
-// addresses away): the whole format travels in the prompt, and what comes
-// back is one block the owner pastes into the form. Nothing is made until they
-// press the form's own button.
+// The one prompt, for any assistant. The whole format travels in it, because
+// many cannot open a web address at all (ChatGPT's web tool turns most away).
+// One that can make requests creates the test itself; one that cannot hands
+// back a block the owner pastes into the form, and nothing is made until they
+// press the form's own button. {ORIGIN} is filled in by the page.
 function plainPrompt(mode) {
   const checks = Object.keys(CHECKS).filter((k) => !['text', 'page', 'block', 'block_changed'].includes(k)).join(', ');
   const lang = 'lang is a WordPress locale such as fr_FR or es_ES if it should be in another language, and then everything you write goes in that language. Leave it out for English.';
-  const end = 'Draft it with me first and ask for anything you need. When I say it is ready, give me the finished JSON in one code block. I will paste it into the "Paste from your assistant" box on the site, which fills in the form for me to check.';
+  const end = [
+    'Draft it with me first and ask for anything you need. When I say it is ready, finish it one of two ways:',
+    '- If you can make web requests (Claude Code, Cursor, or this service added as a connector): create it yourself. POST the JSON, plus a "password" you make up, to {ORIGIN}/api/tests, or call usertest_create on {ORIGIN}/mcp. Then give me the tester link, the results link and the password, which cannot be looked up again.',
+    '- If you cannot reach that address, do not keep trying: give me the finished JSON in one code block. I will paste it into the "Paste from your assistant" box on {ORIGIN}, which fills in the form for me to check.',
+  ].join('\n');
   if (mode === 'tour') {
     return [
-      'Help me make a guided tour of my WordPress plugin with Playground user testing (playground-usertest.view.fast). The tour plays itself in a real WordPress in the visitor\u2019s browser: each step presses through its own actions while a pointer shows where, and a voice can read a script. You cannot open that site, so do not try: everything you need is here.',
+      'Help me make a guided tour of my WordPress plugin with Playground user testing ({ORIGIN}). The tour plays itself in a real WordPress in the visitor\u2019s browser: each step presses through its own actions while a pointer shows where, and a voice can read a script. Everything you need is in this message, so do not go looking for instructions.',
       'The JSON looks like this:',
       '{"mode":"tour","subject":"…","persona":"…","blueprint_url":"…","button":{"label":"Get the plugin","url":"https://…"},"theme":{"accent":"#6b3fa0","card":"dark"},"tasks":[{"title":"…","hint":"…","say":"…","do":["#some-id","button \\"Label\\"","type \\"words\\" into input.search","press Escape","go /wp-admin/options-general.php","wait 2"],"check":"none"}]}',
       `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. blueprint_url is the Playground blueprint I already use to demo my plugin: ask me for it. Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. Prefer ids and classes; ask me for the exact labels you are unsure of. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: my brand colour as a hex accent, and a dark or light card.`,
@@ -2943,7 +2961,7 @@ function plainPrompt(mode) {
     ].join('\n\n');
   }
   return [
-    'Help me set up a user test for my WordPress plugin with Playground user testing (playground-usertest.view.fast). Testers open a link, get a real WordPress in their browser with my plugin set up, and work through a card of tasks while it records what happens. You cannot open that site, so do not try: everything you need is here.',
+    'Help me set up a user test for my WordPress plugin with Playground user testing ({ORIGIN}). Testers open a link, get a real WordPress in their browser with my plugin set up, and work through a card of tasks while it records what happens. Everything you need is in this message, so do not go looking for instructions.',
     'The JSON looks like this:',
     '{"mode":"test","subject":"…","persona":"…","blueprint_url":"…","tasks":[{"title":"…","hint":"…","check":"site_name"}]}',
     `subject is what is being tested (the tester reads "Thank you for helping make X better"), up to ${LIMITS.subject} characters. persona is a paragraph in the second person that gives the tester a reason to want the site; do not name them after the demo site. blueprint_url is the Playground blueprint I already use to demo my plugin: ask me for it. Five to seven tasks. Each title says what they want to end up with, never which button to press: the button goes in the hint, so the results show who needed it. check is optional: one of ${checks}, or {"type":"text","text":"words on the home page"}, or {"type":"page","path":"part of the address"}, or none.`,
@@ -2990,6 +3008,8 @@ const HOME = `<!doctype html>
   .prompt { position:relative; max-width:820px; margin:0 auto; text-align:left; background:var(--panel); border:1px solid var(--rule); border-radius:16px; padding:24px 24px 20px; box-shadow:0 0 0 6px rgba(124,242,176,.08); }
   .prompt p { margin:0 0 18px; font:17px/1.7 "JetBrains Mono",ui-monospace,monospace; color:var(--text); }
   .prompt p::before { content:"› "; color:var(--mint); }
+  .prompt p.more { margin:-10px 0 16px; font:13px/1.5 "JetBrains Mono",ui-monospace,monospace; color:var(--dim); }
+  .prompt p.more::before { content:""; }
   .prompt .under { display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; font-size:14px; color:var(--dim); }
   .addr { font:13px/1.7 "JetBrains Mono",ui-monospace,monospace; word-break:break-all; color:var(--text); }
   .copy { font:inherit; font-weight:700; font-size:15px; padding:12px 22px; border-radius:999px; border:0; background:var(--mint); color:var(--night); cursor:pointer; }
@@ -3209,19 +3229,20 @@ const HOME = `<!doctype html>
 <div class="shell hero">
   <p class="eyebrow">NO INSTALL · NO ACCOUNTS · BUILT ON WORDPRESS PLAYGROUND</p>
   <h1>WordPress user testing and tours, made easy.</h1>
-  <p class="sub" id="askSub">Watch real people try your plugin in a real WordPress. Paste this into Claude Code, Cursor or any assistant that can run commands: it drafts the test with you and hands you the links.</p>
+  <p class="sub" id="askSub">Watch real people try your plugin in a real WordPress. Copy this into ChatGPT, Claude or any assistant: it drafts the test with you, then makes it or hands it to you to paste.</p>
   <div class="ask" role="radiogroup" aria-label="What do you want to do?">
     <button type="button" role="radio" aria-checked="true" data-ask="test"><b>Test it</b><span>people try it on their own</span></button>
     <button type="button" role="radio" aria-checked="false" data-ask="tour"><b>Show it</b><span>a tour that plays itself</span><em>New</em></button>
   </div>
   <div class="prompt">
-    <p id="promptText">Fetch https://playground-usertest.view.fast/llms.txt and set up a user test for my plugin. Draft the persona and tasks with me, check them, then give me both links and the password.</p>
+    <p id="promptText">Help me set up a user test for my WordPress plugin with Playground user testing. Draft the persona and tasks with me, then make it, or give me the block to paste.</p>
+    <p class="more">+ the full instructions for your assistant, copied with it</p>
     <div class="under">
       <span>Or add it to ChatGPT or Claude as a custom connector: <span class="addr" id="mcpAddr">https://playground-usertest.view.fast/mcp</span></span>
       <button type="button" class="copy" id="copy">Copy prompt</button>
     </div>
   </div>
-  <p class="or">Using ChatGPT, or an assistant that can’t open links? <button type="button" class="linkish" id="copyPlain">Copy a prompt that needs no links</button>, then <a href="#paste">paste what it gives you</a>.</p>
+  <p class="or">Works in ChatGPT, Claude, Cursor or any assistant. If yours can’t reach this site, it hands you a block to <a href="#paste">paste in here</a>.</p>
   <p class="or">Rather type it yourself? <a href="#start">Fill in the form</a>. It takes about half a minute.</p>
   <p class="taken" id="taken" hidden aria-live="polite"><i aria-hidden="true"></i><span><b id="takenN">0</b> tests taken so far</span></p>
 </div>
@@ -3494,24 +3515,17 @@ const HOME = `<!doctype html>
   // The prompt leads the page; it names this address, so a copy of the
   // service answers for itself rather than sending people to someone else's.
   var origin = location.origin;
-  document.getElementById('promptText').textContent =
-    'Fetch ' + origin + '/llms.txt and set up a user test for my plugin. ' +
-    'Draft the persona and tasks with me, check them, then give me both links and the password.';
   document.getElementById('mcpAddr').textContent = origin + '/mcp';
-  var tourText = 'Fetch ' + origin + '/llms.txt and make a guided tour of my plugin that plays itself. ' +
-    'Use my brand colour, write the steps and the voice script with me, check it, then give me both links and the password.';
   var testText = document.getElementById('promptText').textContent;
+  var tourText = 'Help me make a guided tour of my WordPress plugin that plays itself. Write the steps and the voice script with me, in my brand colour, then make it, or give me the block to paste.';
   var PLAIN = ${JSON.stringify({ test: plainPrompt('test'), tour: plainPrompt('tour') })};
-  document.getElementById('copyPlain').addEventListener('click', function () {
-    var btn = this, was = btn.textContent;
+  function fullPrompt() {
     var on = document.querySelector('.ask button[aria-checked="true"]');
-    var text = PLAIN[on && on.getAttribute('data-ask') === 'tour' ? 'tour' : 'test'];
-    var done = function () { btn.textContent = 'Copied. Paste it into ChatGPT'; setTimeout(function () { btn.textContent = was; }, 2200); };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
-  });
+    return PLAIN[on && on.getAttribute('data-ask') === 'tour' ? 'tour' : 'test'].split('{ORIGIN}').join(origin);
+  }
   var subs = {
     test: document.getElementById('askSub').textContent,
-    tour: 'Show people round your plugin in a real WordPress, in your colours and your voice. Paste this into your assistant: it writes the tour with you and hands you the link.'
+    tour: 'Show people round your plugin in a real WordPress, in your colours and your voice. Copy this into ChatGPT, Claude or any assistant: it writes the tour with you, then makes it or hands it to you to paste.'
   };
   Array.prototype.forEach.call(document.querySelectorAll('.ask button'), function (b) {
     b.addEventListener('click', function () {
@@ -3583,7 +3597,7 @@ const HOME = `<!doctype html>
 
   document.getElementById('copy').addEventListener('click', function () {
     var btn = this;
-    var text = document.getElementById('promptText').textContent;
+    var text = fullPrompt();
     var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy prompt'; }, 1600); };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
     else {
