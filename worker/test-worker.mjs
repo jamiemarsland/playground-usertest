@@ -1045,5 +1045,11 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   check(scripts.length > 0 && !bad, 'home: its scripts parse' + (bad ? ' — ' + bad : ''));
 }
 
+// A tour step that presses nothing only talks: the check says which.
+{
+  const l = lintTest({ mode: 'tour', subject: 'Adding a post', tasks: [{ title: 'Start a post', hint: 'Posts, then Add New.', do: ['go /wp-admin/post-new.php'] }, { title: 'Give it a title', hint: 'Type it in.' }, { title: 'Write something', hint: 'Below the title.' }] });
+  check(l.notes.some((x) => /Steps 2, 3 press nothing/.test(x) && /Record the clicks/.test(x)), 'tour: steps that press nothing are named, with recording as the fix');
+}
+
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');
 process.exit(failures ? 1 : 0);

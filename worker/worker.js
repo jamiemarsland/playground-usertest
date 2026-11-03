@@ -1163,6 +1163,8 @@ function lintTour(input, subject, tasks, tour, problems, notes) {
   });
   if (tasks.length > 6) notes.push(`${tasks.length} steps is a long tour. Most people stop somewhere around five.`);
   if (tasks.length && tasks.every((t) => !t.do)) notes.push('No step does anything by itself, so the tour only talks. Give steps their clicks (do) and it presses through them while people watch.');
+  const idle = tasks.map((t, i) => (t.do && t.do.length ? 0 : i + 1)).filter(Boolean);
+  if (idle.length && idle.length < tasks.length) notes.push(`Step${idle.length === 1 ? '' : 's'} ${idle.join(', ')} press${idle.length === 1 ? 'es' : ''} nothing, so the tour only talks there and moves on. Record the clicks (POST /api/record, or Record the clicks in Playground on the form) to fill them in.`);
   if (tasks.some((t) => t.do && !t.check)) notes.push('A step that presses things but has no check carries on whether it worked or not. Where the site or the editor can show it (the colours, a page, your block), give it a check.');
   if (tour.theme && tour.theme.text !== tour.theme.accent) notes.push(`The accent ${tour.theme.accent} is hard to read as words on a ${tour.theme.card} card, so the card’s words use ${tour.theme.text} instead. Buttons, the ring and the pointer keep ${tour.theme.accent}.`);
   if (!tour.button) notes.push('There is no button at the end. Say what they should do once they have seen it: “Get the plugin”, “Read the release post”.');
@@ -3937,7 +3939,7 @@ const HOME = `<!doctype html>
     return '';
   }
 
-  var msg = document.getElementById('msg'), submit = document.getElementById('submit');
+  var msg = document.getElementById('msg'), submit = document.getElementById('submit'), idleOk = false;
   document.getElementById('f').addEventListener('submit', function (ev) {
     ev.preventDefault();
     msg.textContent = '';
@@ -3956,6 +3958,14 @@ const HOME = `<!doctype html>
     }).filter(function (t) { return t.title.trim(); });
     if (!tasks.length) { msg.textContent = touring ? 'Give the tour at least one step.' : 'Give the tester at least one thing to try.'; return; }
     if (siteMissing()) { msg.textContent = siteMissing(); return; }
+    // a tour step with nothing to press only talks: say so once, and a second
+    // press makes it anyway
+    var idle = touring ? tasks.map(function (t, i) { return t['do'] ? 0 : i + 1; }).filter(Boolean) : [];
+    if (idle.length && !idleOk) {
+      idleOk = true;
+      msg.textContent = (idle.length === 1 ? 'Step ' + idle[0] + ' doesn’t' : 'Steps ' + idle.join(', ') + ' don’t') + ' press anything yet, so the tour will only talk there. Press Record the clicks in Playground (above) to fill them in, or press Make the tour again to make it as it is.';
+      return;
+    }
     var button = touring && (document.getElementById('btnLabel').value.trim() || document.getElementById('btnUrl').value.trim())
       ? { label: document.getElementById('btnLabel').value.trim(), url: document.getElementById('btnUrl').value.trim() } : undefined;
 

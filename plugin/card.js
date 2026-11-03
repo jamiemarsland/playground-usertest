@@ -501,7 +501,9 @@
       if (state.voice && voiceBlocked) { voiceBlocked = false; sayStep(); render(); return; }
       state.voice = !state.voice;
       save();
-      if (state.voice) sayStep(); else hush();
+      // before the tour has begun, Start reads the first step: turning the
+      // sound on first must not read it as well
+      if (state.voice && state.begun) { state.spoken = state.i; save(); sayStep(); } else if (!state.voice) hush();
       render();
     });
     draggable(h, card);
@@ -700,6 +702,17 @@
   }
 
   function acts(t) { return (t && t['do']) || []; }
+
+  // Where a step's go leads. Its address is written from the site's root
+  // (/wp-admin/post-new.php), and the site's root is not always the server's:
+  // Playground keeps each site under a prefix like /scope:abc/. Resolved from
+  // the server's root, every link on the page looks like somewhere else.
+  function goUrl(go) {
+    var home = new URL(cfg.home || '/', location.href);
+    var path = String(go || '/');
+    if (path.charAt(0) === '/') path = home.pathname.replace(/\/$/, '') + path;
+    return new URL(path, home);
+  }
 
   /* ---- the voice -------------------------------------------------------- */
   // Each step is read out as it starts playing: its title, then what it says.
@@ -962,7 +975,7 @@
     // a step that begins by jumping to another screen (no way to show) jumps
     // first and speaks when it is there, so the words never talk about a
     // screen not yet shown; one that can show the way speaks as it goes
-    var opening = !!(a && a.go && state.act.n === 0 && !(state.act.hops) && !nextPress(new URL(a.go, cfg.home || location.origin)) && !arrivedAt(new URL(a.go, cfg.home || location.origin)));
+    var opening = !!(a && a.go && state.act.n === 0 && !(state.act.hops) && !nextPress(goUrl(a.go)) && !arrivedAt(goUrl(a.go)));
     // read once per step, not again when a click loads another page
     if (state.spoken !== state.i && !opening) { state.spoken = state.i; save(); sayStep(); }
     if (state.act.n >= list.length) return settle(t, tok);
@@ -1139,7 +1152,7 @@
   // presses; past that, or with no way to see, go straight there.
   function travel(t, a, tok, since) {
     since = since || Date.now();
-    var target = new URL(a.go, cfg.home || location.origin);
+    var target = goUrl(a.go);
     if (arrivedAt(target)) { state.act.hops = 0; return advance(t, tok); }
     var hops = state.act.hops || 0;
     var el = hops < 6 ? nextPress(target) : null;
