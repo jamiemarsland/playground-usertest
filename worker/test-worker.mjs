@@ -156,7 +156,7 @@ let r = await call(e1, '/');
 const home = await r.text();
 // Most people arrive with an assistant to hand, so the front page leads with
 // the sentence to give it; the form is underneath for anyone who would rather type.
-check(r.status === 200 && home.includes('id="promptText"') && home.includes('Help me set up a user test for my WordPress plugin'), 'the front page leads with the prompt for an assistant');
+check(r.status === 200 && home.includes('id="promptText"') && home.includes('Help me set up a user test of my WordPress plugin, theme or site'), 'the front page leads with the prompt for an assistant');
 check(home.includes('<form id="f" data-mode="test">') && home.indexOf('id="promptText"') < home.indexOf('<form id="f" data-mode="test">'), 'and the create form is underneath it');
 check(/\[hidden\] \{ display:none !important; \}/.test(home), 'hidden is spelled out, since the controls throw away the browser rule for it');
 check(/cannot be looked up again/.test(home) && home.indexOf('cannot be looked up again') < home.indexOf('<form id="f" data-mode="test">'), 'and it warns, before anything else, that the password cannot be recovered');
@@ -1002,6 +1002,28 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   let stored = 0;
   try { stored = Number((await eR.DB.prepare('SELECT COUNT(*) AS n FROM tests').first()).n); } catch (e) { stored = 0; }
   check(stored === 0, 'record: nothing is stored');
+}
+
+// No blueprint needed: a plugin or theme by its slug or zip, or WordPress
+// itself, and the service sets the site up.
+{
+  const eS = env();
+  let r = await call(eS, '/api/tests', { method: 'POST', body: { mode: 'tour', subject: 'my plugin', plugin: 'hello-dolly', password: GOOD.password, tasks: [{ title: 'Open the plugin', hint: 'It is here.' }] } });
+  const a = await r.json();
+  check(r.status === 200, 'site: a plugin by its slug is enough to make a tour');
+  let bp = await (await call(eS, '/t/' + a.id + '/blueprint.json')).json();
+  check(bp.steps.some((x) => x.step === 'installPlugin' && x.pluginData.resource === 'wordpress.org/plugins' && x.pluginData.slug === 'hello-dolly'), 'site: and the site installs it from WordPress.org');
+  r = await call(eS, '/api/tests', { method: 'POST', body: { mode: 'tour', subject: 'writing your first post', site: 'wordpress', password: GOOD.password, tasks: [{ title: 'Write a post', hint: 'Posts, then Add New.' }] } });
+  check(r.status === 200, 'site: WordPress itself, for teaching it, needs nothing more');
+  r = await call(eS, '/api/tests', { method: 'POST', body: { subject: 'my theme', persona: GOOD.persona, theme: 'https://example.com/my-theme.zip', password: GOOD.password, tasks: GOOD.tasks } });
+  const t = await r.json();
+  bp = await (await call(eS, '/t/' + t.id + '/blueprint.json')).json();
+  check(r.status === 200 && bp.steps.some((x) => x.step === 'installTheme' && x.themeData.url === 'https://example.com/my-theme.zip'), 'site: a theme by its zip link');
+  const home = await (await call(env(), '/')).text();
+  const i = home.indexOf('var PLAIN = '), j = home.indexOf(';\n', i);
+  const plain = JSON.parse(home.slice(i + 12, j));
+  check([plain.test, plain.tour].every((x) => /"plugin"/.test(x) && /"site":"wordpress"/.test(x) && /Only if I already have a Playground blueprint/.test(x)), 'site: the prompt asks for the plugin or theme, not a blueprint');
+  check(home.includes('data-bp="wp"') && home.includes('id="sitePlugin"'), 'site: the form offers WordPress on its own, or a plugin or theme');
 }
 
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');

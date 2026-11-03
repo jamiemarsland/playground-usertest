@@ -1414,6 +1414,12 @@ function sameAsPaste(body) {
   if (out.blueprintJson == null && out.blueprint != null) out.blueprintJson = out.blueprint;
   if (out.blueprintJson && typeof out.blueprintJson === 'object') out.blueprintJson = JSON.stringify(out.blueprintJson);
   if (out.taskSet == null && out.task_set != null) out.taskSet = out.task_set;
+  // most people have no blueprint: name the plugin or theme (a wordpress.org
+  // slug or a zip link), or ask for WordPress itself, and the service builds it
+  const plugins = [].concat(out.plugin || [], out.plugins || []).filter(Boolean);
+  if (!out.boot && !out.blueprintUrl && !out.blueprintJson && (plugins.length || out.theme || out.site === 'wordpress')) {
+    out.boot = { plugins, theme: typeof out.theme === 'string' ? out.theme : undefined, title: out.site_title || undefined };
+  }
   return out;
 }
 
@@ -2404,6 +2410,9 @@ const TOOLS = [
         task_set: { type: 'string', enum: ALL_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
         persona: { type: 'string', maxLength: LIMITS.persona, description: 'A paragraph, second person, giving them a reason to want the site — not just a job title.' },
         tasks: TASKS_SCHEMA,
+        plugin: { type: 'string', description: 'The plugin to set the site up with: its wordpress.org slug (the end of wordpress.org/plugins/…) or an https link to its zip. The usual way to say what to test or tour.' },
+        theme: { type: 'string', description: 'A theme to set the site up with: a wordpress.org slug or an https zip link. On its own for a theme, or with plugin.' },
+        site: { type: 'string', enum: ['wordpress'], description: '"wordpress" for WordPress itself with nothing added: a tour that teaches WordPress, or a test of core.' },
         boot: BOOT_SCHEMA,
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
@@ -2417,7 +2426,7 @@ const TOOLS = [
   },
   {
     name: 'usertest_create',
-    description: 'Make a test. Returns a link to send a tester and a link to read the results, plus the results password — which cannot be recovered, so give it to the person and keep it. Say what the tester should get with EITHER boot, or blueprint_url, or blueprint_json.',
+    description: 'Make a test. Returns a link to send a tester and a link to read the results, plus the results password — which cannot be recovered, so give it to the person and keep it. Say what the tester should get with ONE of: plugin and/or theme (a wordpress.org slug or an https zip link: most people have no blueprint), site: "wordpress" for WordPress itself, boot, blueprint_url or blueprint_json.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2425,6 +2434,9 @@ const TOOLS = [
         task_set: { type: 'string', enum: ALL_SETS.map((x) => x.key), description: 'Optional: start from a ready-made set (see usertest_task_sets). Fills the persona and tasks you leave out.' },
         persona: { type: 'string', maxLength: LIMITS.persona },
         tasks: TASKS_SCHEMA,
+        plugin: { type: 'string', description: 'The plugin to set the site up with: its wordpress.org slug (the end of wordpress.org/plugins/…) or an https link to its zip. The usual way to say what to test or tour.' },
+        theme: { type: 'string', description: 'A theme to set the site up with: a wordpress.org slug or an https zip link. On its own for a theme, or with plugin.' },
+        site: { type: 'string', enum: ['wordpress'], description: '"wordpress" for WordPress itself with nothing added: a tour that teaches WordPress, or a test of core.' },
         boot: BOOT_SCHEMA,
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
@@ -2519,7 +2531,10 @@ async function mcpCall(env, req, name, args) {
     // A password nobody chose is better than no password, and an agent has
     // nowhere sensible to invent one from.
     const password = String((args && args.password) || '') || makeId(16);
-    const res = await makeTest(env, req, {
+    const res = await makeTest(env, req, sameAsPaste({
+      plugin: args && args.plugin,
+      theme: args && args.theme,
+      site: args && args.site,
       subject: args && args.subject,
       persona: args && args.persona,
       tasks: args && args.tasks,
@@ -2539,7 +2554,7 @@ async function mcpCall(env, req, name, args) {
       versions: args && Array.isArray(args.versions)
         ? args.versions.map((v) => ({ label: v && v.label, boot: v && v.boot, blueprintUrl: v && v.blueprint_url, blueprintJson: v && v.blueprint_json }))
         : undefined,
-    });
+    }));
     const made = await res.json();
     if (!res.ok) return mcpText(made.error || 'That did not work.', { isError: true, structuredContent: made });
 
@@ -2982,6 +2997,8 @@ ${test.wording && test.wording.intro ? `<p class="soft">${esc(test.wording.intro
 // One that can make requests creates the test itself; one that cannot hands
 // back a block the owner pastes into the form, and nothing is made until they
 // press the form's own button. {ORIGIN} is filled in by the page.
+const SITE_LINE = 'For the site, ask me what it is: a plugin goes in "plugin" and a theme in "theme", each as its WordPress.org slug (the end of its wordpress.org/plugins/ or /themes/ address) or a public link to its zip; for WordPress itself put "site":"wordpress" instead. Only if I already have a Playground blueprint, put its link in "blueprint_url" instead of those. The service sets the site up from them.';
+
 function plainPrompt(mode) {
   const checks = Object.keys(CHECKS).filter((k) => !['text', 'page', 'block', 'block_changed'].includes(k)).join(', ');
   const lang = 'lang is a WordPress locale such as fr_FR or es_ES if it should be in another language, and then everything you write goes in that language. Leave it out for English.';
@@ -2992,19 +3009,19 @@ function plainPrompt(mode) {
   ].join('\n');
   if (mode === 'tour') {
     return [
-      'Help me make a guided tour of my WordPress plugin with Playground user testing ({ORIGIN}). The tour plays itself in a real WordPress in the visitor\u2019s browser: each step presses through its own actions while a pointer shows where, and a voice can read a script. Everything you need is in this message, so do not go looking for instructions.',
+      'Help me make a guided tour with Playground user testing ({ORIGIN}), of a WordPress plugin, a theme, or WordPress itself (to teach someone how it works). The tour plays itself in a real WordPress in the visitor\u2019s browser: each step presses through its own actions while a pointer shows where, and a voice can read a script. Everything you need is in this message, so do not go looking for instructions.',
       'The JSON looks like this:',
-      '{"mode":"tour","subject":"…","persona":"…","blueprint_url":"…","button":{"label":"Get the plugin","url":"https://…"},"theme":{"accent":"#6b3fa0","card":"dark"},"tasks":[{"title":"…","hint":"…","say":"…","do":["#some-id","button \\"Label\\"","type \\"words\\" into input.search","press Escape","go /wp-admin/options-general.php","wait 2"],"check":"none"}]}',
-      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. blueprint_url is the Playground blueprint I already use to demo my plugin: ask me for it. Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. You cannot see my plugin, so do not guess what a step presses: leave do out where you are unsure. Once the tour is in the form I will press Record the clicks in Playground and do each step myself, and the card fills in exactly what to press. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: my brand colour as a hex accent, and a dark or light card.`,
+      '{"mode":"tour","subject":"…","persona":"…","plugin":"…","button":{"label":"Get the plugin","url":"https://…"},"theme":{"accent":"#6b3fa0","card":"dark"},"tasks":[{"title":"…","hint":"…","say":"…","do":["#some-id","button \\"Label\\"","type \\"words\\" into input.search","press Escape","go /wp-admin/options-general.php","wait 2"],"check":"none"}]}',
+      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. ${SITE_LINE} Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. You cannot see the site, so do not guess what a step presses: leave do out where you are unsure. Once the tour is in the form I will press Record the clicks in Playground and do each step myself, and the card fills in exactly what to press. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: my brand colour as a hex accent, and a dark or light card.`,
       lang,
       end,
     ].join('\n\n');
   }
   return [
-    'Help me set up a user test for my WordPress plugin with Playground user testing ({ORIGIN}). Testers open a link, get a real WordPress in their browser with my plugin set up, and work through a card of tasks while it records what happens. Everything you need is in this message, so do not go looking for instructions.',
+    'Help me set up a user test with Playground user testing ({ORIGIN}), of a WordPress plugin, a theme, or WordPress itself. Testers open a link, get a real WordPress in their browser, already set up, and work through a card of tasks while it records what happens. Everything you need is in this message, so do not go looking for instructions.',
     'The JSON looks like this:',
-    '{"mode":"test","subject":"…","persona":"…","blueprint_url":"…","tasks":[{"title":"…","hint":"…","check":"site_name"}]}',
-    `subject is what is being tested (the tester reads "Thank you for helping make X better"), up to ${LIMITS.subject} characters. persona is a paragraph in the second person that gives the tester a reason to want the site; do not name them after the demo site. blueprint_url is the Playground blueprint I already use to demo my plugin: ask me for it. Five to seven tasks. Each title says what they want to end up with, never which button to press: the button goes in the hint, so the results show who needed it. check is optional: one of ${checks}, or {"type":"text","text":"words on the home page"}, or {"type":"page","path":"part of the address"}, or none.`,
+    '{"mode":"test","subject":"…","persona":"…","plugin":"…","tasks":[{"title":"…","hint":"…","check":"site_name"}]}',
+    `subject is what is being tested (the tester reads "Thank you for helping make X better"), up to ${LIMITS.subject} characters. persona is a paragraph in the second person that gives the tester a reason to want the site; do not name them after the demo site. ${SITE_LINE} Five to seven tasks. Each title says what they want to end up with, never which button to press: the button goes in the hint, so the results show who needed it. check is optional: one of ${checks}, or {"type":"text","text":"words on the home page"}, or {"type":"page","path":"part of the address"}, or none.`,
     lang,
     end,
   ].join('\n\n');
@@ -3269,13 +3286,13 @@ const HOME = `<!doctype html>
 <div class="shell hero">
   <p class="eyebrow">NO INSTALL · NO ACCOUNTS · BUILT ON WORDPRESS PLAYGROUND</p>
   <h1>WordPress user testing and tours, made easy.</h1>
-  <p class="sub" id="askSub">Watch real people try your plugin in a real WordPress. Copy this into ChatGPT, Claude or any assistant: it drafts the test with you, then makes it or hands it to you to paste.</p>
+  <p class="sub" id="askSub">Watch real people try your plugin or theme in a real WordPress. Copy this into ChatGPT, Claude or any assistant: it drafts the test with you, then makes it or hands it to you to paste.</p>
   <div class="ask" role="radiogroup" aria-label="What do you want to do?">
     <button type="button" role="radio" aria-checked="true" data-ask="test"><b>Test it</b><span>people try it on their own</span></button>
     <button type="button" role="radio" aria-checked="false" data-ask="tour"><b>Show it</b><span>a tour that plays itself</span><em>New</em></button>
   </div>
   <div class="prompt">
-    <p id="promptText">Help me set up a user test for my WordPress plugin with Playground user testing. Draft the persona and tasks with me, then make it, or give me the block to paste.</p>
+    <p id="promptText">Help me set up a user test of my WordPress plugin, theme or site with Playground user testing. Draft the persona and tasks with me, then make it, or give me the block to paste.</p>
     <p class="more">+ the full instructions for your assistant, copied with it</p>
     <div class="under">
       <span>Or add it to ChatGPT or Claude as a custom connector: <span class="addr" id="mcpAddr">https://playground-usertest.view.fast/mcp</span></span>
@@ -3488,7 +3505,7 @@ const HOME = `<!doctype html>
   <button type="button" class="add" id="add" data-test="Add another" data-tour="Add a step">Add another</button>
   <div data-only="tour" hidden style="margin-top:14px">
     <button type="button" class="add" id="recordBtn">Record the clicks in Playground</button>
-    <p class="hint" id="recordMsg" style="margin:8px 0 0">Not sure what each step should press? Open your site in Playground, do each step yourself, and the card writes down exactly what you pressed. Then copy it and paste it into Paste from your assistant above. Add your blueprint below first.</p>
+    <p class="hint" id="recordMsg" style="margin:8px 0 0">Not sure what each step should press? Open the site in Playground, do each step yourself, and the card writes down exactly what you pressed. Then copy it and paste it into Paste from your assistant above. Say what WordPress to open (below) first.</p>
   </div>
 </fieldset>
 
@@ -3511,10 +3528,12 @@ const HOME = `<!doctype html>
 </fieldset>
 
 <fieldset>
-  <label>The blueprint that sets up your site</label>
-  <p class="hint">The one you already use to demo your thing. A URL is read once, now, and kept — so every tester gets the same site even if you carry on editing.</p>
-  <div class="tabs"><button type="button" class="on" data-bp="url">A URL</button><button type="button" data-bp="json">Paste JSON</button></div>
-  <input type="url" id="bpurl" placeholder="https://example.com/blueprint.json">
+  <label>What WordPress should they get?</label>
+  <p class="hint">WordPress on its own, or with your plugin or theme added. Already demo with a Playground blueprint? Use that instead: a URL is read once, now, and kept, so everyone gets the same site.</p>
+  <div class="tabs" style="flex-wrap:wrap"><button type="button" data-bp="wp">Just WordPress</button><button type="button" class="on" data-bp="boot">A plugin or theme</button><button type="button" data-bp="url">Blueprint URL</button><button type="button" data-bp="json">Blueprint JSON</button></div>
+  <div id="bpboot" class="names"><input type="text" id="sitePlugin" maxlength="300" placeholder="Plugin: WordPress.org slug or zip link" aria-label="Plugin"><input type="text" id="siteTheme" maxlength="300" placeholder="Theme (optional): slug or zip link" aria-label="Theme"></div>
+  <p class="hint" id="bpwp" hidden style="margin:0">A fresh WordPress with a few sample pages: good for teaching WordPress itself.</p>
+  <input type="url" id="bpurl" hidden placeholder="https://example.com/blueprint.json">
   <textarea id="bpjson" hidden placeholder='{ "steps": [ … ] }'></textarea>
   <label class="cmp-toggle"><input type="checkbox" id="compare"> Compare it with a second version</label>
   <p class="hint">Same tasks on both. One link shares testers out evenly, and the results come back side by side.</p>
@@ -3554,14 +3573,14 @@ const HOME = `<!doctype html>
 <script>
 (function () {
   var tasksEl = document.getElementById('tasks');
-  var mode = 'url';
+  var mode = 'boot';
 
   // The prompt leads the page; it names this address, so a copy of the
   // service answers for itself rather than sending people to someone else's.
   var origin = location.origin;
   document.getElementById('mcpAddr').textContent = origin + '/mcp';
   var testText = document.getElementById('promptText').textContent;
-  var tourText = 'Help me make a guided tour of my WordPress plugin that plays itself. Write the steps and the voice script with me, in my brand colour, then make it, or give me the block to paste.';
+  var tourText = 'Help me make a guided tour of a WordPress plugin, theme or WordPress itself that plays itself. Write the steps and the voice script with me, in my colours, then make it, or give me the block to paste.';
   var PLAIN = ${JSON.stringify({ test: plainPrompt('test'), tour: plainPrompt('tour') })};
   function fullPrompt() {
     var on = document.querySelector('.ask button[aria-checked="true"]');
@@ -3569,7 +3588,7 @@ const HOME = `<!doctype html>
   }
   var subs = {
     test: document.getElementById('askSub').textContent,
-    tour: 'Show people round your plugin in a real WordPress, in your colours and your voice. Copy this into ChatGPT, Claude or any assistant: it writes the tour with you, then makes it or hands it to you to paste.'
+    tour: 'Show people round your plugin, your theme or WordPress itself, in a real WordPress, in your colours and your voice. Copy this into ChatGPT, Claude or any assistant: it writes the tour with you, then makes it or hands it to you to paste.'
   };
   Array.prototype.forEach.call(document.querySelectorAll('.ask button'), function (b) {
     b.addEventListener('click', function () {
@@ -3785,15 +3804,22 @@ const HOME = `<!doctype html>
     }
     var bpUrl = d.blueprint_url || d.blueprintUrl;
     var bpJson = d.blueprint_json || d.blueprintJson || d.blueprint;
-    if (bpJson) {
+    var plug = [].concat(d.plugin || [], d.plugins || [])[0];
+    if (!bpJson && !bpUrl && (plug || d.theme)) {
+      document.querySelector('[data-bp="boot"]').click();
+      put('sitePlugin', plug);
+      put('siteTheme', typeof d.theme === 'string' ? d.theme : '');
+    } else if (!bpJson && !bpUrl && d.site === 'wordpress') {
+      document.querySelector('[data-bp="wp"]').click();
+    } else if (bpJson) {
       document.querySelector('[data-bp="json"]').click();
       put('bpjson', typeof bpJson === 'string' ? bpJson : JSON.stringify(bpJson, null, 2));
     } else if (bpUrl) {
       document.querySelector('[data-bp="url"]').click();
       put('bpurl', bpUrl);
     }
-    var missing = bpJson || bpUrl ? '' : ' It didn’t include a blueprint, so add yours below.';
-    pasteMsg.textContent = 'Filled in: ' + tasks.length + (d.mode === 'tour' ? ' steps.' : ' tasks.') + missing + ' Check it, choose a results password, then press the button at the bottom.';
+    var missing = bpJson || bpUrl || plug || d.theme || d.site === 'wordpress' ? '' : ' It didn’t say which plugin, theme or WordPress to use, so choose below.';
+    pasteMsg.textContent = 'Filled in: ' + tasks.length + (d.mode === 'tour' ? ' step' : ' task') + (tasks.length === 1 ? '.' : 's.') + missing + ' Check it, choose a results password, then press the button at the bottom.';
     document.getElementById('f').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
@@ -3813,6 +3839,8 @@ const HOME = `<!doctype html>
       [].slice.call(document.querySelectorAll('[data-bp]')).forEach(function (o) { o.classList.toggle('on', o === b); });
       document.getElementById('bpurl').hidden = mode !== 'url';
       document.getElementById('bpjson').hidden = mode !== 'json';
+      document.getElementById('bpboot').hidden = mode !== 'boot';
+      document.getElementById('bpwp').hidden = mode !== 'wp';
     });
   });
 
@@ -3835,7 +3863,8 @@ const HOME = `<!doctype html>
     }).filter(function (t) { return t.title; });
     var url = mode === 'url' ? document.getElementById('bpurl').value.trim() : '';
     var text = mode === 'json' ? document.getElementById('bpjson').value.trim() : '';
-    if (!url && !text) { rmsg.textContent = 'Add the blueprint you demo with first (below), so Playground knows what to open.'; return; }
+    if (siteMissing()) { rmsg.textContent = siteMissing() + ' (below), so Playground knows what to open.'; return; }
+    var boot = siteBoot();
     var tab = window.open('about:blank', '_blank');
     rmsg.textContent = 'Opening Playground…';
     var got = url ? fetch(url, { headers: { accept: 'application/json' } }).then(function (r) { return r.ok ? r.text() : ''; }, function () { return ''; }) : Promise.resolve(text);
@@ -3847,8 +3876,9 @@ const HOME = `<!doctype html>
           subject: document.getElementById('subject').value,
           lang: document.getElementById('lang').value || undefined,
           tasks: steps,
-          blueprintJson: bp || undefined,
-          blueprintUrl: bp ? undefined : url,
+          boot: boot || undefined,
+          blueprintJson: boot ? undefined : (bp || undefined),
+          blueprintUrl: boot || bp ? undefined : url,
           button: (document.getElementById('btnLabel').value.trim() && document.getElementById('btnUrl').value.trim()) ? { label: document.getElementById('btnLabel').value.trim(), url: document.getElementById('btnUrl').value.trim() } : undefined,
           theme: { accent: document.getElementById('accent').value, card: document.getElementById('cardTone').value },
         }),
@@ -3862,6 +3892,21 @@ const HOME = `<!doctype html>
       rmsg.textContent = String(e.message || e);
     });
   });
+
+  // the site as the service builds it: WordPress on its own, or with a plugin
+  // or theme (slug or zip link); null when a blueprint says it instead
+  function siteBoot() {
+    if (mode === 'wp') return {};
+    if (mode !== 'boot') return null;
+    var plugin = document.getElementById('sitePlugin').value.trim(), theme = document.getElementById('siteTheme').value.trim();
+    return { plugins: plugin ? [plugin] : [], theme: theme || undefined };
+  }
+  function siteMissing() {
+    if (mode === 'boot' && !document.getElementById('sitePlugin').value.trim() && !document.getElementById('siteTheme').value.trim()) return 'Name the plugin or theme (its WordPress.org slug or a zip link), or choose Just WordPress.';
+    if (mode === 'url' && !document.getElementById('bpurl').value.trim()) return 'Add the blueprint URL, or choose another way to set up the site.';
+    if (mode === 'json' && !document.getElementById('bpjson').value.trim()) return 'Paste the blueprint JSON, or choose another way to set up the site.';
+    return '';
+  }
 
   var msg = document.getElementById('msg'), submit = document.getElementById('submit');
   document.getElementById('f').addEventListener('submit', function (ev) {
@@ -3881,6 +3926,7 @@ const HOME = `<!doctype html>
       return t;
     }).filter(function (t) { return t.title.trim(); });
     if (!tasks.length) { msg.textContent = touring ? 'Give the tour at least one step.' : 'Give the tester at least one thing to try.'; return; }
+    if (siteMissing()) { msg.textContent = siteMissing(); return; }
     var button = touring && (document.getElementById('btnLabel').value.trim() || document.getElementById('btnUrl').value.trim())
       ? { label: document.getElementById('btnLabel').value.trim(), url: document.getElementById('btnUrl').value.trim() } : undefined;
 
@@ -3906,7 +3952,7 @@ const HOME = `<!doctype html>
 
     fetched.then(function (texts) {
       var text = texts[0], text2 = texts[1];
-      var first = { blueprintUrl: text ? '' : url, blueprintJson: text || (mode === 'json' ? document.getElementById('bpjson').value : '') };
+      var first = siteBoot() ? { boot: siteBoot() } : { blueprintUrl: text ? '' : url, blueprintJson: text || (mode === 'json' ? document.getElementById('bpjson').value : '') };
       var versions = comparing ? [
         Object.assign({ label: document.getElementById('labelA').value.trim() }, first),
         { label: document.getElementById('labelB').value.trim(), blueprintUrl: text2 ? '' : url2, blueprintJson: text2 || (mode2 === 'json' ? document.getElementById('bp2json').value : '') },
@@ -3918,6 +3964,7 @@ const HOME = `<!doctype html>
           subject: document.getElementById('subject').value,
           persona: document.getElementById('persona').value,
           tasks: tasks,
+          boot: first.boot,
           blueprintUrl: first.blueprintUrl,
           blueprintJson: first.blueprintJson,
           versions: versions,
