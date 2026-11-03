@@ -2771,6 +2771,13 @@ POST ${origin}/api/tests
   you send (subject, persona, tasks, hints, say) in that language, and any
   step that finds a button by its words with the words WordPress shows in it.
   For several languages, make one test or tour per language.
+
+  Recording a tour's clicks: POST ${origin}/api/record with the same JSON
+  (no password) and you get back { link }: the person opens it, does each step
+  themselves in Playground, and the card writes down exactly what they pressed
+  and typed. They copy the finished tour from the card and paste it into the
+  form, or hand it back to you to create. Use it whenever you are guessing
+  what a step should press, which is almost always for someone's own plugin.
   questions (optional): the closing questions in your own words, for a test
   that is not about making a site: { ${QUESTION_KEYS.join(', ')} }. Any left out
   keep their defaults: ${QUESTION_KEYS.map((k) => `${k} "${DEFAULT_QUESTIONS[k]}"`).join('; ')}.
@@ -2988,7 +2995,7 @@ function plainPrompt(mode) {
       'Help me make a guided tour of my WordPress plugin with Playground user testing ({ORIGIN}). The tour plays itself in a real WordPress in the visitor\u2019s browser: each step presses through its own actions while a pointer shows where, and a voice can read a script. Everything you need is in this message, so do not go looking for instructions.',
       'The JSON looks like this:',
       '{"mode":"tour","subject":"…","persona":"…","blueprint_url":"…","button":{"label":"Get the plugin","url":"https://…"},"theme":{"accent":"#6b3fa0","card":"dark"},"tasks":[{"title":"…","hint":"…","say":"…","do":["#some-id","button \\"Label\\"","type \\"words\\" into input.search","press Escape","go /wp-admin/options-general.php","wait 2"],"check":"none"}]}',
-      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. blueprint_url is the Playground blueprint I already use to demo my plugin: ask me for it. Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. Prefer ids and classes; ask me for the exact labels you are unsure of. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: my brand colour as a hex accent, and a dark or light card.`,
+      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. blueprint_url is the Playground blueprint I already use to demo my plugin: ask me for it. Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. You cannot see my plugin, so do not guess what a step presses: leave do out where you are unsure. Once the tour is in the form I will press Record the clicks in Playground and do each step myself, and the card fills in exactly what to press. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: my brand colour as a hex accent, and a dark or light card.`,
       lang,
       end,
     ].join('\n\n');

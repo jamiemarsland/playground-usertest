@@ -93,6 +93,21 @@ For several languages, make one tour per language: same steps, translated
 words. Check each with `usertest_check`, which points out steps that press
 buttons by their words.
 
+## Recording the clicks
+
+Guessing what a step presses is where tours go wrong, above all for
+someone's own plugin, whose buttons you cannot see. Record them instead:
+POST the draft (the same JSON, no password) to `/api/record`, or have the
+person press **Record the clicks in Playground** on the form. They get a
+Playground link with their site and the card in record mode; they do each
+step themselves and press Next step, and the card writes down exactly what
+they pressed and typed, in playback's own words (a button by its words in
+the site's language, an id or classes otherwise, `type "…" into …`,
+`press Escape`). At the end they copy the whole tour from the card and paste
+it into the form's **Paste from your assistant** box, or give it back to you.
+Keep your titles, hints and `say` lines; the recording fills `do` and
+`point`. Nothing is stored until the tour is made.
+
 ## Planning
 
 - Three to six steps. Most people stop somewhere around five.
