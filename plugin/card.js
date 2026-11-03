@@ -342,6 +342,8 @@
     '.pgut-dots{display:flex;gap:5px;align-items:center}.pgut-dots i{width:7px;height:7px;border-radius:50%;background:rgba(22,24,28,.16)}' +
     '.pgut-dots i.is-done{background:#2f8f5b}.pgut-dots i.is-skip{background:#e8a33d}.pgut-dots i.is-now{background:#16181c;width:18px;border-radius:99px}' +
     'a.pgut-cta{display:block;box-sizing:border-box;text-decoration:none}' +
+    // a quiet text button under the main one (Watch it again, Back a step)
+    '.pgut-again{all:unset;cursor:pointer;display:block;margin:10px auto 0;font-size:13px;text-decoration:underline;text-underline-offset:3px;color:rgba(22,24,28,.6)}' +
     // what a recording has written down so far
     '.pgut-recs{margin:0 0 4px;padding:0 0 0 18px;max-height:140px;overflow:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(22,24,28,.75)}.pgut-recs li{word-break:break-all}.pgut-recs .is-none{list-style:none;margin-left:-18px;color:rgba(22,24,28,.45)}' +
     '.pgut textarea.pgut-json{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;min-height:96px}' +
@@ -1013,7 +1015,9 @@
     if (!got) {
       // pages and panels take a moment to arrive, so look again for a while;
       // an action marked "maybe" is let go sooner and passed over
-      var wait = a.maybe ? 2500 : 12000;
+      // an editor in Playground can take a good while to open after the page
+      // itself has loaded, so a step looks for its thing for half a minute
+      var wait = a.maybe ? 2500 : 30000;
       if (Date.now() - since < wait) { timer = setTimeout(function () { if (tok === runTok) perform(t, a, tok, since); }, 250); return; }
       if (a.maybe) return advance(t, tok);
       return trouble(w('no_find'));
