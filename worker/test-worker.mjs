@@ -981,5 +981,28 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   check(r2.status === 200, 'one prompt: and blueprint_url and task_set, the tools\u2019 own names');
 }
 
+// Recording a tour: the draft opened in Playground with the card in record
+// mode, nothing stored, the blueprint carried in the link.
+{
+  const eR = env();
+  let r = await call(eR, '/api/record', { method: 'POST', body: { subject: 'my plugin', lang: 'fr', blueprint: JSON.parse(GOOD.blueprintJson), tasks: [{ title: 'Open the editor', hint: 'It opens here.', check: { type: 'page', path: 'site-editor.php' } }, { title: 'Name it' }], theme: { accent: '#d8613c', card: 'light' } } });
+  const d = await r.json();
+  check(r.status === 200 && d.link.startsWith('https://playground.wordpress.net/#'), 'record: the draft comes back as a Playground link');
+  const bp = JSON.parse(decodeURIComponent(escape(atob(d.link.split('#')[1]))));
+  const cfg = JSON.parse(bp.steps.find((x) => x.step === 'setSiteOptions').options.playground_user_test);
+  check(cfg.mode === 'record' && cfg.tasks.length === 2 && cfg.tasks[0].check.type === 'page', 'record: the card is told to record, with the steps as drafted');
+  check(cfg.lang === 'fr_FR' && cfg.theme.accent === '#d8613c' && bp.steps.some((x) => x.step === 'setSiteLanguage'), 'record: in the tour\u2019s language and colours');
+  check(bp.steps.some((x) => x.step === 'installPlugin' && x.pluginData.url === 'https://example.com/card.zip'), 'record: on the usual card');
+  r = await call(eR, '/api/record', { method: 'POST', body: { subject: 'x', blueprint: JSON.parse(GOOD.blueprintJson) } });
+  const d2 = await r.json();
+  const cfg2 = JSON.parse(JSON.parse(decodeURIComponent(escape(atob(d2.link.split('#')[1])))).steps.find((x) => x.step === 'setSiteOptions').options.playground_user_test);
+  check(cfg2.tasks.length === 1 && cfg2.tasks[0].title === 'Step 1', 'record: a draft with no steps yet records one');
+  r = await call(eR, '/api/record', { method: 'POST', body: { subject: 'x', tasks: [{ title: 'a' }] } });
+  check(r.status === 400, 'record: with no site to open, it says so');
+  let stored = 0;
+  try { stored = Number((await eR.DB.prepare('SELECT COUNT(*) AS n FROM tests').first()).n); } catch (e) { stored = 0; }
+  check(stored === 0, 'record: nothing is stored');
+}
+
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');
 process.exit(failures ? 1 : 0);

@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Playground user testing
  * Description:       Shows a tester a small card of things to try, and sends what happens back to the test that sent them.
- * Version:           1.4.0
+ * Version:           1.5.0
  * Requires at least: 6.5
  * Requires PHP:      7.4
  * License:           GPL-2.0-or-later
@@ -26,7 +26,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'PGUT_VERSION', '1.4.0' );
+define( 'PGUT_VERSION', '1.5.0' );
 
 /**
  * The test this site was booted for, or nothing.
@@ -210,7 +210,7 @@ function pgut_enqueue() {
 			'home'    => esc_url_raw( home_url( '/' ) ),
 			// the test's own closing questions, if it has any; the card has defaults
 			'questions' => pgut_questions( $test ),
-			'mode'    => pgut_is_tour( $test ) ? 'tour' : 'test',
+			'mode'    => pgut_is_tour( $test ) ? ( 'record' === $test['mode'] ? 'record' : 'tour' ) : 'test',
 			'button'  => pgut_button( $test ),
 			'theme'   => pgut_theme( $test ),
 			// the site's language, so the card's own words match it
@@ -238,7 +238,8 @@ function pgut_lang( $test ) {
  * @return bool
  */
 function pgut_is_tour( $test ) {
-	return isset( $test['mode'] ) && 'tour' === $test['mode'];
+	// recording one is the maker doing its steps: a tour as far as the site goes
+	return isset( $test['mode'] ) && in_array( $test['mode'], array( 'tour', 'record' ), true );
 }
 
 /**

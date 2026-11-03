@@ -22,9 +22,12 @@
   var KEY = 'pgut:' + cfg.test + ':' + cfg.session;
   var state = load() || { i: 0, started: 0, taskStart: 0, results: {}, wrapped: false, hidden: false, pos: null, queue: [] };
   var tasks = cfg.tasks;
-  var tour = cfg.mode === 'tour';
+  // recording is the maker doing a tour's steps themselves, so the card can
+  // write down what they pressed; it looks like a tour and plays nothing
+  var recording = cfg.mode === 'record';
+  var tour = cfg.mode === 'tour' || recording;
   // a tour reads each step out loud, with the browser's own voice
-  var voiceOk = tour && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
+  var voiceOk = tour && !recording && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
   var voiceBlocked = false;
   // one tab plays a tour; another tab on the same site shows where it is
   // playing rather than pressing buttons in the same editor at the same time
@@ -69,7 +72,11 @@
       start_tour: 'Start the tour', skip: 'Skip', pause: 'Pause', play: 'Play',
       tour_done: 'That’s the tour.', tour_done_p: 'The site is yours until you close the tab, so carry on for as long as you like.', again: 'Watch it again',
       elsewhere: 'Playing in another tab', elsewhere_p: 'This tour is playing in another tab of this site.', play_here: 'Play it here',
-      no_find: 'This step could not find what to press on this site. Skip it, or try it yourself.', no_work: 'That did not work on this site. Skip it, or try it yourself.'
+      no_find: 'This step could not find what to press on this site. Skip it, or try it yourself.', no_work: 'That did not work on this site. Skip it, or try it yourself.',
+      rec_step: 'Recording step {n} of {total}', rec_do: 'Do this step yourself. I\u2019m writing down what you press and type.', rec_none: 'Nothing yet.',
+      rec_undo: 'Undo last', rec_next: 'Next step', rec_finish: 'Finish', rec_back: 'Back a step',
+      rec_done_head: 'Recorded', rec_done: 'That\u2019s every step.', rec_done_p: 'Copy the tour, then paste it into Paste from your assistant on the site and make the tour.',
+      rec_copy: 'Copy the tour', rec_copied: 'Copied', rec_again: 'Record again'
     },
     fr: {
       here: 'Ici', aria_tour: 'Visite', aria_test: 'Tâches à tester',
@@ -207,6 +214,8 @@
   }
 
   function send(type, task, note, data) {
+    // a recording is the maker's own rehearsal: nobody's results
+    if (recording) return;
     state.queue.push({ t: Date.now(), type: type, task: task || '', path: where(), note: note || '', data: data || null });
     save();
     flush();
@@ -279,6 +288,8 @@
       '.pgut.is-tour .pgut-btn:focus-visible,.pgut.is-tour .pgut-hide:focus-visible,.pgut.is-tour .pgut-again:focus-visible{outline-color:' + th.text + '}' +
       '.pgut.is-tour .pgut-nice{background:' + alpha(A, 0.15) + ';color:' + th.text + '}' +
       '.pgut.is-tour .pgut-foot{color:' + dim(0.5) + '}' +
+      '.pgut.is-tour .pgut-recs{color:' + dim(0.8) + '}.pgut.is-tour .pgut-recs .is-none{color:' + dim(0.5) + '}' +
+      '.pgut.is-tour textarea.pgut-json{background:' + soft + ';color:' + fg + ';border-color:' + dim(0.2) + '}' +
       '.pgut.is-tour .pgut-dots i{background:' + dim(0.2) + '}.pgut.is-tour .pgut-dots i.is-done{background:' + alpha(A, 0.55) + '}.pgut.is-tour .pgut-dots i.is-now{background:' + A + '}' +
       '.pgut-pill.is-tour{background:' + bg + ';color:' + th.text + ';box-shadow:0 0 0 1px ' + alpha(A, 0.6) + ',0 8px 24px rgba(0,0,0,.35)}' +
       // the ring round the thing to press: a white line inside the accent, so
@@ -331,6 +342,10 @@
     '.pgut-dots{display:flex;gap:5px;align-items:center}.pgut-dots i{width:7px;height:7px;border-radius:50%;background:rgba(22,24,28,.16)}' +
     '.pgut-dots i.is-done{background:#2f8f5b}.pgut-dots i.is-skip{background:#e8a33d}.pgut-dots i.is-now{background:#16181c;width:18px;border-radius:99px}' +
     'a.pgut-cta{display:block;box-sizing:border-box;text-decoration:none}' +
+    // what a recording has written down so far
+    '.pgut-recs{margin:0 0 4px;padding:0 0 0 18px;max-height:140px;overflow:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(22,24,28,.75)}.pgut-recs li{word-break:break-all}.pgut-recs .is-none{list-style:none;margin-left:-18px;color:rgba(22,24,28,.45)}' +
+    '.pgut textarea.pgut-json{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;min-height:96px}' +
+    '.pgut-btn[disabled]{opacity:.45;cursor:default}' +
     '@media (max-width:700px){.pgut,.pgut-pill{top:auto!important;bottom:12px!important;left:12px!important;right:12px!important;width:auto}}';
   var style = document.createElement('style');
   style.textContent = css + (tour ? tourCss(theme) : '');
@@ -507,6 +522,7 @@
     }
     card.hidden = false;
     pill.hidden = true;
+    if (recording) return renderRecord();
     if (tour && spectator) return renderElsewhere();
     if (tour) return state.i >= tasks.length ? renderEnd() : renderStep();
     if (state.wrapped) return renderThanks();
@@ -1260,6 +1276,26 @@
   // Types into a field the way the editor hears a person type, a character
   // at a time, through the native setter so its own listeners see it.
   function typeInto(el, text, done) {
+    // the editor's own text (a headline, a paragraph) is not a field with a
+    // value: select what is there and type over it, as a person would
+    if (el.isContentEditable) {
+      var doc = el.ownerDocument, win = doc.defaultView;
+      el.focus();
+      var range = doc.createRange();
+      range.selectNodeContents(el);
+      var sel = win.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      if (!text) { doc.execCommand('delete'); return done(); }
+      var k = 0;
+      (function nextChar() {
+        if (k >= text.length) return done();
+        if (k > 0) keySound();
+        doc.execCommand('insertText', false, text.charAt(k++));
+        setTimeout(nextChar, 70 + Math.round(Math.random() * 60));
+      })();
+      return;
+    }
     el.focus();
     var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     var desc = Object.getOwnPropertyDescriptor(proto, 'value');
@@ -1485,7 +1521,7 @@
     }
   }
 
-  if (tour) {
+  if (tour && !recording) {
     // the playing tab says it is still there; a watching tab takes over once
     // the playing one has gone quiet
     setInterval(function () {
@@ -1511,6 +1547,222 @@
     document.addEventListener('click', function () {
       [60, 250, 500].forEach(function (t) { setTimeout(aim, t); });
     }, true);
+  }
+
+  /* ---- recording a tour ------------------------------------------------- */
+  // The maker does each step themselves and the card writes down what they
+  // pressed, in the words playback uses: a button by its words where it has
+  // them (in the site's own language, so a French site records French words),
+  // an id or classes where it does not, typing as "type ... into", a key as
+  // "press". Nothing is sent anywhere: at the end the whole tour is handed back
+  // to copy into the form, the steps' words untouched and their actions filled.
+  var CLICKABLE = 'button, a, [role="button"], [role="menuitem"], [role="menuitemradio"], [role="tab"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"], summary, label, select, input[type="checkbox"], input[type="radio"]';
+  var TYPEABLE = 'input:not([type]), input[type="text"], input[type="search"], input[type="url"], input[type="email"], textarea';
+
+  function rec() {
+    if (!state.rec) state.rec = { i: 0, steps: tasks.map(function () { return []; }), at: here(), done: false };
+    return state.rec;
+  }
+  // where we are, as playback's go would write it: from the site's own root
+  function here() {
+    var home = new URL(cfg.home || '/', location.href).pathname;
+    var path = location.pathname.indexOf(home) === 0 ? '/' + location.pathname.slice(home.length) : location.pathname;
+    return path + location.search;
+  }
+  function lineOf(a) {
+    if (typeof a === 'string') return a;
+    return (a.maybe ? 'maybe ' : '') + (a.click ? a.click : a.into ? 'type "' + a.type + '" into ' + a.into : a.key ? 'press ' + a.key : a.go ? 'go ' + a.go : 'wait ' + a.wait);
+  }
+
+  function count(doc, sel) { try { return doc.querySelectorAll(sel).length; } catch (e) { return 0; } }
+  function cssId(id) { return /^[A-Za-z][\w-]*$/.test(id) ? '#' + id : null; }
+  // ids WordPress makes up afresh on every load (":r3:", "inspector-text-control-2")
+  function madeUp(id) { return /:|\d{2,}|-\d+$/.test(id); }
+  function words(el) { return (el.textContent || '').replace(/\s+/g, ' ').trim(); }
+  // would playback, looking for these words, land on this element first?
+  function firstByWords(doc, sel, text, el) {
+    var els;
+    try { els = doc.querySelectorAll(sel); } catch (e) { return false; }
+    for (var i = 0; i < els.length; i++) {
+      var x = els[i];
+      if (words(x) !== text && x.getAttribute('aria-label') !== text) continue;
+      var r = x.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      return x === el;
+    }
+    return false;
+  }
+  function selectorFor(el) {
+    var doc = el.ownerDocument;
+    var tag = el.tagName.toLowerCase();
+    var role = el.getAttribute('role');
+    var base = tag === 'a' ? 'a' : tag === 'button' ? 'button' : role ? '[role="' + role + '"]' : tag;
+    if (el.id && !madeUp(el.id) && cssId(el.id) && count(doc, cssId(el.id)) === 1) return cssId(el.id);
+    var label = el.getAttribute('aria-label');
+    var text = words(el);
+    if (text && text.length <= 60 && text.indexOf('"') === -1 && firstByWords(doc, base, text, el)) return base + ' "' + text + '"';
+    if (label && label.length <= 60 && label.indexOf('"') === -1 && firstByWords(doc, base, label, el)) return base + ' "' + label + '"';
+    var cls = [].slice.call(el.classList).filter(function (c) { return /^[A-Za-z][\w-]*$/.test(c) && !/^(is-|has-|components-button$|wp-block$)/.test(c); }).slice(0, 3);
+    var withCls = tag + cls.map(function (c) { return '.' + c; }).join('');
+    if (cls.length && count(doc, withCls) === 1) return withCls;
+    // a short path from the nearest ancestor that can be named on its own
+    var path = [], node = el;
+    for (var depth = 0; node && node.nodeType === 1 && depth < 6; depth++) {
+      var t = node.tagName.toLowerCase();
+      if (node !== el && node.id && !madeUp(node.id) && cssId(node.id) && count(doc, cssId(node.id)) === 1) { path.unshift(cssId(node.id)); break; }
+      var n = 1, sib = node;
+      while ((sib = sib.previousElementSibling)) if (sib.tagName === node.tagName) n++;
+      path.unshift(t + ':nth-of-type(' + n + ')');
+      node = node.parentElement;
+    }
+    return path.join(' > ');
+  }
+
+  function note(line, replaceLike) {
+    var r = rec();
+    if (r.done || r.i >= tasks.length) return;
+    var list = r.steps[r.i];
+    if (replaceLike && list.length && replaceLike.test(list[list.length - 1])) list[list.length - 1] = line;
+    else list.push(line);
+    r.at = here();
+    save();
+    render();
+  }
+  function inCard(el) { return !!(el && el.closest && (el.closest('.pgut') || el.closest('.pgut-pill'))); }
+
+  function onClick(e) {
+    var el = e.target && e.target.closest ? e.target : null;
+    if (!el || inCard(el)) return;
+    // typing is written down as typing; pressing into a field to type is not
+    if (el.closest(TYPEABLE) || el.closest('[contenteditable="true"]')) return;
+    var hit = el.closest(CLICKABLE) || el;
+    note(selectorFor(hit));
+  }
+  // where a field is, worked out as they arrive in it and before they type:
+  // a headline found by its words has to be found by the words it had
+  var spots = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function fieldOf(el) { return el && el.closest ? (el.closest(TYPEABLE) || el.closest('[contenteditable="true"]')) : null; }
+  function onFocus(e) {
+    var field = fieldOf(e.target);
+    if (field && spots && !inCard(field) && !spots.has(field)) spots.set(field, selectorFor(field));
+  }
+  function onInput(e) {
+    var el = e.target;
+    if (!el || inCard(el)) return;
+    var field = fieldOf(el);
+    if (!field) return;
+    var value = field.isContentEditable ? (field.innerText || '').replace(/\s+/g, ' ').trim() : String(field.value || '');
+    var into = (spots && spots.get(field)) || selectorFor(field);
+    var said = value.replace(/"/g, '”').slice(0, 120);
+    // one line per field, kept up to date as they type
+    var same = new RegExp('^type ".*" into ' + into.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$');
+    note('type "' + said + '" into ' + into, same);
+  }
+  function onKey(e) {
+    if (inCard(e.target)) return;
+    var typing = e.target && e.target.closest && (e.target.closest(TYPEABLE) || e.target.closest('[contenteditable="true"]'));
+    if (e.key === 'Escape' || (!typing && (e.key === 'Enter' || e.key === 'Tab'))) note('press ' + e.key);
+  }
+  // the editor's own canvas is a frame of this same site: listen in it too
+  function listen(doc) {
+    if (!doc || doc.__pgutRec) return;
+    doc.__pgutRec = true;
+    doc.addEventListener('focusin', onFocus, true);
+    doc.addEventListener('click', onClick, true);
+    doc.addEventListener('input', onInput, true);
+    doc.addEventListener('keydown', onKey, true);
+  }
+
+  function renderRecord() {
+    var r = rec();
+    if (r.done || r.i >= tasks.length) return renderRecorded();
+    var t = tasks[r.i];
+    var list = r.steps[r.i];
+    card.innerHTML =
+      head(w('rec_step', { n: r.i + 1, total: tasks.length })) +
+      '<div class="pgut-body">' +
+        '<p class="pgut-title">' + esc(t.title) + '</p>' +
+        (t.hint ? '<p class="pgut-p">' + esc(t.hint) + '</p>' : '') +
+        '<div class="pgut-tell">' + esc(w('rec_do')) + '</div>' +
+        '<ol class="pgut-recs">' + (list.length ? list.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') : '<li class="is-none">' + esc(w('rec_none')) + '</li>') + '</ol>' +
+        '<div class="pgut-row"><button type="button" class="pgut-btn pgut-undo"' + (list.length ? '' : ' disabled') + '>' + esc(w('rec_undo')) + '</button>' +
+        '<button type="button" class="pgut-btn is-primary pgut-next">' + esc(r.i + 1 < tasks.length ? w('rec_next') : w('rec_finish')) + '</button></div>' +
+        (r.i ? '<button type="button" class="pgut-again pgut-prev">' + esc(w('rec_back')) + '</button>' : '') +
+      '</div>';
+    afterRender();
+    card.querySelector('.pgut-undo').addEventListener('click', function () { list.pop(); save(); render(); });
+    card.querySelector('.pgut-next').addEventListener('click', function () {
+      r.i += 1;
+      if (r.i >= tasks.length) r.done = true;
+      save();
+      render();
+    });
+    var prev = card.querySelector('.pgut-prev');
+    if (prev) prev.addEventListener('click', function () { r.i -= 1; save(); render(); });
+  }
+
+  // The whole tour, as the form and the service take it: the steps' own words
+  // as they came, what was pressed in place of what was guessed.
+  function recordedTour() {
+    var r = rec();
+    var out = { mode: 'tour', subject: cfg.subject || undefined, lang: cfg.lang || undefined };
+    if (cfg.button) out.button = cfg.button;
+    if (cfg.theme && cfg.theme.accent) out.theme = { accent: cfg.theme.accent, card: cfg.theme.card || 'dark' };
+    out.tasks = tasks.map(function (t, i) {
+      var got = r.steps[i] || [];
+      var step = { title: t.title };
+      ['hint', 'say', 'audio'].forEach(function (k) { if (t[k]) step[k] = t[k]; });
+      step['do'] = got.length ? got.slice() : (t['do'] || []).map(lineOf);
+      var firstPress = got.filter(function (l) { return !/^(type |press |go |wait |maybe )/.test(l); })[0];
+      if (firstPress || t.point) step.point = firstPress || t.point;
+      if (t.check) step.check = t.check;
+      return step;
+    });
+    return JSON.stringify(out, null, 2);
+  }
+
+  function renderRecorded() {
+    var text = recordedTour();
+    card.innerHTML =
+      head(w('rec_done_head')) +
+      '<div class="pgut-body"><p class="pgut-title">' + esc(w('rec_done')) + '</p>' +
+      '<p class="pgut-p">' + esc(w('rec_done_p')) + '</p>' +
+      '<textarea class="pgut-json" readonly rows="6"></textarea>' +
+      '<div class="pgut-row"><button type="button" class="pgut-btn is-primary pgut-copy">' + esc(w('rec_copy')) + '</button></div>' +
+      '<button type="button" class="pgut-again pgut-over">' + esc(w('rec_again')) + '</button></div>';
+    card.querySelector('.pgut-json').value = text;
+    afterRender();
+    var box = card.querySelector('.pgut-json');
+    card.querySelector('.pgut-copy').addEventListener('click', function () {
+      var btn = this;
+      var done = function () { btn.textContent = w('rec_copied'); };
+      // a frame without leave to write to the clipboard still has the box
+      box.focus(); box.select();
+      try { if (document.execCommand('copy')) done(); } catch (e) {}
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () {});
+    });
+    card.querySelector('.pgut-over').addEventListener('click', function () {
+      state.rec = null;
+      save();
+      render();
+    });
+  }
+
+  if (recording) {
+    // a page reached without a press (typed into the address bar, say) is a go
+    var r0 = rec();
+    if (!r0.done && r0.i < tasks.length && r0.at && r0.at !== here()) {
+      var last = r0.steps[r0.i][r0.steps[r0.i].length - 1];
+      if (!last || /^(type |press |go |wait )/.test(last)) r0.steps[r0.i].push('go ' + here());
+    }
+    r0.at = here();
+    save();
+    listen(document);
+    setInterval(function () {
+      [].slice.call(document.querySelectorAll('iframe')).forEach(function (f) {
+        try { listen(f.contentDocument); } catch (e) { /* another origin */ }
+      });
+    }, 1000);
   }
 
   /* ---- go -------------------------------------------------------------- */

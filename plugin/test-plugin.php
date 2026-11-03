@@ -192,5 +192,17 @@ case_run(
 	ok( "" === pgut_lang( array( "lang" => "fr\"><script>" ) ), "anything that is not a locale is dropped" );'
 );
 
+case_run(
+	'recording a tour',
+	'$GLOBALS["opts"] = array( "playground_user_test" => json_encode( array(
+		"test" => "record", "report" => "https://example.test/api/events", "mode" => "record",
+		"tasks" => array( array( "id" => "1-a", "title" => "Open the editor" ) ),
+	) ) );
+	require "' . $plugin . '";
+	pgut_enqueue();
+	ok( "record" === $GLOBALS["loc"]["mode"], "a recording says so to the card" );
+	ok( pgut_is_tour( array( "mode" => "record" ) ), "and the site treats it as a tour (welcome guides kept shut)" );'
+);
+
 echo $fails ? "\n$fails case(s) failed\n" : "\nall good\n";
 exit( $fails ? 1 : 0 );

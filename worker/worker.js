@@ -1651,6 +1651,39 @@ async function zipStatus(url) {
   }
 }
 
+// Recording a tour: the draft from the form (or an assistant), opened in
+// Playground with the card in record mode, so the maker does each step and the
+// card writes down what they pressed. Nothing is stored: the whole blueprint
+// rides in the link, and the finished tour comes back through the clipboard.
+async function recordLink(env, req) {
+  let body = {};
+  try { body = sameAsPaste(JSON.parse(await req.text()) || {}); } catch (e) { body = {}; }
+  const tooLong = overLimits(body);
+  if (tooLong.length) return json({ error: tooLong.join(' ') }, 400, CORS);
+  const spec = await readSiteSpec(body);
+  if (spec.error) return json({ error: spec.error }, 400, CORS);
+  let base = spec.blueprintJson || (spec.blueprintBoot ? blueprintFromBoot(spec.blueprintBoot) : null);
+  if (!base && spec.blueprintUrl) {
+    const got = await fetchBlueprint(spec.blueprintUrl);
+    if (got.error) return json({ error: got.error + ' Paste the blueprint JSON instead.' }, 400, CORS);
+    base = got.blueprint;
+  }
+  const langed = cleanLang(body.lang);
+  if (langed.error) return json({ error: langed.error }, 400, CORS);
+  const toured = readTour(Object.assign({}, body, { mode: 'tour' }), null);
+  if (toured.error) return json({ error: toured.error }, 400, CORS);
+  let tasks = cleanTasks(body.tasks);
+  // a tour with no steps yet is recorded as one, to be named in the form
+  if (!tasks.length) tasks = cleanTasks([{ title: 'Step 1' }]);
+  const test = { id: 'record', subject: trim(body.subject, LIMITS.subject) || 'my plugin', tasks, tour: toured.tour, wording: langed.lang ? { lang: langed.lang } : null };
+  const bp = wrapBlueprint(base, test, publicOrigin(req), cardZip(env), null);
+  const opts = bp.steps.find((x) => x && x.step === 'setSiteOptions');
+  const cfg = JSON.parse(opts.options.playground_user_test);
+  cfg.mode = 'record';
+  opts.options.playground_user_test = JSON.stringify(cfg);
+  return json({ link: 'https://playground.wordpress.net/#' + btoa(unescape(encodeURIComponent(JSON.stringify(bp)))) }, 200, CORS);
+}
+
 // The ready-made What's new tour, for the home page's Watch a tour: nothing to
 // make or store, so the whole blueprint rides in the Playground link itself.
 // It carries the recorded voice the set alone does not, since a recording only
@@ -3446,6 +3479,10 @@ const HOME = `<!doctype html>
   <p class="hint" data-test="Five to seven works well. Say what they want, not which button to press — the hint is there for when they are stuck." data-tour="Three to six steps. Each says what it shows, and lists what it presses, one per line: a CSS selector or button &quot;Styles&quot;, or type &quot;words&quot; into …, press Escape, go /wp-admin/…, wait 2. A check confirms each step worked.">Five to seven works well. Say what they want, not which button to press — the hint is there for when they are stuck.</p>
   <div id="tasks"></div>
   <button type="button" class="add" id="add" data-test="Add another" data-tour="Add a step">Add another</button>
+  <div data-only="tour" hidden style="margin-top:14px">
+    <button type="button" class="add" id="recordBtn">Record the clicks in Playground</button>
+    <p class="hint" id="recordMsg" style="margin:8px 0 0">Not sure what each step should press? Open your site in Playground, do each step yourself, and the card writes down exactly what you pressed. Then copy it and paste it into Paste from your assistant above. Add your blueprint below first.</p>
+  </div>
 </fieldset>
 
 <fieldset>
@@ -3769,6 +3806,53 @@ const HOME = `<!doctype html>
       [].slice.call(document.querySelectorAll('[data-bp]')).forEach(function (o) { o.classList.toggle('on', o === b); });
       document.getElementById('bpurl').hidden = mode !== 'url';
       document.getElementById('bpjson').hidden = mode !== 'json';
+    });
+  });
+
+  // Record: the draft as it stands goes to the service, which hands back a
+  // Playground link with the card in record mode. The tab is opened at once,
+  // inside the click, so no pop-up blocker stops it, and pointed there after.
+  document.getElementById('recordBtn').addEventListener('click', function () {
+    var rmsg = document.getElementById('recordMsg');
+    var steps = [].slice.call(tasksEl.querySelectorAll('.task')).map(function (d) {
+      var c = d.querySelector('.t-check').value;
+      var t = { title: d.querySelector('.t-title').value.trim(), hint: d.querySelector('.t-hint').value };
+      if (c === 'page') t.check = { type: 'page', path: d.querySelector('.t-path').value.trim() };
+      else if (c === 'text') t.check = { type: 'text', text: d.querySelector('.t-words').value };
+      else if (c === 'block' || c === 'block_changed') t.check = { type: c, block: d.querySelector('.t-block').value.trim() };
+      else if (c) t.check = c;
+      if (d.querySelector('.t-say').value.trim()) t.say = d.querySelector('.t-say').value.trim();
+      if (d.querySelector('.t-sel').value.trim()) t.point = d.querySelector('.t-sel').value.trim();
+      if (d.querySelector('.t-do').value.trim()) t['do'] = d.querySelector('.t-do').value;
+      return t;
+    }).filter(function (t) { return t.title; });
+    var url = mode === 'url' ? document.getElementById('bpurl').value.trim() : '';
+    var text = mode === 'json' ? document.getElementById('bpjson').value.trim() : '';
+    if (!url && !text) { rmsg.textContent = 'Add the blueprint you demo with first (below), so Playground knows what to open.'; return; }
+    var tab = window.open('about:blank', '_blank');
+    rmsg.textContent = 'Opening Playground…';
+    var got = url ? fetch(url, { headers: { accept: 'application/json' } }).then(function (r) { return r.ok ? r.text() : ''; }, function () { return ''; }) : Promise.resolve(text);
+    got.then(function (bp) {
+      return fetch('/api/record', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          subject: document.getElementById('subject').value,
+          lang: document.getElementById('lang').value || undefined,
+          tasks: steps,
+          blueprintJson: bp || undefined,
+          blueprintUrl: bp ? undefined : url,
+          button: (document.getElementById('btnLabel').value.trim() && document.getElementById('btnUrl').value.trim()) ? { label: document.getElementById('btnLabel').value.trim(), url: document.getElementById('btnUrl').value.trim() } : undefined,
+          theme: { accent: document.getElementById('accent').value, card: document.getElementById('cardTone').value },
+        }),
+      });
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.link) throw new Error(d.error || 'That did not work.');
+      if (tab) tab.location = d.link; else location.href = d.link;
+      rmsg.textContent = 'Opened in a new tab. Do each step yourself and press Next step on the card; at the end, Copy the tour and paste it into Paste from your assistant above.';
+    }).catch(function (e) {
+      if (tab) tab.close();
+      rmsg.textContent = String(e.message || e);
     });
   });
 
@@ -4427,6 +4511,12 @@ export default {
     }
 
     if (url.pathname === '/mcp') return handleMcp(req, env);
+
+    if (url.pathname === '/api/record') {
+      if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+      if (req.method !== 'POST') return json({ error: 'POST the draft tour' }, 405, CORS);
+      return recordLink(env, req);
+    }
 
     if (url.pathname === '/demo/tour') {
       return new Response(null, { status: 302, headers: { location: demoTourLink(publicOrigin(req), cardZip(env)), 'cache-control': 'public, max-age=300' } });
