@@ -302,9 +302,9 @@
   var css = '' +
     '.pgut{position:fixed;width:320px;max-width:calc(100vw - 32px);z-index:2147483000;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:#16181c;background:rgba(255,255,255,.98);border:1px solid rgba(22,24,28,.12);border-radius:14px;box-shadow:0 12px 40px rgba(22,24,28,.18);box-sizing:border-box}' +
     '.pgut *{box-sizing:border-box}' +
-    '.pgut-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px 8px;border-bottom:1px solid rgba(22,24,28,.08);cursor:grab;touch-action:none;user-select:none}' +
+    '.pgut-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 8px;padding:10px 12px 8px;border-bottom:1px solid rgba(22,24,28,.08);cursor:grab;touch-action:none;user-select:none}' +
     '.pgut-head.is-held{cursor:grabbing}' +
-    '.pgut-lab{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(22,24,28,.55)}' +
+    '.pgut-lab{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(22,24,28,.55);white-space:nowrap}' +
     '.pgut-hide{all:unset;cursor:pointer;font-size:12px;color:rgba(22,24,28,.55);padding:2px 6px;border-radius:6px}.pgut-hide:hover{background:rgba(22,24,28,.06)}' +
     '.pgut-body{padding:12px}' +
     '.pgut-title{margin:0 0 6px;font-size:16px;font-weight:600;line-height:1.3}' +
