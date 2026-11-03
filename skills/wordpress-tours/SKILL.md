@@ -73,6 +73,26 @@ or too dark to read as words on the card, uses a readable shade for the
 words and says so in the check. Leave `theme` out for the service's mint on
 a dark card.
 
+## Languages
+
+`lang` puts the whole tour in another language: a WordPress locale
+(`fr_FR`, `de_DE`, `es_ES`, `it_IT`, `nl_NL`, `pt_BR`) or a short code
+(`fr`). The visitor's WordPress boots in it, and the card's own buttons and
+the welcome page follow it in French, German, Spanish, Italian, Dutch and
+Portuguese. Any other locale still sets the site's language, but the card's
+own words stay English.
+
+Everything you write stays as you write it, so write the subject, titles,
+hints and `say` lines in that language. Steps that find a button by its
+words (`button "Styles"`) need the words WordPress shows in that language
+(`button "Estilos"` in Spanish); ids and classes work in every language.
+The browser reads the script in a voice for that language where the
+computer has one, and an `audio` recording in the language sounds better.
+
+For several languages, make one tour per language: same steps, translated
+words. Check each with `usertest_check`, which points out steps that press
+buttons by their words.
+
 ## Planning
 
 - Three to six steps. Most people stop somewhere around five.

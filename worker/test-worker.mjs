@@ -2,7 +2,7 @@
 // page, the wrapped blueprint, events coming in, and the results coming out —
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
-import worker, { TASK_SETS, TOUR_SETS, readTour, cleanTheme, contrast, cleanActions, actionLines, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
+import worker, { TASK_SETS, TOUR_SETS, cleanLang, readTour, cleanTheme, contrast, cleanActions, actionLines, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 import { localDb } from './local-db.mjs';
 
 // A real SQL engine rather than a mock: see local-db.mjs.
@@ -913,6 +913,53 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   check(cfg.endAudio && cfg.endAudio.endsWith('whats-new-v4-end.mp3'), 'demo tour: the closing words are recorded too');
   const home = await (await call(env(), '/')).text();
   check(home.includes('href="/demo/tour"') && home.includes('data-ask="tour"'), 'home: offers tours, with a way to watch one');
+}
+
+// A test or tour in another language: the site, the card and the welcome page
+// follow it; the owner's own words are theirs to write.
+{
+  check(cleanLang('fr').lang === 'fr_FR' && cleanLang('fr-fr').lang === 'fr_FR' && cleanLang('pt').lang === 'pt_BR', 'language: a short code or a dashed locale becomes a WordPress locale');
+  check(cleanLang('de_DE_formal').lang === 'de_DE_formal' && cleanLang('ja').lang === 'ja', 'language: a variant is kept, and any locale passes for the site');
+  check(cleanLang('en').lang === '' && cleanLang('').lang === '', 'language: English is the default, so it adds nothing');
+  check(!!cleanLang('français!').error, 'language: something that is not a locale is refused');
+
+  const eL = env();
+  let r = await call(eL, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { lang: 'not a language' }) });
+  check(r.status === 400 && /locale/.test((await r.json()).error), 'language: a made-up one is refused at the form');
+
+  r = await call(eL, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { subject: 'mon thème', lang: 'fr' }) });
+  const fr = await r.json();
+  check(r.status === 200 && fr.lang === 'fr_FR', 'language: the test is made in French');
+  const page = await (await call(eL, '/t/' + fr.id)).text();
+  check(page.includes('<html lang="fr">') && page.includes('Merci de nous aider à améliorer mon thème') && page.includes('Je n’ai pas réussi'), 'language: the welcome page is in French, naming the card’s own buttons');
+  const bp = await (await call(eL, '/t/' + fr.id + '/blueprint.json')).json();
+  const names = bp.steps.map((x) => x.step);
+  check(names.indexOf('setSiteLanguage') !== -1 && names.indexOf('setSiteLanguage') < names.indexOf('installPlugin'), 'language: the site is set to it before the card goes in');
+  check(bp.steps.find((x) => x.step === 'setSiteLanguage').language === 'fr_FR', 'language: as the WordPress locale');
+  const opt = JSON.parse(bp.steps.find((x) => x.step === 'setSiteOptions').options.playground_user_test);
+  check(opt.lang === 'fr_FR', 'language: the card is told, so its own words follow');
+
+  const en = await (await call(eL, '/api/tests', { method: 'POST', body: GOOD })).json();
+  const enBp = await (await call(eL, '/t/' + en.id + '/blueprint.json')).json();
+  check(!enBp.steps.some((x) => x.step === 'setSiteLanguage') && !JSON.parse(enBp.steps[enBp.steps.length - 1].options.playground_user_test).lang, 'language: an English test is just as it was');
+
+  r = await call(eL, '/api/tests?test=' + fr.id, { method: 'PATCH', headers: { 'x-test-password': GOOD.password }, body: { lang: 'de' } });
+  check(r.status === 200, 'language: it can be changed later');
+  const de = await (await call(eL, '/t/' + fr.id + '/blueprint.json')).json();
+  check(de.steps.find((x) => x.step === 'setSiteLanguage').language === 'de_DE', 'language: and the next tester gets the new one');
+  r = await call(eL, '/api/tests?test=' + fr.id, { method: 'PATCH', headers: { 'x-test-password': GOOD.password }, body: { subject: 'mein Theme' } });
+  const kept = await (await call(eL, '/t/' + fr.id)).text();
+  check(kept.includes('<html lang="de">'), 'language: an edit that does not mention it keeps it');
+
+  const tour = await (await call(eL, '/api/tests', { method: 'POST', body: { subject: 'Novedades de WordPress', taskSet: 'whats-new', mode: 'tour', lang: 'es_ES', password: GOOD.password, blueprintJson: GOOD.blueprintJson } })).json();
+  const tp = await (await call(eL, '/t/' + tour.id)).text();
+  check(tp.includes('Un breve recorrido por Novedades de WordPress') && tp.includes('Empezar el recorrido'), 'language: a tour’s welcome page follows it too');
+
+  const lint = lintTest({ subject: 'Novedades', task_set: 'whats-new', mode: 'tour', lang: 'es' });
+  check(lint.notes.some((x) => /by the words on it/.test(x) && /Spanish/.test(x)), 'language: steps that press buttons by their English words are pointed out');
+  const lintJa = lintTest({ subject: 'x', task_set: 'whats-new', mode: 'tour', lang: 'ja' });
+  check(lintJa.notes.some((x) => /stay in English/.test(x)), 'language: one the card cannot speak says its words stay English');
+  check(lintTest(Object.assign({}, GOOD, { lang: 'zz zz' })).problems.some((x) => /locale/.test(x)), 'language: the check refuses a made-up one too');
 }
 
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');

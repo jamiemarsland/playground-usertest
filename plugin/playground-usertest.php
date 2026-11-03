@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Playground user testing
  * Description:       Shows a tester a small card of things to try, and sends what happens back to the test that sent them.
- * Version:           1.3.0
+ * Version:           1.4.0
  * Requires at least: 6.5
  * Requires PHP:      7.4
  * License:           GPL-2.0-or-later
@@ -26,7 +26,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'PGUT_VERSION', '1.3.0' );
+define( 'PGUT_VERSION', '1.4.0' );
 
 /**
  * The test this site was booted for, or nothing.
@@ -213,9 +213,22 @@ function pgut_enqueue() {
 			'mode'    => pgut_is_tour( $test ) ? 'tour' : 'test',
 			'button'  => pgut_button( $test ),
 			'theme'   => pgut_theme( $test ),
+			// the site's language, so the card's own words match it
+			'lang'    => pgut_lang( $test ),
 			'endAudio' => isset( $test['endAudio'] ) && is_string( $test['endAudio'] ) && preg_match( '#^https?://#', $test['endAudio'] ) ? esc_url_raw( $test['endAudio'] ) : '',
 		)
 	);
+}
+
+/**
+ * The language the card speaks, as a WordPress locale (fr_FR), or '' for English.
+ *
+ * @param array $test The test option.
+ * @return string
+ */
+function pgut_lang( $test ) {
+	$lang = isset( $test['lang'] ) ? (string) $test['lang'] : '';
+	return preg_match( '/^[a-z]{2,3}(_[A-Z]{2})?(_[a-z0-9]+)?$/', $lang ) ? $lang : '';
 }
 
 /**

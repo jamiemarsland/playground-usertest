@@ -45,6 +45,155 @@
   // not what anyone expects from a website
   if (state.voice === undefined) state.voice = false;
 
+  /* ---- its own words --------------------------------------------------- */
+  // The card speaks the site's language. A test or tour made for a French
+  // site sends lang "fr_FR", and everything the card says itself (buttons,
+  // headings, the closing questions) comes from here; the owner's own words,
+  // the tasks and hints, arrive already written in it. A language not here
+  // keeps English, which the service says when the test is made.
+  var WORDS = {
+    en: {
+      here: 'Here', aria_tour: 'Tour', aria_test: 'Testing tasks',
+      sound_title: 'Read each step out loud', sound_off: 'Turn on sound', sound_tap: 'Tap for sound', sound_on: 'Sound on',
+      restart_title: 'Start the tour again from the beginning', restart: 'Restart',
+      hide_title: 'Put this card away for a moment', hide: 'Hide',
+      step: 'Step {n} of {total}', tour_finished: 'Tour finished', thanks_testing: 'Thanks for testing', task: 'Task {n} of {total}', last_questions: 'Last few questions',
+      show_hint: 'Stuck? Show a hint', note: 'Anything to say about this one? (optional)', couldnt: 'Couldn’t do it', done: 'Done',
+      take_time: 'Take your time. Say what you think out loud if someone is with you.',
+      q_happy: 'How happy are you with how it went?', q_finish: 'If you had kept going, could you have finished?', q_feel: 'How did it feel to use?', q_confused: 'What confused you, if anything?',
+      four: 'Thank you. Four quick questions.', yes: 'Yes', maybe: 'Maybe', no: 'No', name: 'Your name, if you like', optional: 'optional', send: 'Send',
+      all_done: 'All done', thanks: 'Thank you. That really helps.',
+      thanks_p: 'Your answers have gone to whoever asked you to try this. Carry on playing with the site for as long as you like; it is yours until you close the tab.',
+      end_say: 'That’s the tour. The site is yours to keep exploring until you close this tab.', end_say_link: ' There’s a link on the card if you want to go further.',
+      nice: '✓ Nice, that worked', playing: 'Playing', paused: 'Paused. Try it yourself if you like, or press Play.',
+      start_tour: 'Start the tour', skip: 'Skip', pause: 'Pause', play: 'Play',
+      tour_done: 'That’s the tour.', tour_done_p: 'The site is yours until you close the tab, so carry on for as long as you like.', again: 'Watch it again',
+      elsewhere: 'Playing in another tab', elsewhere_p: 'This tour is playing in another tab of this site.', play_here: 'Play it here',
+      no_find: 'This step could not find what to press on this site. Skip it, or try it yourself.', no_work: 'That did not work on this site. Skip it, or try it yourself.'
+    },
+    fr: {
+      here: 'Ici', aria_tour: 'Visite', aria_test: 'Tâches à tester',
+      sound_title: 'Lire chaque étape à voix haute', sound_off: 'Activer le son', sound_tap: 'Touchez pour le son', sound_on: 'Son activé',
+      restart_title: 'Recommencer la visite depuis le début', restart: 'Recommencer',
+      hide_title: 'Ranger cette carte un instant', hide: 'Masquer',
+      step: 'Étape {n} sur {total}', tour_finished: 'Visite terminée', thanks_testing: 'Merci pour votre test', task: 'Tâche {n} sur {total}', last_questions: 'Quelques dernières questions',
+      show_hint: 'Bloqué ? Afficher un indice', note: 'Un commentaire sur celle-ci ? (facultatif)', couldnt: 'Je n’ai pas réussi', done: 'Terminé',
+      take_time: 'Prenez votre temps. Dites ce que vous pensez à voix haute si quelqu’un est avec vous.',
+      q_happy: 'Êtes-vous satisfait de la façon dont ça s’est passé ?', q_finish: 'Si vous aviez continué, auriez-vous pu terminer ?', q_feel: 'Comment l’avez-vous trouvé à l’usage ?', q_confused: 'Qu’est-ce qui vous a semblé confus, le cas échéant ?',
+      four: 'Merci. Quatre questions rapides.', yes: 'Oui', maybe: 'Peut-être', no: 'Non', name: 'Votre prénom, si vous voulez', optional: 'facultatif', send: 'Envoyer',
+      all_done: 'Terminé', thanks: 'Merci. Ça aide vraiment.',
+      thanks_p: 'Vos réponses ont été envoyées à la personne qui vous a demandé d’essayer. Continuez à explorer le site aussi longtemps que vous voulez ; il est à vous jusqu’à ce que vous fermiez l’onglet.',
+      end_say: 'C’est la fin de la visite. Le site est à vous jusqu’à ce que vous fermiez cet onglet.', end_say_link: ' Il y a un lien sur la carte si vous voulez aller plus loin.',
+      nice: '✓ Bravo, ça a marché', playing: 'Lecture en cours', paused: 'En pause. Essayez vous-même si vous voulez, ou appuyez sur Lecture.',
+      start_tour: 'Commencer la visite', skip: 'Passer', pause: 'Pause', play: 'Lecture',
+      tour_done: 'C’est la fin de la visite.', tour_done_p: 'Le site est à vous jusqu’à ce que vous fermiez l’onglet, alors continuez aussi longtemps que vous voulez.', again: 'Revoir la visite',
+      elsewhere: 'Lecture dans un autre onglet', elsewhere_p: 'Cette visite est en cours dans un autre onglet de ce site.', play_here: 'La lire ici',
+      no_find: 'Cette étape n’a pas trouvé sur quoi appuyer sur ce site. Passez-la, ou essayez vous-même.', no_work: 'Ça n’a pas marché sur ce site. Passez cette étape, ou essayez vous-même.'
+    },
+    de: {
+      here: 'Hier', aria_tour: 'Tour', aria_test: 'Testaufgaben',
+      sound_title: 'Jeden Schritt vorlesen', sound_off: 'Ton einschalten', sound_tap: 'Für Ton tippen', sound_on: 'Ton an',
+      restart_title: 'Die Tour von vorn beginnen', restart: 'Neu starten',
+      hide_title: 'Diese Karte kurz wegräumen', hide: 'Ausblenden',
+      step: 'Schritt {n} von {total}', tour_finished: 'Tour beendet', thanks_testing: 'Danke fürs Testen', task: 'Aufgabe {n} von {total}', last_questions: 'Noch ein paar Fragen',
+      show_hint: 'Kommst du nicht weiter? Tipp anzeigen', note: 'Möchtest du etwas dazu sagen? (optional)', couldnt: 'Hat nicht geklappt', done: 'Erledigt',
+      take_time: 'Lass dir Zeit. Sag laut, was du denkst, wenn jemand dabei ist.',
+      q_happy: 'Wie zufrieden bist du damit, wie es gelaufen ist?', q_finish: 'Hättest du es geschafft, wenn du weitergemacht hättest?', q_feel: 'Wie hat es sich angefühlt?', q_confused: 'Was war verwirrend, falls etwas?',
+      four: 'Danke. Vier kurze Fragen.', yes: 'Ja', maybe: 'Vielleicht', no: 'Nein', name: 'Dein Name, wenn du magst', optional: 'optional', send: 'Senden',
+      all_done: 'Fertig', thanks: 'Danke. Das hilft wirklich.',
+      thanks_p: 'Deine Antworten sind bei der Person angekommen, die dich gebeten hat, das auszuprobieren. Probier gern weiter herum; die Website gehört dir, bis du den Tab schließt.',
+      end_say: 'Das war die Tour. Die Website gehört dir, bis du diesen Tab schließt.', end_say_link: ' Auf der Karte ist ein Link, wenn du mehr sehen möchtest.',
+      nice: '✓ Super, das hat geklappt', playing: 'Läuft', paused: 'Pausiert. Probier es gern selbst aus oder drück auf Abspielen.',
+      start_tour: 'Tour starten', skip: 'Überspringen', pause: 'Pause', play: 'Abspielen',
+      tour_done: 'Das war die Tour.', tour_done_p: 'Die Website gehört dir, bis du den Tab schließt, also mach gern weiter, so lange du willst.', again: 'Noch einmal ansehen',
+      elsewhere: 'Läuft in einem anderen Tab', elsewhere_p: 'Diese Tour läuft in einem anderen Tab dieser Website.', play_here: 'Hier abspielen',
+      no_find: 'Dieser Schritt hat auf dieser Website nicht gefunden, was er drücken soll. Überspring ihn oder probier es selbst.', no_work: 'Das hat auf dieser Website nicht geklappt. Überspring den Schritt oder probier es selbst.'
+    },
+    es: {
+      here: 'Aquí', aria_tour: 'Recorrido', aria_test: 'Tareas de prueba',
+      sound_title: 'Leer cada paso en voz alta', sound_off: 'Activar sonido', sound_tap: 'Toca para el sonido', sound_on: 'Sonido activado',
+      restart_title: 'Empezar el recorrido desde el principio', restart: 'Reiniciar',
+      hide_title: 'Guardar esta tarjeta un momento', hide: 'Ocultar',
+      step: 'Paso {n} de {total}', tour_finished: 'Recorrido terminado', thanks_testing: 'Gracias por probarlo', task: 'Tarea {n} de {total}', last_questions: 'Unas últimas preguntas',
+      show_hint: '¿Te has atascado? Ver una pista', note: '¿Algo que comentar sobre esta? (opcional)', couldnt: 'No lo conseguí', done: 'Hecho',
+      take_time: 'Tómate tu tiempo. Si alguien está contigo, di en voz alta lo que piensas.',
+      q_happy: '¿Qué tan satisfecho estás con cómo fue?', q_finish: 'Si hubieras seguido, ¿habrías podido terminar?', q_feel: '¿Qué te pareció usarlo?', q_confused: '¿Qué te resultó confuso, si algo?',
+      four: 'Gracias. Cuatro preguntas rápidas.', yes: 'Sí', maybe: 'Quizás', no: 'No', name: 'Tu nombre, si quieres', optional: 'opcional', send: 'Enviar',
+      all_done: 'Listo', thanks: 'Gracias. Esto ayuda mucho.',
+      thanks_p: 'Tus respuestas han llegado a quien te pidió probar esto. Sigue explorando el sitio todo lo que quieras; es tuyo hasta que cierres la pestaña.',
+      end_say: 'Y aquí termina el recorrido. El sitio es tuyo hasta que cierres esta pestaña.', end_say_link: ' Hay un enlace en la tarjeta si quieres saber más.',
+      nice: '✓ Genial, funcionó', playing: 'Reproduciendo', paused: 'En pausa. Pruébalo tú si quieres, o pulsa Reproducir.',
+      start_tour: 'Empezar el recorrido', skip: 'Saltar', pause: 'Pausa', play: 'Reproducir',
+      tour_done: 'Y aquí termina el recorrido.', tour_done_p: 'El sitio es tuyo hasta que cierres la pestaña, así que sigue todo lo que quieras.', again: 'Verlo otra vez',
+      elsewhere: 'Reproduciéndose en otra pestaña', elsewhere_p: 'Este recorrido se está reproduciendo en otra pestaña de este sitio.', play_here: 'Reproducir aquí',
+      no_find: 'Este paso no encontró qué pulsar en este sitio. Sáltalo o pruébalo tú.', no_work: 'Eso no funcionó en este sitio. Salta el paso o pruébalo tú.'
+    },
+    it: {
+      here: 'Qui', aria_tour: 'Tour', aria_test: 'Attività di test',
+      sound_title: 'Leggi ogni passaggio ad alta voce', sound_off: 'Attiva l’audio', sound_tap: 'Tocca per l’audio', sound_on: 'Audio attivo',
+      restart_title: 'Ricomincia il tour dall’inizio', restart: 'Ricomincia',
+      hide_title: 'Metti via questo riquadro per un momento', hide: 'Nascondi',
+      step: 'Passaggio {n} di {total}', tour_finished: 'Tour finito', thanks_testing: 'Grazie per il test', task: 'Attività {n} di {total}', last_questions: 'Ultime domande',
+      show_hint: 'Bloccato? Mostra un suggerimento', note: 'Vuoi dire qualcosa su questa? (facoltativo)', couldnt: 'Non ci sono riuscito', done: 'Fatto',
+      take_time: 'Prenditi il tuo tempo. Se c’è qualcuno con te, di’ ad alta voce cosa pensi.',
+      q_happy: 'Quanto sei soddisfatto di come è andata?', q_finish: 'Se avessi continuato, saresti riuscito a finire?', q_feel: 'Come ti è sembrato usarlo?', q_confused: 'Cosa ti ha confuso, se qualcosa?',
+      four: 'Grazie. Quattro domande veloci.', yes: 'Sì', maybe: 'Forse', no: 'No', name: 'Il tuo nome, se vuoi', optional: 'facoltativo', send: 'Invia',
+      all_done: 'Fatto', thanks: 'Grazie. È davvero utile.',
+      thanks_p: 'Le tue risposte sono arrivate a chi ti ha chiesto di provarlo. Continua a esplorare il sito quanto vuoi; è tuo finché non chiudi la scheda.',
+      end_say: 'Il tour è finito. Il sito è tuo finché non chiudi questa scheda.', end_say_link: ' Nel riquadro c’è un link se vuoi saperne di più.',
+      nice: '✓ Ottimo, ha funzionato', playing: 'In riproduzione', paused: 'In pausa. Prova tu se vuoi, oppure premi Riproduci.',
+      start_tour: 'Inizia il tour', skip: 'Salta', pause: 'Pausa', play: 'Riproduci',
+      tour_done: 'Il tour è finito.', tour_done_p: 'Il sito è tuo finché non chiudi la scheda, quindi continua quanto vuoi.', again: 'Guardalo di nuovo',
+      elsewhere: 'In riproduzione in un’altra scheda', elsewhere_p: 'Questo tour è in riproduzione in un’altra scheda di questo sito.', play_here: 'Riproduci qui',
+      no_find: 'Questo passaggio non ha trovato cosa premere su questo sito. Saltalo o prova tu.', no_work: 'Non ha funzionato su questo sito. Salta il passaggio o prova tu.'
+    },
+    nl: {
+      here: 'Hier', aria_tour: 'Rondleiding', aria_test: 'Testtaken',
+      sound_title: 'Elke stap hardop voorlezen', sound_off: 'Geluid aanzetten', sound_tap: 'Tik voor geluid', sound_on: 'Geluid aan',
+      restart_title: 'De rondleiding opnieuw beginnen', restart: 'Opnieuw',
+      hide_title: 'Deze kaart even wegleggen', hide: 'Verbergen',
+      step: 'Stap {n} van {total}', tour_finished: 'Rondleiding klaar', thanks_testing: 'Bedankt voor het testen', task: 'Taak {n} van {total}', last_questions: 'Nog een paar vragen',
+      show_hint: 'Vast? Toon een hint', note: 'Wil je hier iets over zeggen? (optioneel)', couldnt: 'Het lukte niet', done: 'Klaar',
+      take_time: 'Neem je tijd. Zeg hardop wat je denkt als er iemand bij je is.',
+      q_happy: 'Hoe tevreden ben je over hoe het ging?', q_finish: 'Als je was doorgegaan, had je het dan kunnen afmaken?', q_feel: 'Hoe voelde het om te gebruiken?', q_confused: 'Wat vond je verwarrend, als er iets was?',
+      four: 'Bedankt. Vier korte vragen.', yes: 'Ja', maybe: 'Misschien', no: 'Nee', name: 'Je naam, als je wilt', optional: 'optioneel', send: 'Versturen',
+      all_done: 'Klaar', thanks: 'Bedankt. Dit helpt echt.',
+      thanks_p: 'Je antwoorden zijn verstuurd naar wie je vroeg dit te proberen. Speel gerust verder met de site; hij is van jou tot je het tabblad sluit.',
+      end_say: 'Dat was de rondleiding. De site is van jou tot je dit tabblad sluit.', end_say_link: ' Er staat een link op de kaart als je verder wilt kijken.',
+      nice: '✓ Mooi, dat werkte', playing: 'Speelt af', paused: 'Gepauzeerd. Probeer het zelf als je wilt, of druk op Afspelen.',
+      start_tour: 'Rondleiding starten', skip: 'Overslaan', pause: 'Pauze', play: 'Afspelen',
+      tour_done: 'Dat was de rondleiding.', tour_done_p: 'De site is van jou tot je het tabblad sluit, dus ga gerust door zo lang je wilt.', again: 'Nog eens bekijken',
+      elsewhere: 'Speelt af in een ander tabblad', elsewhere_p: 'Deze rondleiding speelt af in een ander tabblad van deze site.', play_here: 'Hier afspelen',
+      no_find: 'Deze stap vond op deze site niet waar hij op moest drukken. Sla hem over of probeer het zelf.', no_work: 'Dat werkte niet op deze site. Sla de stap over of probeer het zelf.'
+    },
+    pt: {
+      here: 'Aqui', aria_tour: 'Tour', aria_test: 'Tarefas de teste',
+      sound_title: 'Ler cada passo em voz alta', sound_off: 'Ativar som', sound_tap: 'Toque para o som', sound_on: 'Som ativado',
+      restart_title: 'Começar o tour do início', restart: 'Recomeçar',
+      hide_title: 'Guardar este cartão por um momento', hide: 'Ocultar',
+      step: 'Passo {n} de {total}', tour_finished: 'Tour concluído', thanks_testing: 'Obrigado por testar', task: 'Tarefa {n} de {total}', last_questions: 'Últimas perguntas',
+      show_hint: 'Travou? Ver uma dica', note: 'Algo a dizer sobre esta? (opcional)', couldnt: 'Não consegui', done: 'Feito',
+      take_time: 'Sem pressa. Se alguém estiver com você, diga em voz alta o que está pensando.',
+      q_happy: 'Quão satisfeito você está com como foi?', q_finish: 'Se tivesse continuado, você teria conseguido terminar?', q_feel: 'Como foi usar?', q_confused: 'O que deixou você confuso, se algo?',
+      four: 'Obrigado. Quatro perguntas rápidas.', yes: 'Sim', maybe: 'Talvez', no: 'Não', name: 'Seu nome, se quiser', optional: 'opcional', send: 'Enviar',
+      all_done: 'Pronto', thanks: 'Obrigado. Isso ajuda muito.',
+      thanks_p: 'Suas respostas foram enviadas para quem pediu que você testasse. Continue explorando o site o quanto quiser; ele é seu até você fechar a aba.',
+      end_say: 'Esse foi o tour. O site é seu até você fechar esta aba.', end_say_link: ' Há um link no cartão se quiser saber mais.',
+      nice: '✓ Boa, funcionou', playing: 'Reproduzindo', paused: 'Pausado. Tente você mesmo se quiser, ou toque em Reproduzir.',
+      start_tour: 'Começar o tour', skip: 'Pular', pause: 'Pausar', play: 'Reproduzir',
+      tour_done: 'Esse foi o tour.', tour_done_p: 'O site é seu até você fechar a aba, então continue o quanto quiser.', again: 'Ver de novo',
+      elsewhere: 'Reproduzindo em outra aba', elsewhere_p: 'Este tour está sendo reproduzido em outra aba deste site.', play_here: 'Reproduzir aqui',
+      no_find: 'Este passo não encontrou onde clicar neste site. Pule ou tente você mesmo.', no_work: 'Isso não funcionou neste site. Pule o passo ou tente você mesmo.'
+    }
+  };
+  var lang = String(cfg.lang || 'en').slice(0, 2).toLowerCase();
+  var W = WORDS[lang] || WORDS.en;
+  function w(key, vars) {
+    var s = W[key] || WORDS.en[key] || '';
+    if (vars) Object.keys(vars).forEach(function (k) { s = s.split('{' + k + '}').join(String(vars[k])); });
+    return s;
+  }
+
   function load() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
 
@@ -190,7 +339,7 @@
   var card = document.createElement('div');
   card.className = tour ? 'pgut is-tour' : 'pgut';
   card.setAttribute('role', 'complementary');
-  card.setAttribute('aria-label', tour ? 'Tour' : 'Testing tasks');
+  card.setAttribute('aria-label', tour ? w('aria_tour') : w('aria_test'));
   var pill = document.createElement('button');
   pill.className = tour ? 'pgut-pill is-tour' : 'pgut-pill';
   pill.type = 'button';
@@ -202,7 +351,7 @@
   ring.className = 'pgut-ring';
   ring.hidden = true;
   ring.setAttribute('aria-hidden', 'true');
-  ring.innerHTML = '<span>Here</span>';
+  ring.innerHTML = '<span>' + esc(w('here')) + '</span>';
   document.body.appendChild(ring);
   var pointer = document.createElement('div');
   pointer.className = 'pgut-cursor';
@@ -315,15 +464,15 @@
 
   function head(label) {
     var sound = voiceOk
-      ? '<button type="button" class="pgut-hide pgut-sound" aria-pressed="' + (state.voice ? 'true' : 'false') + '" title="Read each step out loud">' +
-        (!state.voice ? 'Turn on sound' : voiceBlocked ? 'Tap for sound' : 'Sound on') + '</button>'
+      ? '<button type="button" class="pgut-hide pgut-sound" aria-pressed="' + (state.voice ? 'true' : 'false') + '" title="' + esc(w('sound_title')) + '">' +
+        esc(!state.voice ? w('sound_off') : voiceBlocked ? w('sound_tap') : w('sound_on')) + '</button>'
       : '';
     // once a tour is under way, starting it again is always one press away
     var again = tour && state.begun && !spectator
-      ? '<button type="button" class="pgut-hide pgut-restart" title="Start the tour again from the beginning">Restart</button>'
+      ? '<button type="button" class="pgut-hide pgut-restart" title="' + esc(w('restart_title')) + '">' + esc(w('restart')) + '</button>'
       : '';
     return '<div class="pgut-head"><span class="pgut-lab">' + esc(label) + '</span>' +
-      '<span>' + sound + again + '<button type="button" class="pgut-hide pgut-away" title="Put this card away for a moment">Hide</button></span></div>';
+      '<span>' + sound + again + '<button type="button" class="pgut-hide pgut-away" title="' + esc(w('hide_title')) + '">' + esc(w('hide')) + '</button></span></div>';
   }
 
   function afterRender() {
@@ -349,10 +498,10 @@
       card.hidden = true;
       pill.hidden = false;
       pill.textContent = tour
-        ? (state.i < tasks.length ? 'Step ' + (state.i + 1) + ' of ' + tasks.length : 'Tour finished')
+        ? (state.i < tasks.length ? w('step', { n: state.i + 1, total: tasks.length }) : w('tour_finished'))
         : state.wrapped
-        ? 'Thanks for testing'
-        : (state.i < tasks.length ? 'Task ' + (state.i + 1) + ' of ' + tasks.length : 'Last few questions');
+        ? w('thanks_testing')
+        : (state.i < tasks.length ? w('task', { n: state.i + 1, total: tasks.length }) : w('last_questions'));
       place();
       return;
     }
@@ -365,16 +514,16 @@
 
     var t = tasks[state.i];
     card.innerHTML =
-      head('Task ' + (state.i + 1) + ' of ' + tasks.length) +
+      head(w('task', { n: state.i + 1, total: tasks.length })) +
       '<div class="pgut-body">' +
         '<p class="pgut-title">' + esc(t.title) + '</p>' +
         (t.why ? '<p class="pgut-p">' + esc(t.why) + '</p>' : '') +
-        (t.hint ? '<button type="button" class="pgut-hintbtn">Stuck? Show a hint</button><div class="pgut-hint" hidden>' + esc(t.hint) + '</div>' : '') +
-        '<textarea class="pgut-note" placeholder="Anything to say about this one? (optional)"></textarea>' +
-        '<div class="pgut-row"><button type="button" class="pgut-btn pgut-skip">Couldn’t do it</button>' +
-        '<button type="button" class="pgut-btn is-primary pgut-done">Done</button></div>' +
+        (t.hint ? '<button type="button" class="pgut-hintbtn">' + esc(w('show_hint')) + '</button><div class="pgut-hint" hidden>' + esc(t.hint) + '</div>' : '') +
+        '<textarea class="pgut-note" placeholder="' + esc(w('note')) + '"></textarea>' +
+        '<div class="pgut-row"><button type="button" class="pgut-btn pgut-skip">' + esc(w('couldnt')) + '</button>' +
+        '<button type="button" class="pgut-btn is-primary pgut-done">' + esc(w('done')) + '</button></div>' +
       '</div>' +
-      '<div class="pgut-foot">Take your time. Say what you think out loud if someone is with you.</div>';
+      '<div class="pgut-foot">' + esc(w('take_time')) + '</div>';
     afterRender();
 
     var hb = card.querySelector('.pgut-hintbtn');
@@ -459,30 +608,30 @@
   // The closing questions suit any test, not only one about building a site;
   // a test that wants its own words for any of them sends those instead.
   var QUESTIONS = {
-    happy: 'How happy are you with how it went?',
-    finish: 'If you had kept going, could you have finished?',
-    feel: 'How did it feel to use?',
-    confused: 'What confused you, if anything?'
+    happy: w('q_happy'),
+    finish: w('q_finish'),
+    feel: w('q_feel'),
+    confused: w('q_confused')
   };
   var own = (window.PGUT && PGUT.questions) || {};
   Object.keys(QUESTIONS).forEach(function (k) { if (typeof own[k] === 'string' && own[k]) QUESTIONS[k] = own[k]; });
 
   function renderWrap() {
     card.innerHTML =
-      head('Last few questions') +
+      head(w('last_questions')) +
       '<div class="pgut-body">' +
-        '<p class="pgut-title">Thank you. Four quick questions.</p>' +
+        '<p class="pgut-title">' + esc(w('four')) + '</p>' +
         '<div class="pgut-q">' + esc(QUESTIONS.happy) + '</div>' +
         '<div class="pgut-scale" data-q="happy"><button type="button" data-v="1">1</button><button type="button" data-v="2">2</button><button type="button" data-v="3">3</button><button type="button" data-v="4">4</button><button type="button" data-v="5">5</button></div>' +
         '<div class="pgut-q">' + esc(QUESTIONS.finish) + '</div>' +
-        '<div class="pgut-scale" data-q="confident"><button type="button" data-v="yes">Yes</button><button type="button" data-v="maybe">Maybe</button><button type="button" data-v="no">No</button></div>' +
+        '<div class="pgut-scale" data-q="confident"><button type="button" data-v="yes">' + esc(w('yes')) + '</button><button type="button" data-v="maybe">' + esc(w('maybe')) + '</button><button type="button" data-v="no">' + esc(w('no')) + '</button></div>' +
         '<div class="pgut-q">' + esc(QUESTIONS.feel) + '</div>' +
         '<textarea data-q="feel"></textarea>' +
         '<div class="pgut-q">' + esc(QUESTIONS.confused) + '</div>' +
         '<textarea data-q="confused"></textarea>' +
-        '<div class="pgut-q">Your name, if you like</div>' +
-        '<input type="text" data-q="name" placeholder="optional">' +
-        '<div class="pgut-row"><button type="button" class="pgut-btn is-primary pgut-send">Send</button></div>' +
+        '<div class="pgut-q">' + esc(w('name')) + '</div>' +
+        '<input type="text" data-q="name" placeholder="' + esc(w('optional')) + '">' +
+        '<div class="pgut-row"><button type="button" class="pgut-btn is-primary pgut-send">' + esc(w('send')) + '</button></div>' +
       '</div>';
     afterRender();
 
@@ -512,9 +661,9 @@
 
   function renderThanks() {
     card.innerHTML =
-      head('All done') +
-      '<div class="pgut-body"><p class="pgut-title">Thank you. That really helps.</p>' +
-      '<p class="pgut-p">Your answers have gone to whoever asked you to try this. Carry on playing with the site for as long as you like; it is yours until you close the tab.</p></div>';
+      head(w('all_done')) +
+      '<div class="pgut-body"><p class="pgut-title">' + esc(w('thanks')) + '</p>' +
+      '<p class="pgut-p">' + esc(w('thanks_p')) + '</p></div>';
     afterRender();
   }
 
@@ -596,8 +745,7 @@
   }
 
   function endWords() {
-    return 'That\u2019s the tour. The site is yours to keep exploring until you close this tab.' +
-      (cfg.button && cfg.button.label ? ' There\u2019s a link on the card if you want to go further.' : '');
+    return w('end_say') + (cfg.button && cfg.button.label ? w('end_say_link') : '');
   }
 
   function hush() {
@@ -635,21 +783,21 @@
     var t = tasks[state.i];
     var first = !state.begun;
     var status = '';
-    if (state.nice) status = '<p class="pgut-nice" role="status">✓ Nice, that worked</p>';
+    if (state.nice) status = '<p class="pgut-nice" role="status">' + esc(w('nice')) + '</p>';
     else if (state.problem) status = '<p class="pgut-wait" role="status">' + esc(state.problem) + '</p>';
-    else if (state.playing) status = '<p class="pgut-wait"><i></i>Playing</p>';
-    else if (!first) status = '<p class="pgut-wait">Paused. Try it yourself if you like, or press Play.</p>';
+    else if (state.playing) status = '<p class="pgut-wait"><i></i>' + esc(w('playing')) + '</p>';
+    else if (!first) status = '<p class="pgut-wait">' + esc(w('paused')) + '</p>';
     card.innerHTML =
-      head('Step ' + (state.i + 1) + ' of ' + tasks.length) +
+      head(w('step', { n: state.i + 1, total: tasks.length })) +
       '<div class="pgut-body">' +
         '<p class="pgut-title">' + esc(t.title) + '</p>' +
         (t.why ? '<p class="pgut-p">' + esc(t.why) + '</p>' : '') +
         (t.hint ? '<div class="pgut-tell">' + esc(t.hint) + '</div>' : '') +
         status +
         (state.nice ? '' : first
-          ? '<div class="pgut-row"><button type="button" class="pgut-btn is-primary pgut-play">Start the tour</button></div>'
-          : '<div class="pgut-row"><button type="button" class="pgut-btn pgut-skip">Skip</button>' +
-            '<button type="button" class="pgut-btn is-primary pgut-play">' + (state.playing ? 'Pause' : 'Play') + '</button></div>') +
+          ? '<div class="pgut-row"><button type="button" class="pgut-btn is-primary pgut-play">' + esc(w('start_tour')) + '</button></div>'
+          : '<div class="pgut-row"><button type="button" class="pgut-btn pgut-skip">' + esc(w('skip')) + '</button>' +
+            '<button type="button" class="pgut-btn is-primary pgut-play">' + esc(state.playing ? w('pause') : w('play')) + '</button></div>') +
       '</div>' +
       '<div class="pgut-foot">' + dots() + '</div>';
     afterRender();
@@ -743,11 +891,11 @@
     pointer.hidden = true;
     var b = cfg.button && cfg.button.url && cfg.button.label ? cfg.button : null;
     card.innerHTML =
-      head('All done') +
-      '<div class="pgut-body"><p class="pgut-title">That’s the tour.</p>' +
-      '<p class="pgut-p">The site is yours until you close the tab, so carry on for as long as you like.</p>' +
+      head(w('all_done')) +
+      '<div class="pgut-body"><p class="pgut-title">' + esc(w('tour_done')) + '</p>' +
+      '<p class="pgut-p">' + esc(w('tour_done_p')) + '</p>' +
       (b ? '<a class="pgut-btn is-primary pgut-cta" href="' + esc(b.url) + '" target="_blank" rel="noopener">' + esc(b.label) + '</a>' : '') +
-      '<button type="button" class="pgut-again pgut-over">Watch it again</button>' +
+      '<button type="button" class="pgut-again pgut-over">' + esc(w('again')) + '</button>' +
       '</div>' +
       '<div class="pgut-foot">' + dots() + '</div>';
     afterRender();
@@ -765,10 +913,10 @@
     pointer.hidden = true;
     ring.hidden = true;
     card.innerHTML =
-      head('Tour') +
-      '<div class="pgut-body"><p class="pgut-title">Playing in another tab</p>' +
-      '<p class="pgut-p">This tour is playing in another tab of this site.</p>' +
-      '<div class="pgut-row"><button type="button" class="pgut-btn is-primary pgut-here">Play it here</button></div></div>';
+      head(w('aria_tour')) +
+      '<div class="pgut-body"><p class="pgut-title">' + esc(w('elsewhere')) + '</p>' +
+      '<p class="pgut-p">' + esc(w('elsewhere_p')) + '</p>' +
+      '<div class="pgut-row"><button type="button" class="pgut-btn is-primary pgut-here">' + esc(w('play_here')) + '</button></div></div>';
     afterRender();
     card.querySelector('.pgut-here').addEventListener('click', function () {
       state = load() || state;
@@ -839,7 +987,7 @@
       var wait = a.maybe ? 2500 : 12000;
       if (Date.now() - since < wait) { timer = setTimeout(function () { if (tok === runTok) perform(t, a, tok, since); }, 250); return; }
       if (a.maybe) return advance(t, tok);
-      return trouble('This step could not find what to press on this site. Skip it, or try it yourself.');
+      return trouble(w('no_find'));
     }
     // the ring goes there, and the pointer glides over to it and presses, so
     // people see how you get around rather than things just happening
@@ -1143,7 +1291,7 @@
       look(t).then(function (seen) {
         if (tok !== runTok) return;
         if (seen === 'yes') { timer = setTimeout(function () { whenQuiet(tok, function () { moveOn('task_done', 'played', 'yes'); }); }, hold); return; }
-        if (Date.now() - since > 15000) return trouble('That did not work on this site. Skip it, or try it yourself.');
+        if (Date.now() - since > 15000) return trouble(w('no_work'));
         timer = setTimeout(poll, 900);
       }, function () { if (tok === runTok) timer = setTimeout(poll, 900); });
     })();

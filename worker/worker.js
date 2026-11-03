@@ -417,6 +417,153 @@ const LIMITS = {
 // The four closing questions, in words that suit any test rather than only one
 // about building a site. A test can put any of them its own way.
 const QUESTION_KEYS = ['happy', 'finish', 'feel', 'confused'];
+/* ----------------------------------------------------------------- languages */
+// A test or tour can be in another language. The site is set to it (WordPress
+// fetches its own translations as the site boots), the card's own words follow
+// it, and so does the tester's welcome page. The owner writes the tasks, hints
+// and voice script in it themselves. A short code picks the usual locale; any
+// WordPress locale works for the site, and these seven also have the card's
+// and the welcome page's words.
+const LOCALES = { en: 'en_US', fr: 'fr_FR', de: 'de_DE', es: 'es_ES', it: 'it_IT', nl: 'nl_NL', pt: 'pt_BR' };
+const LANG_NAMES = { en: 'English', fr: 'French', de: 'German', es: 'Spanish', it: 'Italian', nl: 'Dutch', pt: 'Portuguese' };
+
+function cleanLang(raw) {
+  const given = String(raw == null ? '' : raw).trim();
+  if (!given) return { lang: '' };
+  const m = given.replace('-', '_').match(/^([a-zA-Z]{2,3})(?:_([a-zA-Z]{2}))?(?:_([a-zA-Z0-9]+))?$/);
+  if (!m) return { error: `“${given.slice(0, 30)}” is not a language WordPress knows. Use a locale like fr_FR or de_DE, or just fr.` };
+  const base = m[1].toLowerCase();
+  let lang = m[2] ? `${base}_${m[2].toUpperCase()}` : (LOCALES[base] || base);
+  if (m[3]) lang += '_' + m[3].toLowerCase();
+  // English is what a site boots in anyway
+  if (lang === 'en_US' || lang === 'en') return { lang: '' };
+  return { lang };
+}
+
+function langKey(lang) {
+  const k = String(lang || '').slice(0, 2).toLowerCase();
+  return INTRO_WORDS[k] ? k : 'en';
+}
+
+// The welcome pages' own words. The buttons they name match the card's.
+const INTRO_WORDS = {
+  en: {
+    x_title: 'Thank you for helping make {subject} better',
+    x_lead: 'You are about to get a real WordPress in your browser, already set up, with a small card of things to try. Nobody is watching. There are no wrong answers.',
+    who: 'Who you are while you try it', how: 'How it goes',
+    x_1: 'Press Start. Give it a minute to build.',
+    x_2: 'A small card lists {n} things to try. Do each one your own way, then press Done. If you can’t, press Couldn’t do it. Both are useful. You can drag the card out of the way.',
+    x_2_one: 'A small card lists 1 thing to try. Do it your own way, then press Done. If you can’t, press Couldn’t do it. Both are useful. You can drag the card out of the way.',
+    x_3: 'At the end there are four quick questions.', x_go: 'Start',
+    x_fine: 'Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is what the card learns — which tasks you did, how long they took, which page you were on, and anything you type into it. Nothing else: not what you write in WordPress, and not your name unless you choose to type it.',
+    t_title: 'A short tour of {subject}',
+    t_lead: 'You are about to get a real WordPress in your browser, already set up, with a small card that shows you round it in {n} steps. You do not have to do anything.',
+    t_lead_one: 'You are about to get a real WordPress in your browser, already set up, with a small card that shows you round it in 1 step. You do not have to do anything.',
+    t_2: 'Press Start the tour on the card, then sit back. It clicks through each step by itself while a ring shows where. Turn on sound on the card and it reads each step out too.',
+    t_3: 'Pause whenever you like and try it yourself, or skip a step. When it is done, the site is yours to keep playing with until you close the tab.',
+    t_go: 'Start the tour',
+    t_fine: 'Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is which steps you did, how long they took and which page you were on. Nothing you write in WordPress is kept.',
+  },
+  fr: {
+    x_title: 'Merci de nous aider à améliorer {subject}',
+    x_lead: 'Vous allez obtenir un vrai WordPress dans votre navigateur, déjà configuré, avec une petite carte de choses à essayer. Personne ne vous regarde. Il n’y a pas de mauvaise réponse.',
+    who: 'Qui vous êtes pendant l’essai', how: 'Comment ça se passe',
+    x_1: 'Appuyez sur Commencer. Laissez-lui une minute pour se préparer.',
+    x_2: 'Une petite carte liste {n} choses à essayer. Faites chacune à votre façon, puis appuyez sur Terminé. Si vous n’y arrivez pas, appuyez sur Je n’ai pas réussi. Les deux sont utiles. Vous pouvez déplacer la carte.',
+    x_3: 'À la fin, il y a quatre questions rapides.', x_go: 'Commencer',
+    x_fine: 'Utilisez un ordinateur, pas un téléphone, avec Chrome, Edge ou Firefox. Ce WordPress est jetable : fermez l’onglet et il disparaît. Seul est conservé ce que la carte apprend — les tâches faites, le temps passé, la page où vous étiez et ce que vous y écrivez. Rien d’autre : ni ce que vous écrivez dans WordPress, ni votre nom, sauf si vous choisissez de le saisir.',
+    t_title: 'Une courte visite de {subject}',
+    t_lead: 'Vous allez obtenir un vrai WordPress dans votre navigateur, déjà configuré, avec une petite carte qui vous le fait visiter en {n} étapes. Vous n’avez rien à faire.',
+    t_2: 'Appuyez sur Commencer la visite sur la carte, puis installez-vous. Elle parcourt chaque étape toute seule pendant qu’un cercle montre où. Activez le son sur la carte et elle lit aussi chaque étape.',
+    t_3: 'Mettez en pause quand vous voulez pour essayer vous-même, ou passez une étape. À la fin, le site est à vous jusqu’à ce que vous fermiez l’onglet.',
+    t_go: 'Commencer la visite',
+    t_fine: 'Utilisez un ordinateur, pas un téléphone, avec Chrome, Edge ou Firefox. Ce WordPress est jetable : fermez l’onglet et il disparaît. Seules sont conservées les étapes vues, leur durée et la page où vous étiez. Rien de ce que vous écrivez dans WordPress n’est conservé.',
+  },
+  de: {
+    x_title: 'Danke, dass du hilfst, {subject} besser zu machen',
+    x_lead: 'Gleich bekommst du ein echtes WordPress in deinem Browser, schon eingerichtet, mit einer kleinen Karte voller Dinge zum Ausprobieren. Niemand schaut zu. Es gibt keine falschen Antworten.',
+    who: 'Wer du beim Ausprobieren bist', how: 'So läuft es ab',
+    x_1: 'Drück auf Start. Gib ihm eine Minute zum Aufbauen.',
+    x_2: 'Eine kleine Karte zeigt {n} Dinge zum Ausprobieren. Mach jedes auf deine Art und drück dann auf Erledigt. Wenn es nicht klappt, drück auf Hat nicht geklappt. Beides hilft. Du kannst die Karte zur Seite ziehen.',
+    x_3: 'Am Ende gibt es vier kurze Fragen.', x_go: 'Start',
+    x_fine: 'Nutze einen Computer, kein Handy, und Chrome, Edge oder Firefox. Dieses WordPress ist zum Wegwerfen: Schließ den Tab und es ist weg. Gespeichert wird nur, was die Karte erfährt – welche Aufgaben du erledigt hast, wie lange sie gedauert haben, auf welcher Seite du warst und was du in die Karte schreibst. Sonst nichts: nicht, was du in WordPress schreibst, und nicht dein Name, außer du gibst ihn ein.',
+    t_title: 'Eine kurze Tour durch {subject}',
+    t_lead: 'Gleich bekommst du ein echtes WordPress in deinem Browser, schon eingerichtet, mit einer kleinen Karte, die dich in {n} Schritten herumführt. Du musst nichts tun.',
+    t_2: 'Drück auf der Karte auf Tour starten und lehn dich zurück. Sie klickt sich selbst durch jeden Schritt, während ein Kreis zeigt, wo. Schalte auf der Karte den Ton ein, dann liest sie jeden Schritt auch vor.',
+    t_3: 'Pausiere jederzeit und probier es selbst, oder überspring einen Schritt. Danach gehört die Website dir, bis du den Tab schließt.',
+    t_go: 'Tour starten',
+    t_fine: 'Nutze einen Computer, kein Handy, und Chrome, Edge oder Firefox. Dieses WordPress ist zum Wegwerfen: Schließ den Tab und es ist weg. Gespeichert wird nur, welche Schritte du gesehen hast, wie lange sie gedauert haben und auf welcher Seite du warst. Nichts, was du in WordPress schreibst, wird gespeichert.',
+  },
+  es: {
+    x_title: 'Gracias por ayudar a mejorar {subject}',
+    x_lead: 'Vas a tener un WordPress real en tu navegador, ya configurado, con una pequeña tarjeta de cosas para probar. Nadie te está mirando. No hay respuestas incorrectas.',
+    who: 'Quién eres mientras lo pruebas', how: 'Cómo funciona',
+    x_1: 'Pulsa Empezar. Dale un minuto para que se prepare.',
+    x_2: 'Una pequeña tarjeta muestra {n} cosas para probar. Haz cada una a tu manera y luego pulsa Hecho. Si no puedes, pulsa No lo conseguí. Las dos respuestas son útiles. Puedes arrastrar la tarjeta para apartarla.',
+    x_3: 'Al final hay cuatro preguntas rápidas.', x_go: 'Empezar',
+    x_fine: 'Usa un ordenador, no un móvil, con Chrome, Edge o Firefox. Este WordPress es desechable: cierra la pestaña y desaparece. Solo se guarda lo que aprende la tarjeta: qué tareas hiciste, cuánto tardaste, en qué página estabas y lo que escribas en ella. Nada más: ni lo que escribas en WordPress, ni tu nombre, salvo que decidas escribirlo.',
+    t_title: 'Un breve recorrido por {subject}',
+    t_lead: 'Vas a tener un WordPress real en tu navegador, ya configurado, con una pequeña tarjeta que te lo enseña en {n} pasos. No tienes que hacer nada.',
+    t_2: 'Pulsa Empezar el recorrido en la tarjeta y relájate. Recorre cada paso sola mientras un círculo muestra dónde. Activa el sonido en la tarjeta y también leerá cada paso.',
+    t_3: 'Pausa cuando quieras y pruébalo tú, o salta un paso. Al terminar, el sitio es tuyo hasta que cierres la pestaña.',
+    t_go: 'Empezar el recorrido',
+    t_fine: 'Usa un ordenador, no un móvil, con Chrome, Edge o Firefox. Este WordPress es desechable: cierra la pestaña y desaparece. Solo se guarda qué pasos viste, cuánto duraron y en qué página estabas. No se guarda nada de lo que escribas en WordPress.',
+  },
+  it: {
+    x_title: 'Grazie per aiutarci a migliorare {subject}',
+    x_lead: 'Stai per avere un vero WordPress nel tuo browser, già configurato, con un piccolo riquadro di cose da provare. Nessuno ti guarda. Non ci sono risposte sbagliate.',
+    who: 'Chi sei mentre lo provi', how: 'Come funziona',
+    x_1: 'Premi Inizia. Dagli un minuto per prepararsi.',
+    x_2: 'Un piccolo riquadro elenca {n} cose da provare. Falle a modo tuo, poi premi Fatto. Se non ci riesci, premi Non ci sono riuscito. Entrambe le risposte sono utili. Puoi trascinare il riquadro da parte.',
+    x_3: 'Alla fine ci sono quattro domande veloci.', x_go: 'Inizia',
+    x_fine: 'Usa un computer, non un telefono, con Chrome, Edge o Firefox. Questo WordPress è usa e getta: chiudi la scheda e sparisce. Si conserva solo ciò che il riquadro registra: quali attività hai fatto, quanto tempo ci hai messo, in quale pagina eri e ciò che ci scrivi. Nient’altro: né ciò che scrivi in WordPress, né il tuo nome, a meno che tu non scelga di scriverlo.',
+    t_title: 'Un breve tour di {subject}',
+    t_lead: 'Stai per avere un vero WordPress nel tuo browser, già configurato, con un piccolo riquadro che te lo mostra in {n} passaggi. Non devi fare nulla.',
+    t_2: 'Premi Inizia il tour nel riquadro, poi mettiti comodo. Passa da solo per ogni passaggio mentre un cerchio mostra dove. Attiva l’audio nel riquadro e leggerà anche ogni passaggio.',
+    t_3: 'Metti in pausa quando vuoi e prova tu, o salta un passaggio. Alla fine il sito è tuo finché non chiudi la scheda.',
+    t_go: 'Inizia il tour',
+    t_fine: 'Usa un computer, non un telefono, con Chrome, Edge o Firefox. Questo WordPress è usa e getta: chiudi la scheda e sparisce. Si conserva solo quali passaggi hai visto, quanto sono durati e in quale pagina eri. Nulla di ciò che scrivi in WordPress viene conservato.',
+  },
+  nl: {
+    x_title: 'Bedankt dat je helpt {subject} beter te maken',
+    x_lead: 'Je krijgt zo een echte WordPress in je browser, al ingericht, met een kleine kaart met dingen om te proberen. Niemand kijkt mee. Er zijn geen foute antwoorden.',
+    who: 'Wie je bent terwijl je het probeert', how: 'Zo gaat het',
+    x_1: 'Druk op Start. Geef het een minuutje om op te bouwen.',
+    x_2: 'Een kleine kaart toont {n} dingen om te proberen. Doe ze elk op je eigen manier en druk dan op Klaar. Lukt het niet, druk dan op Het lukte niet. Allebei nuttig. Je kunt de kaart opzij slepen.',
+    x_3: 'Aan het eind zijn er vier korte vragen.', x_go: 'Start',
+    x_fine: 'Gebruik een computer, geen telefoon, en Chrome, Edge of Firefox. Deze WordPress is wegwerp: sluit het tabblad en hij is weg. Het enige wat bewaard wordt is wat de kaart leert: welke taken je deed, hoe lang ze duurden, op welke pagina je was en wat je erin typt. Verder niets: niet wat je in WordPress schrijft, en niet je naam, tenzij je die zelf invult.',
+    t_title: 'Een korte rondleiding door {subject}',
+    t_lead: 'Je krijgt zo een echte WordPress in je browser, al ingericht, met een kleine kaart die je in {n} stappen rondleidt. Je hoeft niets te doen.',
+    t_2: 'Druk op de kaart op Rondleiding starten en leun achterover. Hij klikt zelf door elke stap terwijl een cirkel laat zien waar. Zet op de kaart het geluid aan en hij leest elke stap ook voor.',
+    t_3: 'Pauzeer wanneer je wilt en probeer het zelf, of sla een stap over. Daarna is de site van jou tot je het tabblad sluit.',
+    t_go: 'Rondleiding starten',
+    t_fine: 'Gebruik een computer, geen telefoon, en Chrome, Edge of Firefox. Deze WordPress is wegwerp: sluit het tabblad en hij is weg. Alleen welke stappen je zag, hoe lang ze duurden en op welke pagina je was wordt bewaard. Niets wat je in WordPress schrijft wordt bewaard.',
+  },
+  pt: {
+    x_title: 'Obrigado por ajudar a melhorar {subject}',
+    x_lead: 'Você vai receber um WordPress de verdade no seu navegador, já configurado, com um pequeno cartão de coisas para experimentar. Ninguém está olhando. Não existem respostas erradas.',
+    who: 'Quem você é enquanto experimenta', how: 'Como funciona',
+    x_1: 'Toque em Começar. Dê um minuto para ele ser montado.',
+    x_2: 'Um pequeno cartão lista {n} coisas para experimentar. Faça cada uma do seu jeito e toque em Feito. Se não conseguir, toque em Não consegui. As duas respostas ajudam. Você pode arrastar o cartão para o lado.',
+    x_3: 'No final, há quatro perguntas rápidas.', x_go: 'Começar',
+    x_fine: 'Use um computador, não um celular, com Chrome, Edge ou Firefox. Este WordPress é descartável: feche a aba e ele some. Só fica guardado o que o cartão registra: quais tarefas você fez, quanto tempo levaram, em que página você estava e o que você digitar nele. Mais nada: nem o que você escreve no WordPress, nem seu nome, a não ser que você decida digitá-lo.',
+    t_title: 'Um tour rápido por {subject}',
+    t_lead: 'Você vai receber um WordPress de verdade no seu navegador, já configurado, com um pequeno cartão que mostra tudo em {n} passos. Você não precisa fazer nada.',
+    t_2: 'Toque em Começar o tour no cartão e relaxe. Ele passa por cada passo sozinho enquanto um círculo mostra onde. Ative o som no cartão e ele também lê cada passo.',
+    t_3: 'Pause quando quiser e tente você mesmo, ou pule um passo. No final, o site é seu até você fechar a aba.',
+    t_go: 'Começar o tour',
+    t_fine: 'Use um computador, não um celular, com Chrome, Edge ou Firefox. Este WordPress é descartável: feche a aba e ele some. Só ficam guardados quais passos você viu, quanto tempo levaram e em que página você estava. Nada do que você escreve no WordPress é guardado.',
+  },
+};
+
+// One welcome-page line, in the test's language, with {subject} and {n} filled.
+function introWord(lang, key, vars) {
+  const words = INTRO_WORDS[langKey(lang)];
+  let out = (vars && vars.n === 1 && words[key + '_one']) || words[key] || INTRO_WORDS.en[key];
+  Object.keys(vars || {}).forEach((k) => { out = out.split(`{${k}}`).join(String(vars[k])); });
+  return out;
+}
+
 const DEFAULT_QUESTIONS = {
   happy: 'How happy are you with how it went?',
   finish: 'If you had kept going, could you have finished?',
@@ -464,6 +611,8 @@ function cleanWording(body) {
   // better default later reaches it too
   QUESTION_KEYS.forEach((k) => { const v = trim(raw[k], LIMITS.question); if (v && v !== DEFAULT_QUESTIONS[k]) questions[k] = v; });
   if (Object.keys(questions).length) w.questions = questions;
+  const lang = cleanLang(body && body.lang).lang;
+  if (lang) w.lang = lang;
   return Object.keys(w).length ? w : null;
 }
 
@@ -904,6 +1053,26 @@ function readTour(body, set) {
 
 const BUTTON_WORDS = /\b(click|press|tap|hit|select|choose|drag|navigate to|go to the|open the)\b/i;
 
+// A test in another language: the site and the card follow it, but a step
+// that finds what to press by its words ("button \"Styles\"") only finds it
+// if those words are written in the site's language too.
+function lintLang(input, tasks, problems, notes) {
+  const langed = cleanLang(input && input.lang);
+  if (langed.error) { problems.push(langed.error); return; }
+  const lang = langed.lang;
+  if (!lang) return;
+  const key = lang.slice(0, 2);
+  const name = LANG_NAMES[key] || lang;
+  if (!INTRO_WORDS[key]) notes.push(`The site will be in ${lang}, but the card and the welcome page only have their own words in ${Object.values(LANG_NAMES).join(', ')}, so theirs stay in English. Your tasks and hints show as you write them.`);
+  const worded = [];
+  tasks.forEach((t, i) => {
+    const said = [t.point].concat((t.do || []).map((a) => a && (a.click || a.into || ''))).filter(Boolean);
+    if (said.some((x) => /"[^"]+"/.test(String(x)))) worded.push(i + 1);
+  });
+  if (worded.length) notes.push(`Step${worded.length === 1 ? '' : 's'} ${worded.join(', ')} find${worded.length === 1 ? 's' : ''} what to press by the words on it, like button "Styles". On a site in ${name} those words are in ${name} too, so write them as WordPress shows them in ${name}, or use a selector that does not depend on words (an id or a class).`);
+  notes.push(`Write the titles, hints and anything said out loud in ${name}: the card shows them as they are. The browser reads them in a ${name} voice where the computer has one; a recording (audio) in ${name} sounds better.`);
+}
+
 function lintTest(input) {
   const problems = [];
   const notes = [];
@@ -916,6 +1085,7 @@ function lintTest(input) {
   const siteName = boot ? trim(boot.title, 60) : '';
 
   overLimits(input).forEach((x) => problems.push(x));
+  lintLang(input, tasks, problems, notes);
   const toured = readTour(input, set);
   if (toured.error) problems.push(toured.error);
   if (toured.tour) return lintTour(input, subject, tasks, toured.tour, problems, notes);
@@ -1305,6 +1475,8 @@ async function makeTest(env, req, body) {
   if (tooLong.length) return json({ error: tooLong.join(' '), problems: tooLong }, 400, CORS);
 
   const subject = trim(body.subject, LIMITS.subject);
+  const langed = cleanLang(body.lang);
+  if (langed.error) return json({ error: langed.error }, 400, CORS);
   const wording = cleanWording(body);
   // a ready-made set fills whatever was left out: the tasks, the persona
   const set = ALL_SETS.find((x) => x.key === body.taskSet);
@@ -1381,6 +1553,7 @@ async function makeTest(env, req, body) {
     mode: tour ? 'tour' : 'test',
     button: tour && tour.button ? tour.button : undefined,
     theme: tour && tour.theme ? tour.theme : undefined,
+    lang: (wording && wording.lang) || undefined,
     webhook: webhook ? hookKind(webhook) : '',
     versions: versions ? versions.map((v) => ({ key: v.key, label: v.label })) : undefined,
   }, 200, CORS);
@@ -1404,6 +1577,11 @@ function wrapBlueprint(base, test, origin, pluginZipUrl, version) {
   const logsIn = base.login || steps.some((st) => st && st.step === 'login');
   if (!logsIn) out.login = true;
 
+  // the site in the test's language, after the owner's own steps so their
+  // plugins and theme get their translations too
+  const lang = test.wording && test.wording.lang;
+  if (lang) steps.push({ step: 'setSiteLanguage', language: lang });
+
   steps.push({
     step: 'installPlugin',
     pluginData: { resource: 'url', url: pluginZipUrl },
@@ -1426,6 +1604,7 @@ function wrapBlueprint(base, test, origin, pluginZipUrl, version) {
         button: test.tour && test.tour.button ? test.tour.button : undefined,
         endAudio: test.tour && test.tour.endAudio ? test.tour.endAudio : undefined,
         theme: test.tour && test.tour.theme ? test.tour.theme : undefined,
+        lang: lang || undefined,
       }),
     },
   });
@@ -1987,9 +2166,11 @@ async function updateTest(env, test, body) {
   }
 
   const before = test.wording || {};
+  if (has('lang') && cleanLang(body.lang).error) return json({ error: cleanLang(body.lang).error }, 400, CORS);
   const wording = cleanWording({
     intro: has('intro') ? body.intro : before.intro,
     questions: has('questions') ? body.questions : before.questions,
+    lang: has('lang') ? body.lang : before.lang,
   });
 
   // a tour's button can change; a test cannot become a tour, nor the other way
@@ -2142,6 +2323,7 @@ const BOOT_SCHEMA = {
 // an app inside wp-admin — so the intro line and the closing questions can be
 // the test's own. Left out, the tester gets neutral defaults.
 const WORDING_SCHEMA = {
+  lang: { type: 'string', description: 'Optional: the language, as a WordPress locale (fr_FR, de_DE, es_ES, it_IT, nl_NL, pt_BR) or a short code (fr). The tester’s site is set to it, and the card’s own buttons and the welcome page follow it in French, German, Spanish, Italian, Dutch and Portuguese. Write the subject, persona, tasks, hints and say lines in that language yourself, and write any step that finds a button by its words (button "Styles") with the words WordPress shows in that language. Leave it out for English. For several languages, make one test or tour per language.' },
   intro: { type: 'string', maxLength: LIMITS.intro, description: `Optional line under the persona on the tester's intro page, e.g. "The site you get is a start someone made for you. Make it yours." At most ${LIMITS.intro} characters.` },
   questions: {
     type: 'object',
@@ -2179,6 +2361,7 @@ const TOOLS = [
         boot: BOOT_SCHEMA,
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
+        lang: WORDING_SCHEMA.lang,
         mode: TOUR_SCHEMA.mode,
         button: TOUR_SCHEMA.button,
         theme: TOUR_SCHEMA.theme,
@@ -2199,6 +2382,7 @@ const TOOLS = [
         boot: BOOT_SCHEMA,
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
+        lang: WORDING_SCHEMA.lang,
         mode: TOUR_SCHEMA.mode,
         button: TOUR_SCHEMA.button,
         theme: TOUR_SCHEMA.theme,
@@ -2229,6 +2413,7 @@ const TOOLS = [
         tasks: TASKS_SCHEMA,
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
+        lang: WORDING_SCHEMA.lang,
         button: TOUR_SCHEMA.button,
         theme: TOUR_SCHEMA.theme,
       },
@@ -2295,6 +2480,7 @@ async function mcpCall(env, req, name, args) {
       taskSet: args && args.task_set,
       intro: args && args.intro,
       questions: args && args.questions,
+      lang: args && args.lang,
       mode: args && args.mode,
       button: args && args.button,
       theme: args && args.theme,
@@ -2329,7 +2515,7 @@ async function mcpCall(env, req, name, args) {
     const test = await openTest(env, id, (args && args.password) || '');
     if (!test) return mcpText('That test id and password do not go together.', { isError: true });
     const changes = {};
-    ['subject', 'persona', 'tasks', 'intro', 'questions', 'button', 'theme'].forEach((k) => { if (args && args[k] !== undefined) changes[k] = args[k]; });
+    ['subject', 'persona', 'tasks', 'intro', 'questions', 'lang', 'button', 'theme'].forEach((k) => { if (args && args[k] !== undefined) changes[k] = args[k]; });
     if (!Object.keys(changes).length) return mcpText('Nothing to change: send the fields that should be different.', { isError: true });
     const r = await updateTest(env, test, changes);
     if (r.status !== 200) return mcpText(r.body.error, { isError: true, structuredContent: r.body });
@@ -2533,6 +2719,12 @@ POST ${origin}/api/tests
   up to ${LIMITS.tasksMax} tasks. Anything longer is refused with a 400 that says
   which field, never cut short — shorten it and send again.
   intro (optional): one line under the persona on the tester's intro page.
+  lang (optional): the language, as a WordPress locale (fr_FR) or a short
+  code (fr). The site is set to it, and the card's own words and the welcome
+  page follow it in ${Object.values(LANG_NAMES).join(', ')}. Write everything
+  you send (subject, persona, tasks, hints, say) in that language, and any
+  step that finds a button by its words with the words WordPress shows in it.
+  For several languages, make one test or tour per language.
   questions (optional): the closing questions in your own words, for a test
   that is not about making a site: { ${QUESTION_KEYS.join(', ')} }. Any left out
   keep their defaults: ${QUESTION_KEYS.map((k) => `${k} "${DEFAULT_QUESTIONS[k]}"`).join('; ')}.
@@ -2685,23 +2877,25 @@ function introPage(test, origin, version) {
     .split(/\n{2,}/)
     .map((p) => `<p>${esc(p)}</p>`)
     .join('');
+  const lang = test.wording && test.wording.lang;
+  const say = (key, vars) => esc(introWord(lang, key, Object.assign({ subject: test.subject }, vars)));
   return `<!doctype html>
-<html lang="en"><head>
+<html lang="${esc(langKey(lang))}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Thank you for helping make ${esc(test.subject)} better</title>
+<title>${say('x_title')}</title>
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
-<h1>Thank you for helping make ${esc(test.subject)} better</h1>
-<p>You are about to get a real WordPress in your browser, already set up, with a small card of things to try. Nobody is watching. There are no wrong answers.</p>
-<div class="card"><h2>Who you are while you try it</h2>
+<h1>${say('x_title')}</h1>
+<p>${say('x_lead')}</p>
+<div class="card"><h2>${say('who')}</h2>
 ${paras}
 ${test.wording && test.wording.intro ? `<p class="soft" style="margin:0">${esc(test.wording.intro)}</p>` : ''}</div>
-<div class="card"><h2>How it goes</h2>
-<ol><li>Press Start. Give it a minute to build.</li>
-<li>A small card lists ${test.tasks.length} thing${test.tasks.length === 1 ? '' : 's'} to try. Do each one your own way, then press Done. If you can’t, press Couldn’t do it. Both are useful. You can drag the card out of the way.</li>
-<li>At the end there are four quick questions.</li></ol></div>
-<a class="go" href="${esc(playground)}" target="_blank" rel="noopener">Start</a>
-<p class="fine">Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is what the card learns — which tasks you did, how long they took, which page you were on, and anything you type into it. Nothing else: not what you write in WordPress, and not your name unless you choose to type it.</p>
+<div class="card"><h2>${say('how')}</h2>
+<ol><li>${say('x_1')}</li>
+<li>${say('x_2', { n: test.tasks.length })}</li>
+<li>${say('x_3')}</li></ol></div>
+<a class="go" href="${esc(playground)}" target="_blank" rel="noopener">${say('x_go')}</a>
+<p class="fine">${say('x_fine')}</p>
 </div></body></html>`;
 }
 
@@ -2709,22 +2903,24 @@ ${test.wording && test.wording.intro ? `<p class="soft" style="margin:0">${esc(t
 // are here to see something. It still says plainly what is kept.
 function tourIntroPage(test, playground) {
   const n = test.tasks.length;
+  const lang = test.wording && test.wording.lang;
+  const say = (key, vars) => esc(introWord(lang, key, Object.assign({ subject: test.subject }, vars)));
   return `<!doctype html>
-<html lang="en"><head>
+<html lang="${esc(langKey(lang))}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>A short tour of ${esc(test.subject)}</title>
+<title>${say('t_title')}</title>
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
-<h1>A short tour of ${esc(test.subject)}</h1>
-<p>You are about to get a real WordPress in your browser, already set up, with a small card that shows you round it in ${n} step${n === 1 ? '' : 's'}. You do not have to do anything.</p>
+<h1>${say('t_title')}</h1>
+<p>${say('t_lead', { n })}</p>
 ${test.persona ? `<p class="soft">${esc(test.persona)}</p>` : ''}
 ${test.wording && test.wording.intro ? `<p class="soft">${esc(test.wording.intro)}</p>` : ''}
-<div class="card"><h2>How it goes</h2>
-<ol><li>Press Start. Give it a minute to build.</li>
-<li>Press Start the tour on the card, then sit back. It clicks through each step by itself while a ring shows where. Turn on sound on the card and it reads each step out too.</li>
-<li>Pause whenever you like and try it yourself, or skip a step. When it is done, the site is yours to keep playing with until you close the tab.</li></ol></div>
-<a class="go" href="${esc(playground)}" target="_blank" rel="noopener">Start the tour</a>
-<p class="fine">Use a computer, not a phone, and Chrome, Edge or Firefox. This WordPress is throwaway: close the tab and it is gone. The only thing kept is which steps you did, how long they took and which page you were on. Nothing you write in WordPress is kept.</p>
+<div class="card"><h2>${say('how')}</h2>
+<ol><li>${say('x_1')}</li>
+<li>${say('t_2')}</li>
+<li>${say('t_3')}</li></ol></div>
+<a class="go" href="${esc(playground)}" target="_blank" rel="noopener">${say('t_go')}</a>
+<p class="fine">${say('t_fine')}</p>
 </div></body></html>`;
 }
 
@@ -3189,6 +3385,12 @@ const HOME = `<!doctype html>
   <button type="button" class="add" id="add" data-test="Add another" data-tour="Add a step">Add another</button>
 </fieldset>
 
+<fieldset>
+  <label for="lang">Language</label>
+  <p class="hint">The tester’s WordPress, the card and the welcome page all switch to it. Write your tasks in it too.</p>
+  <select id="lang" class="setpick">${Object.keys(LOCALES).map((k) => `<option value="${k === 'en' ? '' : LOCALES[k]}">${esc(LANG_NAMES[k])}</option>`).join('')}</select>
+</fieldset>
+
 <fieldset data-only="tour" hidden>
   <label for="accent">Colours <span class="soft">(optional)</span></label>
   <p class="hint">An accent for the card’s buttons, the ring and the pointer, and a dark or light card. Your brand colour works; it is kept readable.</p>
@@ -3520,6 +3722,7 @@ const HOME = `<!doctype html>
           versions: versions,
           password: document.getElementById('password').value,
           webhook: document.getElementById('webhook').value.trim(),
+          lang: document.getElementById('lang').value || undefined,
           mode: touring ? 'tour' : undefined,
           button: button,
           theme: touring ? { accent: document.getElementById('accent').value, card: document.getElementById('cardTone').value } : undefined,
@@ -4197,4 +4400,4 @@ const NOT_FOUND = `<!doctype html>
 </div></body></html>`;
 
 // exported for the tests
-export { TASK_SETS, TOUR_SETS, readTour, cleanTheme, contrast, cleanActions, actionLines, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };
+export { TASK_SETS, TOUR_SETS, cleanLang, readTour, cleanTheme, contrast, cleanActions, actionLines, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };

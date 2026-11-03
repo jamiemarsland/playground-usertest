@@ -182,5 +182,15 @@ case_run(
 	ok( "boot" === pgut_base_for( "1-name" )["styles"], "an unmarked task (every task in a test) keeps the boot baseline" );'
 );
 
+case_run(
+	'the language the card speaks',
+	'$GLOBALS["opts"] = array();
+	require "' . $plugin . '";
+	ok( "fr_FR" === pgut_lang( array( "lang" => "fr_FR" ) ), "a WordPress locale goes to the card" );
+	ok( "de_DE_formal" === pgut_lang( array( "lang" => "de_DE_formal" ) ), "a locale with a variant goes too" );
+	ok( "" === pgut_lang( array() ), "no language is English" );
+	ok( "" === pgut_lang( array( "lang" => "fr\"><script>" ) ), "anything that is not a locale is dropped" );'
+);
+
 echo $fails ? "\n$fails case(s) failed\n" : "\nall good\n";
 exit( $fails ? 1 : 0 );
