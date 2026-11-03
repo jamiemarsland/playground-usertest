@@ -3008,7 +3008,7 @@ function plainPrompt(mode) {
   const end = [
     'Draft it with me first and ask for anything you need. When I say it is ready, finish it one of two ways:',
     '- If you can make web requests (Claude Code, Cursor, or this service added as a connector): create it yourself. POST the JSON, plus a "password" you make up, to {ORIGIN}/api/tests, or call usertest_create on {ORIGIN}/mcp. Then give me the tester link, the results link and the password, which cannot be looked up again.',
-    '- If you cannot reach that address, do not keep trying: give me the finished JSON in one code block. I will paste it into the "Paste from your assistant" box on {ORIGIN}, which fills in the form for me to check.',
+    `- If you cannot reach that address, do not keep trying. Give me two things. First, a link: {ORIGIN}/#draft= followed by the finished JSON, URL-encoded the way encodeURIComponent does it, written as [Open my ${mode === 'tour' ? 'tour' : 'test'} in Playground user testing](that link). Clicking it opens the site with everything filled in. Second, below it, the same JSON in one code block, with this line above the block: "If the link does not open with everything filled in, copy this block, open {ORIGIN} and paste it into the box called Paste from your assistant."`,
   ].join('\n');
   if (mode === 'tour') {
     return [
@@ -3778,12 +3778,14 @@ const HOME = `<!doctype html>
   // the form the way a ready-made set does. The password stays the owner's.
   var LOCALES = ${JSON.stringify(LOCALES)};
   var pasteMsg = document.getElementById('pasteMsg');
-  document.getElementById('usePasted').addEventListener('click', function () {
-    var raw = document.getElementById('pasted').value;
+  // The JSON inside whatever it came with: a code fence, a sentence either side
+  function readDraft(raw) {
     var a = raw.indexOf('{'), b = raw.lastIndexOf('}');
-    var d;
-    try { d = JSON.parse(raw.slice(a, b + 1)); } catch (e) { d = null; }
-    if (!d || typeof d !== 'object' || Array.isArray(d)) { pasteMsg.textContent = 'That doesn’t read as the JSON block. Paste the whole block your assistant gave you, from { to }.'; return; }
+    try { var d = JSON.parse(raw.slice(a, b + 1)); return d && typeof d === 'object' && !Array.isArray(d) ? d : null; } catch (e) { return null; }
+  }
+  document.getElementById('usePasted').addEventListener('click', function () { fillFrom(readDraft(document.getElementById('pasted').value)); });
+  function fillFrom(d) {
+    if (!d) { pasteMsg.textContent = 'That doesn’t read as the JSON block. Paste the whole block your assistant gave you, from { to }.'; return; }
     var tasks = Array.isArray(d.tasks) ? d.tasks : [];
     if (!tasks.length) { pasteMsg.textContent = 'There are no tasks in it. Ask your assistant to include them.'; return; }
     setMode(d.mode === 'tour' ? 'tour' : 'test');
@@ -3824,7 +3826,31 @@ const HOME = `<!doctype html>
     var missing = bpJson || bpUrl || plug || d.theme || d.site === 'wordpress' ? '' : ' It didn’t say which plugin, theme or WordPress to use, so choose below.';
     pasteMsg.textContent = 'Filled in: ' + tasks.length + (d.mode === 'tour' ? ' step' : ' task') + (tasks.length === 1 ? '.' : 's.') + missing + ' Check it, choose a results password, then press the button at the bottom.';
     document.getElementById('f').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
+  }
+
+  // A link from an assistant: the same JSON after #draft=, URL-encoded, so one
+  // click opens this page with the form filled in. Assistants encode long text
+  // imperfectly, so it is read forgivingly; one that will not read says so and
+  // points at the block the assistant gave as well. It waits for the rest of
+  // the page to be wired up, so the site choices answer when it presses them.
+  setTimeout(function () {
+    var h = location.hash;
+    if (!/^#(draft|tour|test)=/.test(h)) return;
+    var body = h.slice(h.indexOf('=') + 1);
+    var tries = [
+      function () { return decodeURIComponent(body); },
+      function () { return decodeURIComponent(body.split('+').join('%20')); },
+      function () { return body; },
+      function () { return decodeURIComponent(escape(atob(body))); },
+    ];
+    var d = null;
+    for (var i = 0; i < tries.length && !d; i++) { try { d = readDraft(tries[i]()); } catch (e) { d = null; } }
+    // the draft is in the form now: keep it out of the address bar
+    try { history.replaceState(null, '', location.pathname + location.search + '#paste'); } catch (e) {}
+    document.getElementById('paste').scrollIntoView();
+    if (d) fillFrom(d);
+    else pasteMsg.textContent = 'That link came through broken, which happens with long ones. Copy the block your assistant gave you and paste it here instead.';
+  }, 0);
 
   var mode2 = 'url';
   document.getElementById('compare').addEventListener('change', function () { document.getElementById('second').hidden = !this.checked; });

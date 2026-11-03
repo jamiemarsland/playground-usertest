@@ -969,7 +969,7 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   const i = home.indexOf('var PLAIN = '), j = home.indexOf(';\n', i);
   const plain = JSON.parse(home.slice(i + 12, j));
   check(/"mode":"test"/.test(plain.test) && /never which button/.test(plain.test) && /"mode":"tour"/.test(plain.tour) && /type "words" into/.test(plain.tour), 'one prompt: it carries the whole format for a test and for a tour');
-  check([plain.test, plain.tour].every((x) => x.includes('{ORIGIN}/api/tests') && x.includes('"Paste from your assistant"') && /do not keep trying/.test(x)), 'one prompt: create it if you can reach the service, otherwise hand back the block to paste');
+  check([plain.test, plain.tour].every((x) => x.includes('{ORIGIN}/api/tests') && x.includes('{ORIGIN}/#draft=') && x.includes('Paste from your assistant') && /do not keep trying/.test(x)), 'one prompt: create it if you can reach the service, otherwise hand back a link, with the block as a backup');
   check(![plain.test, plain.tour].some((x) => /llms\.txt|\bFetch\b/.test(x)), 'one prompt: nothing depends on opening a page first');
   check(home.includes('id="pasted"') && home.includes('custom connector') && !home.includes('copyPlain'), 'home: one Copy prompt, the paste box and the connector');
 
@@ -1033,6 +1033,16 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   const plain = JSON.parse(home.slice(i + 12, j));
   check([plain.test, plain.tour].every((x) => /"plugin"/.test(x) && /"site":"wordpress"/.test(x) && /Only if I already have a Playground blueprint/.test(x)), 'site: the prompt asks for the plugin or theme, not a blueprint');
   check(home.includes('data-bp="wp"') && home.includes('id="sitePlugin"'), 'site: the form offers WordPress on its own, or a plugin or theme');
+}
+
+// The home page's own script has to parse: one bad escape inside the page
+// template silently takes the whole page's buttons with it.
+{
+  const home = await (await call(env(), '/')).text();
+  const scripts = [...home.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  let bad = '';
+  scripts.forEach((code, i) => { try { new Function(code); } catch (e) { bad = 'script ' + i + ': ' + e.message; } });
+  check(scripts.length > 0 && !bad, 'home: its scripts parse' + (bad ? ' — ' + bad : ''));
 }
 
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');
