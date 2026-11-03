@@ -899,5 +899,21 @@ const eFresh = env();
 r = await call(eFresh, '/api/tests', { method: 'POST', body: GOOD });
 check(r.status === 200, 'a second, separate database is set up on its own');
 
+// The home page's Watch a tour: a Playground link carrying the What's new tour,
+// in the recorded voice, on the card from the usual place.
+{
+  const res = await call(env(), '/demo/tour');
+  const to = res.headers.get('location') || '';
+  check(res.status === 302 && to.startsWith('https://playground.wordpress.net/#'), 'demo tour: sends people to Playground');
+  const bp = JSON.parse(decodeURIComponent(escape(atob(to.split('#')[1]))));
+  const cfg = JSON.parse(bp.steps.find((x) => x.step === 'setSiteOptions').options.playground_user_test);
+  check(bp.landingPage === '/' && bp.login === true, 'demo tour: starts on the home page, logged in');
+  check(bp.steps.some((x) => x.step === 'installPlugin' && x.pluginData.url === 'https://example.com/card.zip'), 'demo tour: installs the configured card');
+  check(cfg.mode === 'tour' && cfg.tasks.length === 5 && cfg.tasks.every((t, i) => t.audio && t.audio.endsWith(`whats-new-v4-${i + 1}.mp3`)), 'demo tour: five steps, each with its recording');
+  check(cfg.endAudio && cfg.endAudio.endsWith('whats-new-v4-end.mp3'), 'demo tour: the closing words are recorded too');
+  const home = await (await call(env(), '/')).text();
+  check(home.includes('href="/demo/tour"') && home.includes('data-ask="tour"'), 'home: offers tours, with a way to watch one');
+}
+
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');
 process.exit(failures ? 1 : 0);

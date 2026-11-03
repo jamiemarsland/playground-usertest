@@ -1459,6 +1459,26 @@ async function zipStatus(url) {
   }
 }
 
+// The ready-made What's new tour, for the home page's Watch a tour: nothing to
+// make or store, so the whole blueprint rides in the Playground link itself.
+// It carries the recorded voice the set alone does not, since a recording only
+// fits the words it was made from.
+const DEMO_VOICE = 'https://raw.githubusercontent.com/jamiemarsland/playground-usertest/main/voice/whats-new-v4-';
+
+function demoTourLink(origin, zip) {
+  const set = TOUR_SETS.find((x) => x.key === 'whats-new');
+  const tasks = cleanTasks(set.tasks.map((t, i) => Object.assign({}, t, { audio: `${DEMO_VOICE}${i + 1}.mp3` })));
+  const tour = Object.assign(readTour({}, set).tour, { endAudio: `${DEMO_VOICE}end.mp3` });
+  const base = {
+    $schema: 'https://playground.wordpress.net/blueprint-schema.json',
+    landingPage: '/',
+    preferredVersions: { php: '8.3', wp: 'latest' },
+    steps: [],
+  };
+  const bp = wrapBlueprint(base, { id: 'demo-whats-new', subject: set.name, tasks, tour }, origin, zip, null);
+  return 'https://playground.wordpress.net/#' + btoa(unescape(encodeURIComponent(JSON.stringify(bp))));
+}
+
 // The card the blueprint installs. Defaulted rather than required, so the
 // service works on a fresh host with nothing configured; set PLUGIN_ZIP_URL to
 // point tests at a different card, or at a copy nearer the host.
@@ -2739,7 +2759,7 @@ const HOME = `<!doctype html>
   .topbar nav a { color:var(--text); text-decoration:none; } .topbar nav a:hover { color:var(--mint); }
   .topbar nav .mono { font-size:14px; }
 
-  .hero { padding:64px 0 40px; text-align:center; }
+  .hero { padding-top:64px; padding-bottom:40px; text-align:center; }
   .hero .eyebrow { margin:0 0 20px; font:13px/1.4 "JetBrains Mono",ui-monospace,monospace; color:var(--dim); letter-spacing:.06em; }
   .hero h1 { margin:0 auto 22px; font-family:"Instrument Sans",sans-serif; font-weight:700; font-size:76px; line-height:1; letter-spacing:-.035em; max-width:960px; }
   .hero .sub { margin:0 auto 40px; font-size:20px; color:var(--muted); max-width:640px; }
@@ -2750,6 +2770,49 @@ const HOME = `<!doctype html>
   .addr { font:13px/1.7 "JetBrains Mono",ui-monospace,monospace; word-break:break-all; color:var(--text); }
   .copy { font:inherit; font-weight:700; font-size:15px; padding:12px 22px; border-radius:999px; border:0; background:var(--mint); color:var(--night); cursor:pointer; }
   .copy:hover { background:var(--mint-hi); }
+  .ask { display:inline-flex; gap:6px; padding:6px; margin:0 auto 18px; background:var(--panel); border:1px solid var(--rule); border-radius:999px; }
+  .ask button { all:unset; cursor:pointer; display:flex; align-items:baseline; gap:8px; padding:10px 20px; border-radius:999px; color:var(--muted); font-size:15px; }
+  .ask button b { color:var(--text); font-size:16px; }
+  .ask button span { font-size:14px; }
+  .ask button em { font:700 11px/1 "JetBrains Mono",monospace; font-style:normal; letter-spacing:.06em; text-transform:uppercase; color:var(--night); background:var(--mint); padding:4px 7px; border-radius:6px; align-self:center; }
+  .ask button[aria-checked="true"] { background:var(--mint); color:var(--night); }
+  .ask button[aria-checked="true"] b, .ask button[aria-checked="true"] span { color:var(--night); }
+  .ask button[aria-checked="true"] em { background:var(--night); color:var(--mint); }
+  .ask button:focus-visible { outline:2px solid var(--mint); outline-offset:2px; }
+  .tourshow { --tour:#6c5ce7; --tour-text:#a99cff; }
+  .tourshow .tcard2.light { background:#fff; color:#1e1e1e; } .tourshow .tcard2.light .say { background:#f1f2f4; color:#3a3e46; } .tourshow .tcard2.light .btns span { border-color:#d5d8dd; }
+  .tourshow .tcard2 .hideb { all:unset; cursor:pointer; color:#9aa0ab; }
+  .tourshow .pill2 { all:unset; cursor:pointer; position:absolute; right:16px; top:16px; background:var(--tour); color:#fff; font-weight:700; font-size:14px; padding:10px 16px; border-radius:999px; box-shadow:0 6px 20px rgba(0,0,0,.25); }
+  .brandrow { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 24px; font-size:14px; color:var(--dim); }
+  .brandrow button.sw { all:unset; cursor:pointer; width:28px; height:28px; border-radius:50%; box-shadow:0 0 0 2px var(--night), 0 0 0 3px var(--rule); }
+  .brandrow button.sw[aria-pressed="true"] { box-shadow:0 0 0 2px var(--night), 0 0 0 4px var(--text); }
+  .brandrow input[type=color] { width:32px; height:32px; border:0; padding:0; background:none; cursor:pointer; }
+  .brandrow .cardpick { all:unset; cursor:pointer; padding:6px 12px; border-radius:999px; border:1px solid var(--rule); color:var(--text); }
+  .tourshow .stage2 { position:relative; background:#f6f7f9; border-radius:0 0 14px 14px; height:420px; overflow:hidden; color:#1e1e1e; }
+  .tourshow .side { position:absolute; inset:0 auto 0 0; width:120px; background:#1e1e1e; color:#ddd; padding:22px 18px; font-size:14px; }
+  .tourshow .side p { margin:0 0 14px; } .tourshow .side .on { color:#fff; font-weight:700; }
+  .tourshow .looks { position:absolute; left:140px; top:236px; right:20px; display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .tourshow .looks i { position:relative; height:74px; border-radius:8px; border:1px solid #dcdfe4; background:#fff; display:flex; align-items:center; justify-content:center; font:600 22px/1 Georgia,serif; font-style:normal; }
+  .tourshow .looks i.dark { background:#1d1f24; color:#fff; } .tourshow .looks i.sage { background:#dfe6d2; } .tourshow .looks i.plum { background:#4a1f33; color:#f4d6e2; }
+  .tourshow .looks i.pick { outline:3px solid var(--tour); outline-offset:3px; }
+  .tourshow .ptr { position:absolute; left:58%; top:52%; width:34px; height:34px; }
+  .tourshow .ptr::before { content:""; position:absolute; left:-18px; top:-18px; width:44px; height:44px; border-radius:50%; background:color-mix(in srgb, var(--tour) 35%, transparent); box-shadow:0 0 0 10px color-mix(in srgb, var(--tour) 15%, transparent); }
+  .tourshow .tcard2 { position:absolute; right:16px; top:16px; width:270px; background:#16181c; color:#e8eaee; border:2px solid var(--tour); border-radius:14px; padding:16px; font-size:14px; }
+  .tourshow .tcard2 .top { display:flex; justify-content:space-between; font:600 11px/1 "JetBrains Mono",monospace; letter-spacing:.06em; color:var(--tour-text); margin-bottom:12px; }
+  .tourshow .tcard2 .top span:last-child { color:#9aa0ab; letter-spacing:0; font-family:inherit; }
+  .tourshow .tcard2 h4 { margin:0 0 8px; font-size:16px; }
+  .tourshow .tcard2 .say { background:#24272d; border-radius:8px; padding:10px; margin:0 0 10px; color:#cfd3da; }
+  .tourshow .tcard2 .playing { font-size:13px; color:#9aa0ab; margin:0 0 10px; } .tourshow .tcard2 .playing::before { content:"● "; color:var(--tour-text); }
+  .tourshow .tcard2 .btns { display:flex; gap:8px; } .tourshow .tcard2 .btns span { flex:1; text-align:center; padding:9px; border-radius:999px; border:1px solid #3a3e46; font-weight:600; }
+  .tourshow .tcard2 .btns span.go { background:var(--tour); border-color:var(--tour); color:#fff; }
+  .tourshow ul.points { list-style:none; padding:0; margin:20px 0 26px; } .tourshow ul.points li { margin:0 0 12px; padding-left:26px; position:relative; color:var(--muted); }
+  .tourshow ul.points li::before { content:"→"; position:absolute; left:0; color:var(--mint); } .tourshow ul.points b { color:var(--text); }
+  @media (max-width:640px) {
+    .ask button { padding:10px 16px; } .ask button span { display:none; }
+    .tourshow .side { display:none; }
+    .tourshow .looks { left:16px; right:16px; }
+    .tourshow .tcard2 { left:16px; right:16px; width:auto; }
+  }
   .or { margin:24px 0 0; font-size:15px; color:var(--dim); }
   .taken { display:inline-flex; align-items:center; gap:10px; margin:22px 0 0; font:500 15px/1 "JetBrains Mono",ui-monospace,monospace; color:var(--dim); }
   .taken[hidden] { display:none; }
@@ -2916,7 +2979,11 @@ const HOME = `<!doctype html>
 <div class="shell hero">
   <p class="eyebrow">NO INSTALL · NO ACCOUNTS · BUILT ON WORDPRESS PLAYGROUND</p>
   <h1>WordPress user testing, made easy.</h1>
-  <p class="sub">Paste this into Claude Code, Cursor or any assistant that can run commands. It drafts the persona and tasks with you, checks them, and hands you the links.</p>
+  <p class="sub" id="askSub">Watch real people try your plugin in a real WordPress. Paste this into Claude Code, Cursor or any assistant that can run commands: it drafts the test with you and hands you the links.</p>
+  <div class="ask" role="radiogroup" aria-label="What do you want to do?">
+    <button type="button" role="radio" aria-checked="true" data-ask="test"><b>Test it</b><span>people try it on their own</span></button>
+    <button type="button" role="radio" aria-checked="false" data-ask="tour"><b>Show it</b><span>a tour that plays itself</span><em>New</em></button>
+  </div>
   <div class="prompt">
     <p id="promptText">Fetch https://playground-usertest.view.fast/llms.txt and set up a user test for my plugin. Draft the persona and tasks with me, check them, then give me both links and the password.</p>
     <div class="under">
@@ -2925,7 +2992,6 @@ const HOME = `<!doctype html>
     </div>
   </div>
   <p class="or">Rather type it yourself? <a href="#start">Fill in the form</a>. It takes about half a minute.</p>
-  <p class="or">Want to show it rather than test it? Give your assistant this instead: <span class="addr" id="tourPrompt"></span> <button type="button" class="ghost" id="copyTour" style="margin:0 0 0 6px;padding:6px 14px;font-size:14px">Copy</button></p>
   <p class="taken" id="taken" hidden aria-live="polite"><i aria-hidden="true"></i><span><b id="takenN">0</b> tests taken so far</span></p>
 </div>
 
@@ -3012,6 +3078,48 @@ const HOME = `<!doctype html>
   </div>
 </section>
 
+<section class="tourshow" aria-labelledby="tour-h" style="padding-top:0">
+  <div class="shell split">
+    <div class="words">
+      <p class="label" style="color:var(--mint)">New · Show it</p>
+      <h2 class="big" id="tour-h">Or show them round.</h2>
+      <p>The same link, turned round. Instead of watching people try your plugin, a tour shows them: it clicks through a real WordPress by itself while they watch, and they can pause and try it any time.</p>
+      <ul class="points">
+        <li><b>A pointer you can’t miss</b>, with a halo in your colour.</li>
+        <li><b>Out of the way when they want it.</b> Hide the card and it tucks into a pill; the tour carries on.</li>
+        <li><b>Your colours, your voice.</b> Add a recording to each step, or let the browser read it.</li>
+        <li><b>Made by chatting.</b> Tell your assistant what to show; it writes the steps and the script.</li>
+        <li><b>Ends on your button:</b> “Get the plugin”, “Read the release post”.</li>
+      </ul>
+      <div class="brandrow" role="group" aria-label="Try your brand colour">
+        <span>Try your colour:</span>
+        <button type="button" class="sw" style="background:#6c5ce7" data-c="#6c5ce7" aria-pressed="true" aria-label="Purple"></button>
+        <button type="button" class="sw" style="background:#7cf2b0" data-c="#7cf2b0" aria-pressed="false" aria-label="Mint"></button>
+        <button type="button" class="sw" style="background:#ff6b3d" data-c="#ff6b3d" aria-pressed="false" aria-label="Orange"></button>
+        <button type="button" class="sw" style="background:#0a7cff" data-c="#0a7cff" aria-pressed="false" aria-label="Blue"></button>
+        <input type="color" id="brandPick" value="#6c5ce7" aria-label="Any colour">
+        <button type="button" class="cardpick" id="cardPick">Light card</button>
+      </div>
+      <a class="copy" href="/demo/tour" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block">Watch a tour</a>
+    </div>
+    <div class="browser">
+      <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span>A tour, playing in a real WordPress</span></div>
+      <div class="stage2" aria-label="A tour playing" role="img">
+        <div class="side"><p class="on">Styles</p><p>Browse styles</p><p>Typography</p><p>Colors</p><p>Layout</p></div>
+        <div class="looks"><i>Aa</i><i class="dark pick">Aa<svg class="ptr" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 2l7 19 2.6-7.4L20 11z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg></i><i>Aa</i><i class="sage">Aa</i><i>Aa</i><i class="plum">Aa</i></div>
+        <div class="tcard2">
+          <div class="top"><span>STEP 3 OF 5</span><span>Sound on · <button type="button" class="hideb" id="hideCard">Hide</button></span></div>
+          <h4>A new look in one click</h4>
+          <p class="say">Styles has ready-made looks. One click changes the colours and fonts across the whole site.</p>
+          <p class="playing">Playing</p>
+          <div class="btns"><span>Skip</span><span class="go">Pause</span></div>
+        </div>
+        <button type="button" class="pill2" id="showCard" hidden>Tour · step 3 of 5</button>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="sets" aria-labelledby="sets-h" style="padding-top:0">
   <div class="shell">
     <h2 class="big" id="sets-h">Not sure what to ask? Start from a set.</h2>
@@ -3036,7 +3144,6 @@ const HOME = `<!doctype html>
     <div><p class="label">→ compare</p><h3>Test two versions</h3><p>Same tasks, two or three sites. One link shares testers out evenly, and the results come back side by side.</p></div>
     <div><p class="label">→ webhook</p><h3>Hear when they finish</h3><p>Each tester who finishes is posted to Slack, Discord or any HTTPS endpoint. Never the password.</p></div>
     <div><p class="label">→ nothing to install</p><h3>At either end</h3><p>Testers need a browser and nothing else. You need a blueprint, the one you already demo with.</p></div>
-    <div><p class="label">→ show it</p><h3>Or show them round</h3><p>Turn it round into a tour that plays itself: each step clicks through in a real WordPress while people watch. It ends with your button.</p></div>
   </div>
 </section>
 
@@ -3149,12 +3256,49 @@ const HOME = `<!doctype html>
   document.getElementById('mcpAddr').textContent = origin + '/mcp';
   var tourText = 'Fetch ' + origin + '/llms.txt and make a guided tour of my plugin that plays itself. ' +
     'Use my brand colour, write the steps and the voice script with me, check it, then give me both links and the password.';
-  document.getElementById('tourPrompt').textContent = tourText;
-  document.getElementById('copyTour').addEventListener('click', function () {
-    var btn = this;
-    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(tourText).then(done, function () {});
+  var testText = document.getElementById('promptText').textContent;
+  var subs = {
+    test: document.getElementById('askSub').textContent,
+    tour: 'Show people round your plugin in a real WordPress, in your colours and your voice. Paste this into your assistant: it writes the tour with you and hands you the link.'
+  };
+  Array.prototype.forEach.call(document.querySelectorAll('.ask button'), function (b) {
+    b.addEventListener('click', function () {
+      var k = b.getAttribute('data-ask');
+      Array.prototype.forEach.call(document.querySelectorAll('.ask button'), function (x) { x.setAttribute('aria-checked', String(x === b)); });
+      document.getElementById('promptText').textContent = k === 'tour' ? tourText : testText;
+      document.getElementById('askSub').textContent = subs[k];
+    });
   });
+
+  // The tour preview: a brand colour, a dark or light card, and Hide.
+  (function () {
+    var box = document.querySelector('.tourshow'), card = box.querySelector('.tcard2'), pill = document.getElementById('showCard');
+    function lum(h) { var n = parseInt(h.slice(1), 16), f = function (c) { c /= 255; return c <= .03928 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4); }; return .2126 * f(n >> 16 & 255) + .7152 * f(n >> 8 & 255) + .0722 * f(n & 255); }
+    function paint(c) {
+      box.style.setProperty('--tour', c);
+      var light = card.classList.contains('light'), bg = light ? 1 : lum('#16181c'), l = lum(c);
+      var ratio = (Math.max(l, bg) + .05) / (Math.min(l, bg) + .05);
+      box.style.setProperty('--tour-text', ratio >= 4.5 ? c : (light ? '#3a3e46' : '#e8eaee'));
+      pill.style.color = lum(c) > .4 ? '#16181c' : '#fff';
+      card.querySelector('.go').style.color = lum(c) > .4 ? '#16181c' : '#fff';
+    }
+    var current = '#6c5ce7';
+    Array.prototype.forEach.call(document.querySelectorAll('.brandrow .sw'), function (b) {
+      b.addEventListener('click', function () {
+        Array.prototype.forEach.call(document.querySelectorAll('.brandrow .sw'), function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+        current = b.getAttribute('data-c'); document.getElementById('brandPick').value = current; paint(current);
+      });
+    });
+    document.getElementById('brandPick').addEventListener('input', function () {
+      Array.prototype.forEach.call(document.querySelectorAll('.brandrow .sw'), function (x) { x.setAttribute('aria-pressed', 'false'); });
+      current = this.value; paint(current);
+    });
+    document.getElementById('cardPick').addEventListener('click', function () {
+      var light = card.classList.toggle('light'); this.textContent = light ? 'Dark card' : 'Light card'; paint(current);
+    });
+    document.getElementById('hideCard').addEventListener('click', function () { card.hidden = true; pill.hidden = false; });
+    pill.addEventListener('click', function () { pill.hidden = true; card.hidden = false; });
+  })();
 
   // Tests taken, counted up when the page opens and again whenever someone
   // else finishes a task while it is open. It looks every half minute.
@@ -3970,6 +4114,10 @@ export default {
     }
 
     if (url.pathname === '/mcp') return handleMcp(req, env);
+
+    if (url.pathname === '/demo/tour') {
+      return new Response(null, { status: 302, headers: { location: demoTourLink(publicOrigin(req), cardZip(env)), 'cache-control': 'public, max-age=300' } });
+    }
 
     if (url.pathname === '/llms.txt') {
       return new Response(LLMS_TXT(publicOrigin(req)), {
