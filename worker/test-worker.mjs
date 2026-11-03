@@ -1051,5 +1051,24 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   check(l.notes.some((x) => /Steps 2, 3 press nothing/.test(x) && /Record the clicks/.test(x)), 'tour: steps that press nothing are named, with recording as the fix');
 }
 
+// Known moves for WordPress's own screens, in the prompt and llms.txt, and a
+// ready-made first-post tour built from them that brings its own site.
+{
+  const home = await (await call(env(), '/')).text();
+  const i = home.indexOf('var PLAIN = '), j = home.indexOf(';\n', i);
+  const tour = JSON.parse(home.slice(i + 12, j)).tour;
+  check(/Start a new post: "do": \["go \/wp-admin\/post-new\.php"\]/.test(tour) && /media-button-select/.test(tour), 'moves: the tour prompt carries the known moves as do lists');
+  const llms = await (await call(env(), '/llms.txt')).text();
+  check(/Moves through WordPress's own screens/.test(llms) && /#blogname/.test(llms), 'moves: so does llms.txt');
+  const set = TOUR_SETS.find((x) => x.key === 'first-post');
+  check(set && set.tasks.every((t) => t.do && t.do.length && t.say), 'first post: every step presses something and says something');
+  const eF = env();
+  const r = await call(eF, '/api/tests', { method: 'POST', body: { mode: 'tour', task_set: 'first-post', subject: 'your first post', password: GOOD.password } });
+  const made = await r.json();
+  const bp = await (await call(eF, '/t/' + made.id + '/blueprint.json')).json();
+  const packed = (JSON.stringify(bp).match(/base64_decode\( '([A-Za-z0-9+\/=]+)'/) || [])[1] || '';
+  check(r.status === 200 && Buffer.from(packed, 'base64').toString().includes('photo-1501785888041'), 'first post: picking the set brings WordPress itself and its pictures');
+}
+
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');
 process.exit(failures ? 1 : 0);

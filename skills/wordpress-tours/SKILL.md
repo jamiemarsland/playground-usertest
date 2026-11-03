@@ -93,6 +93,32 @@ For several languages, make one tour per language: same steps, translated
 words. Check each with `usertest_check`, which points out steps that press
 buttons by their words.
 
+## Moves that work
+
+These moves through WordPress's own screens were each played end to end in
+Playground (WordPress 7.1). Copy the `do` lists as they are, with your own
+words where it says …. None depends on a button's words except Styles, so
+they work in every language. A tour of WordPress itself can be built from
+them alone; a plugin tour uses them for the WordPress parts (a new post,
+publishing) and records the rest.
+
+- Start a new post: `["go /wp-admin/post-new.php"]`
+- Start a new page (closes the pattern chooser): `["go /wp-admin/post-new.php?post_type=page","maybe press Escape"]`
+- Type the title of a post or page: `["type \"…\" into .editor-post-title__input || h1.editor-post-title"]`
+- Write the first paragraph: `[".block-editor-default-block-appender__content","type \"…\" into p[data-type=\"core/paragraph\"]"]`
+- Set a featured image (needs "images" on the site): `["[data-tab-id=\"edit-post/document\"]",".editor-post-featured-image__toggle","#menu-item-browse",".attachments .attachment",".media-button-select"]`
+- Publish (check new_post or new_page): `[".editor-post-publish-panel__toggle",".editor-post-publish-button","wait 2"]`
+- Change the site title (check site_name): `["go /wp-admin/options-general.php","type \"…\" into #blogname","#submit"]`
+- See all posts: `["go /wp-admin/edit.php"]`
+- See all pages: `["go /wp-admin/edit.php?post_type=page"]`
+- Open the Site Editor: `["go /wp-admin/site-editor.php"]`
+- Pick a ready-made style in the Site Editor (check styles): `["button \"Styles\"","button \"Browse styles\"",".global-styles-ui-variations_item:not(.is-active)",".edit-site-save-hub__button || button \"Save\"","maybe .editor-entities-saved-states__save-button"]`
+- Open the command palette: `["#wp-admin-bar-command-palette > .ab-item"]`
+
+A step that picks a picture needs pictures in the Media Library: give the
+site `"images": [links]`, because an upload from someone's own computer
+cannot be played back.
+
 ## Recording the clicks
 
 Guessing what a step presses is where tours go wrong, above all for

@@ -978,6 +978,31 @@ const TOUR_SETS = [
     ],
   },
 ];
+// For teaching WordPress itself: a first post from start to finish, every step
+// one of the known moves. It brings its own pictures, so the featured image
+// has something to pick.
+TOUR_SETS.push({
+  key: 'first-post',
+  mode: 'tour',
+  name: 'Write your first post',
+  for: 'Teaching WordPress itself: a beginner\u2019s first post, from a blank page to published, with a featured image.',
+  persona: 'Anyone new to WordPress who wants to see how a post is made.',
+  site: 'wordpress',
+  images: ['https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=1600', 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=1600'],
+  button: { label: 'Learn more WordPress', url: 'https://learn.wordpress.org/' },
+  tasks: [
+    { title: 'Start a new post', hint: 'Posts live under New in the bar at the top.', check: { type: 'page', path: 'post-new.php' },
+      say: 'Let\u2019s write your first post. I\u2019ll start a new one for you from the bar at the top.', do: ['go /wp-admin/post-new.php'] },
+    { title: 'Give it a title', hint: 'Click where it says Add title and type.', check: 'none',
+      say: 'Every post starts with a title. Click where it says Add title, and type. We\u2019ll call this one My first adventure.', do: ['type "My first adventure" into .editor-post-title__input || h1.editor-post-title'] },
+    { title: 'Write a paragraph', hint: 'Click below the title and start typing. Each paragraph is a block.', check: 'none',
+      say: 'Now the words. Click just below the title and start typing. Each paragraph you write is a block, and blocks are how everything in WordPress is built.', do: ['.block-editor-default-block-appender__content', 'type "Today I took a different path and found somewhere new." into p[data-type="core/paragraph"]'] },
+    { title: 'Add a featured image', hint: 'In the Post settings on the right, press Set featured image and pick a picture.', check: 'none',
+      say: 'A featured image is the picture that goes with your post. In the settings on the right, press Set featured image, open the Media Library, choose a picture and set it.', do: ['[data-tab-id="edit-post/document"]', '.editor-post-featured-image__toggle', '#menu-item-browse', '.attachments .attachment', '.media-button-select'] },
+    { title: 'Publish it', hint: 'Press Publish, then Publish again to confirm.', check: 'new_post',
+      say: 'Ready? Press Publish, then Publish again to confirm. That\u2019s it: your post is live for the world to read.', do: ['.editor-post-publish-panel__toggle', '.editor-post-publish-button', 'wait 2'] },
+  ],
+});
 const ALL_SETS = TASK_SETS.concat(TOUR_SETS);
 
 // A tour's colours. An accent (any hex colour: a brand purple, say) and a
@@ -1416,6 +1441,13 @@ function sameAsPaste(body) {
   if (out.blueprintJson == null && out.blueprint != null) out.blueprintJson = out.blueprint;
   if (out.blueprintJson && typeof out.blueprintJson === 'object') out.blueprintJson = JSON.stringify(out.blueprintJson);
   if (out.taskSet == null && out.task_set != null) out.taskSet = out.task_set;
+  // a ready-made set that names its own site (WordPress itself, with pictures)
+  // brings it, unless the owner said otherwise
+  const set = out.taskSet && typeof ALL_SETS !== 'undefined' ? ALL_SETS.find((x) => x.key === out.taskSet) : null;
+  if (set && set.site && !out.site && !out.plugin && !out.plugins && !out.theme && !out.boot && !out.blueprintUrl && !out.blueprintJson) {
+    out.site = set.site;
+    if (!out.images && set.images) out.images = set.images;
+  }
   // most people have no blueprint: name the plugin or theme (a wordpress.org
   // slug or a zip link), or ask for WordPress itself, and the service builds it
   const plugins = [].concat(out.plugin || [], out.plugins || []).filter(Boolean);
@@ -2792,6 +2824,10 @@ POST ${origin}/api/tests
   step that finds a button by its words with the words WordPress shows in it.
   For several languages, make one test or tour per language.
 
+  Moves through WordPress's own screens that are known to play (copy them
+  as they are, your words where it says …):
+${MOVES_TEXT.split('\n').map((l) => '    ' + l).join('\n')}
+
   Recording a tour's clicks: POST ${origin}/api/record with the same JSON
   (no password) and you get back { link }: the person opens it, does each step
   themselves in Playground, and the card writes down exactly what they pressed
@@ -3002,6 +3038,28 @@ ${test.wording && test.wording.intro ? `<p class="soft">${esc(test.wording.intro
 // One that can make requests creates the test itself; one that cannot hands
 // back a block the owner pastes into the form, and nothing is made until they
 // press the form's own button. {ORIGIN} is filled in by the page.
+// Moves through WordPress's own screens that are known to play, each one
+// played end to end in Playground on the WordPress of the day (7.1). Every
+// tour that touches WordPress itself (most do, plugin tours included) can use
+// them as they are, in any language: none of them depends on a button's words
+// except Styles. They go into the prompt, llms.txt and the tours skill.
+const KNOWN_MOVES = [
+  ['Start a new post', ['go /wp-admin/post-new.php']],
+  ['Start a new page (closes the pattern chooser)', ['go /wp-admin/post-new.php?post_type=page', 'maybe press Escape']],
+  ['Type the title of a post or page', ['type "…" into .editor-post-title__input || h1.editor-post-title']],
+  ['Write the first paragraph', ['.block-editor-default-block-appender__content', 'type "…" into p[data-type="core/paragraph"]']],
+  ['Set a featured image (needs "images" on the site)', ['[data-tab-id="edit-post/document"]', '.editor-post-featured-image__toggle', '#menu-item-browse', '.attachments .attachment', '.media-button-select']],
+  ['Publish (check new_post or new_page)', ['.editor-post-publish-panel__toggle', '.editor-post-publish-button', 'wait 2']],
+  ['Change the site title (check site_name)', ['go /wp-admin/options-general.php', 'type "…" into #blogname', '#submit']],
+  ['See all posts', ['go /wp-admin/edit.php']],
+  ['See all pages', ['go /wp-admin/edit.php?post_type=page']],
+  ['Open the Site Editor', ['go /wp-admin/site-editor.php']],
+  ['Pick a ready-made style in the Site Editor (check styles)', ['button "Styles"', 'button "Browse styles"', '.global-styles-ui-variations_item:not(.is-active)', '.edit-site-save-hub__button || button "Save"', 'maybe .editor-entities-saved-states__save-button']],
+  ['Open the command palette', ['#wp-admin-bar-command-palette > .ab-item']],
+];
+// each as the exact do list to copy
+const MOVES_TEXT = KNOWN_MOVES.map(([what, acts]) => `${what}: "do": ${JSON.stringify(acts)}`).join('\n');
+
 const SITE_LINE = 'For the site, ask me what it is: a plugin goes in "plugin" and a theme in "theme", each as its WordPress.org slug (the end of its wordpress.org/plugins/ or /themes/ address) or a public link to its zip; for WordPress itself put "site":"wordpress" instead. If a step picks a picture (a featured image, say), add "images": [links to a few public pictures], which go in the Media Library first, because uploading from my computer cannot be played back. Only if I already have a Playground blueprint, put its link in "blueprint_url" instead of those. The service sets the site up from them.';
 
 function plainPrompt(mode) {
@@ -3017,7 +3075,7 @@ function plainPrompt(mode) {
       'Help me make a guided tour with Playground user testing ({ORIGIN}), of a WordPress plugin, a theme, or WordPress itself (to teach someone how it works). The tour plays itself in a real WordPress in the visitor\u2019s browser: each step presses through its own actions while a pointer shows where, and a voice can read a script. Everything you need is in this message, so do not go looking for instructions.',
       'The JSON looks like this:',
       '{"mode":"tour","subject":"…","persona":"…","plugin":"…","button":{"label":"Get the plugin","url":"https://…"},"theme":{"accent":"#6b3fa0","card":"dark"},"tasks":[{"title":"…","hint":"…","say":"…","do":["#some-id","button \\"Label\\"","type \\"words\\" into input.search","press Escape","go /wp-admin/options-general.php","wait 2"],"check":"none"}]}',
-      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. ${SITE_LINE} Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. You cannot see the site, so do not guess what a step presses: leave do out where you are unsure. Once the tour is in the form I will press Record the clicks in Playground and do each step myself, and the card fills in exactly what to press. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: my brand colour as a hex accent, and a dark or light card.`,
+      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. ${SITE_LINE} Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. You cannot see the site, so do not invent what a step presses. For WordPress's own screens, use these moves, which are known to work (copy them exactly, putting my words where it says …):\n${MOVES_TEXT}\nFor anything else (a plugin's or theme's own screens), leave do out: once the tour is in the form I will press Record the clicks in Playground, do those steps myself, and the card fills in exactly what to press. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: my brand colour as a hex accent, and a dark or light card.`,
       lang,
       end,
     ].join('\n\n');
@@ -3770,6 +3828,8 @@ const HOME = `<!doctype html>
     }
     var persona = document.getElementById('persona');
     if (!persona.value.trim() || persona.value === lastSetPersona) { persona.value = set.persona; lastSetPersona = set.persona; }
+    // a set that brings its own site (WordPress itself, with pictures)
+    if (set.site === 'wordpress') { document.querySelector('[data-bp="wp"]').click(); pastedImages = set.images || null; }
     tasksEl.innerHTML = '';
     set.tasks.forEach(function (t) { addTask(t.title, t.hint, t.check, t.point, t.do, t.say); });
   });
