@@ -1070,5 +1070,50 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   check(r.status === 200 && Buffer.from(packed, 'base64').toString().includes('photo-1501785888041'), 'first post: picking the set brings WordPress itself and its pictures');
 }
 
+// A tour in the maker's own voice: clips sent with the results password,
+// kept with the tour, served to it, and gone with it.
+{
+  const eV = env();
+  const PWV = { 'x-test-password': GOOD.password };
+  const made = await (await call(eV, '/api/tests', { method: 'POST', body: { mode: 'tour', subject: 'a voice', site: 'wordpress', password: GOOD.password, tasks: [{ title: 'One', hint: 'First.' }, { title: 'Two', hint: 'Second.' }] } })).json();
+  const clip = Buffer.from('GkXfo pretend opus bytes').toString('base64');
+  let r = await call(eV, '/api/voice?test=' + made.id, { method: 'POST', body: { step: 1, mime: 'audio/webm;codecs=opus', data: clip } });
+  check(r.status === 403, 'voice: not without the results password');
+  r = await call(eV, '/api/voice?test=' + made.id, { method: 'POST', headers: PWV, body: { step: 1, mime: 'audio/webm;codecs=opus', data: clip } });
+  const saved = await r.json();
+  check(r.status === 200 && /\/t\/[a-z0-9]+\/voice\/2-two\?v=\d+$/.test(saved.audio), 'voice: a step\u2019s recording is kept and gets an address');
+  r = await call(eV, '/api/voice?test=' + made.id, { method: 'POST', headers: PWV, body: { step: 'end', mime: 'audio/mp4', data: clip } });
+  check(r.status === 200, 'voice: the closing words too');
+  r = await call(eV, '/api/voice?test=' + made.id, { method: 'POST', headers: PWV, body: { step: 0, mime: 'text/html', data: clip } });
+  check(r.status === 400, 'voice: only audio');
+  const bp = await (await call(eV, '/t/' + made.id + '/blueprint.json')).json();
+  const cfg = JSON.parse(bp.steps.find((x) => x.step === 'setSiteOptions' && x.options.playground_user_test).options.playground_user_test);
+  check(!cfg.tasks[0].audio && cfg.tasks[1].audio === saved.audio && /\/voice\/end/.test(cfg.endAudio || ''), 'voice: the tour plays it, and the browser reads the rest');
+  r = await call(eV, saved.audio.replace(ORIGIN, '').replace(/\?.*$/, ''));
+  const bytes = Buffer.from(await r.arrayBuffer()).toString();
+  check(r.status === 200 && r.headers.get('content-type') === 'audio/webm;codecs=opus' && r.headers.get('cross-origin-resource-policy') === 'cross-origin' && bytes === 'GkXfo pretend opus bytes', 'voice: served as audio, to Playground\u2019s origin');
+  await call(eV, '/api/results?test=' + made.id, { method: 'DELETE', headers: PWV });
+  r = await call(eV, saved.audio.replace(ORIGIN, '').replace(/\?.*$/, ''));
+  check(r.status === 404, 'voice: gone with the tour');
+  const plainTest = await (await call(eV, '/api/tests', { method: 'POST', body: GOOD })).json();
+  r = await call(eV, '/api/voice?test=' + plainTest.id, { method: 'POST', headers: PWV, body: { step: 0, mime: 'audio/webm', data: clip } });
+  check(r.status === 400, 'voice: a test (not a tour) has no voice');
+}
+
+// A tour step's check comes from what it does, never a guess from its title.
+{
+  const eC = env();
+  const made = await (await call(eC, '/api/tests', { method: 'POST', body: { mode: 'tour', subject: 'checks', site: 'wordpress', password: GOOD.password, tasks: [{ title: 'Start a new post', hint: 'x', do: ['go /wp-admin/post-new.php'] }, { title: 'Write a blog post', hint: 'x', do: ['.block-editor-default-block-appender__content'] }, { title: 'Publish your post', hint: 'x', check: 'new_post', do: ['.editor-post-publish-button'] }] } })).json();
+  const bp = await (await call(eC, '/t/' + made.id + '/blueprint.json')).json();
+  const tasks = JSON.parse(bp.steps.find((x) => x.step === 'setSiteOptions' && x.options.playground_user_test).options.playground_user_test).tasks;
+  check(tasks[0].check && tasks[0].check.type === 'page' && /post-new\.php/.test(tasks[0].check.path), 'tour checks: a step that goes somewhere checks it got there');
+  check(!tasks[1].check, 'tour checks: no guess from the title (it would wait for a post that is never published)');
+  check(tasks[2].check && tasks[2].check.type === 'new_post', 'tour checks: a check the maker gave is kept');
+  const testMade = await (await call(eC, '/api/tests', { method: 'POST', body: Object.assign({}, GOOD, { tasks: [{ title: 'Write a blog post about your day' }] }) })).json();
+  const tbp = await (await call(eC, '/t/' + testMade.id + '/blueprint.json')).json();
+  const ttasks = JSON.parse(tbp.steps.find((x) => x.step === 'setSiteOptions' && x.options.playground_user_test).options.playground_user_test).tasks;
+  check(ttasks[0].check && ttasks[0].check.type === 'new_post', 'test checks: a test still guesses from the title');
+}
+
 console.log(failures ? '\n' + failures + ' failed' : '\nall good');
 process.exit(failures ? 1 : 0);
