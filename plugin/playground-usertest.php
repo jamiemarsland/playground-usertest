@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Playground user testing
  * Description:       Shows a tester a small card of things to try, and sends what happens back to the test that sent them.
- * Version:           1.5.1
+ * Version:           1.5.2
  * Requires at least: 6.5
  * Requires PHP:      7.4
  * License:           GPL-2.0-or-later
@@ -26,7 +26,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'PGUT_VERSION', '1.5.1' );
+define( 'PGUT_VERSION', '1.5.2' );
 
 /**
  * The test this site was booted for, or nothing.
