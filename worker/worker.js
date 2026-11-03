@@ -1418,7 +1418,9 @@ function sameAsPaste(body) {
   // slug or a zip link), or ask for WordPress itself, and the service builds it
   const plugins = [].concat(out.plugin || [], out.plugins || []).filter(Boolean);
   if (!out.boot && !out.blueprintUrl && !out.blueprintJson && (plugins.length || out.theme || out.site === 'wordpress')) {
-    out.boot = { plugins, theme: typeof out.theme === 'string' ? out.theme : undefined, title: out.site_title || undefined };
+    // pictures for the Media Library, for a step that picks one (a featured
+    // image): an upload from someone's own computer cannot be played back
+    out.boot = { plugins, theme: typeof out.theme === 'string' ? out.theme : undefined, title: out.site_title || undefined, images: Array.isArray(out.images) ? out.images : undefined };
   }
   return out;
 }
@@ -1683,7 +1685,8 @@ async function recordLink(env, req) {
   if (!tasks.length) tasks = cleanTasks([{ title: 'Step 1' }]);
   const test = { id: 'record', subject: trim(body.subject, LIMITS.subject) || 'my plugin', tasks, tour: toured.tour, wording: langed.lang ? { lang: langed.lang } : null };
   const bp = wrapBlueprint(base, test, publicOrigin(req), cardZip(env), null);
-  const opts = bp.steps.find((x) => x && x.step === 'setSiteOptions');
+  // the card's own settings step, not the one a built site sets its name with
+  const opts = bp.steps.find((x) => x && x.step === 'setSiteOptions' && x.options && x.options.playground_user_test);
   const cfg = JSON.parse(opts.options.playground_user_test);
   cfg.mode = 'record';
   opts.options.playground_user_test = JSON.stringify(cfg);
@@ -2997,7 +3000,7 @@ ${test.wording && test.wording.intro ? `<p class="soft">${esc(test.wording.intro
 // One that can make requests creates the test itself; one that cannot hands
 // back a block the owner pastes into the form, and nothing is made until they
 // press the form's own button. {ORIGIN} is filled in by the page.
-const SITE_LINE = 'For the site, ask me what it is: a plugin goes in "plugin" and a theme in "theme", each as its WordPress.org slug (the end of its wordpress.org/plugins/ or /themes/ address) or a public link to its zip; for WordPress itself put "site":"wordpress" instead. Only if I already have a Playground blueprint, put its link in "blueprint_url" instead of those. The service sets the site up from them.';
+const SITE_LINE = 'For the site, ask me what it is: a plugin goes in "plugin" and a theme in "theme", each as its WordPress.org slug (the end of its wordpress.org/plugins/ or /themes/ address) or a public link to its zip; for WordPress itself put "site":"wordpress" instead. If a step picks a picture (a featured image, say), add "images": [links to a few public pictures], which go in the Media Library first, because uploading from my computer cannot be played back. Only if I already have a Playground blueprint, put its link in "blueprint_url" instead of those. The service sets the site up from them.';
 
 function plainPrompt(mode) {
   const checks = Object.keys(CHECKS).filter((k) => !['text', 'page', 'block', 'block_changed'].includes(k)).join(', ');
