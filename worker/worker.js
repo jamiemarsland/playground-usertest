@@ -2994,6 +2994,9 @@ const HOME = `<!doctype html>
   .addr { font:13px/1.7 "JetBrains Mono",ui-monospace,monospace; word-break:break-all; color:var(--text); }
   .copy { font:inherit; font-weight:700; font-size:15px; padding:12px 22px; border-radius:999px; border:0; background:var(--mint); color:var(--night); cursor:pointer; }
   .copy:hover { background:var(--mint-hi); }
+  /* a link dressed as this button keeps its dark words: the page's own link
+     hover would turn them the colour of the button */
+  a.copy, a.copy:hover { color:var(--night); }
   .ask { display:inline-flex; gap:6px; padding:6px; margin:0 auto 18px; background:var(--panel); border:1px solid var(--rule); border-radius:999px; }
   .ask button { all:unset; cursor:pointer; display:flex; align-items:baseline; gap:8px; padding:10px 20px; border-radius:999px; color:var(--muted); font-size:15px; }
   .ask button b { color:var(--text); font-size:16px; }
