@@ -1,37 +1,18 @@
-// The Worker, end to end against a KV mock: making a test, the tester's intro
+// The Worker, end to end against a real SQL engine: making a test, the tester's intro
 // page, the wrapped blueprint, events coming in, and the results coming out —
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
-import { DatabaseSync } from 'node:sqlite';
 import worker, { TASK_SETS, TOUR_SETS, readTour, cleanTheme, contrast, cleanActions, actionLines, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
+import { localDb } from './local-db.mjs';
 
-// A real SQL engine rather than a mock. The worker talks to a D1-shaped
-// binding, which is what both Spacefast Functions and Cloudflare D1 hand it, so
-// these tests run the actual statements — including the ones a mock would
-// happily accept and a database would not.
-const d1 = () => {
-  const db = new DatabaseSync(':memory:');
-  const prepare = (sql) => {
-    let args = [];
-    const stmt = {
-      bind(...a) { args = a; return stmt; },
-      async run() { const r = db.prepare(sql).run(...args); return { success: true, meta: { changes: Number(r.changes) } }; },
-      async all() { return { results: db.prepare(sql).all(...args) }; },
-      async first() { const r = db.prepare(sql).get(...args); return r === undefined ? null : r; },
-    };
-    return stmt;
-  };
-  return {
-    prepare,
-    async batch(stmts) { const out = []; for (const st of stmts) out.push(await st.run()); return out; },
-  };
-};
+// A real SQL engine rather than a mock: see local-db.mjs.
+const freshDb = () => localDb();
 
 let failures = 0;
 const check = (cond, msg) => { if (!cond) { failures++; console.error('FAIL', msg); } else console.log('ok  ', msg); };
 
 const ORIGIN = 'https://usertest.test';
-const env = () => ({ DB: d1(), PLUGIN_ZIP_URL: 'https://example.com/card.zip', CREATE_DAILY_LIMIT: '5' });
+const env = () => ({ DB: freshDb(), PLUGIN_ZIP_URL: 'https://example.com/card.zip', CREATE_DAILY_LIMIT: '5' });
 
 const call = (e, path, { method = 'GET', body, ip = '203.0.113.9', headers = {} } = {}) =>
   worker.fetch(

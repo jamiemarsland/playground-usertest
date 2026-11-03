@@ -6,8 +6,8 @@
 #
 #   ./build-zip.sh            -> dist/playground-usertest-card.zip
 #
-# Upload the result as a release asset at the URL in worker/wrangler.jsonc
-# (PLUGIN_ZIP_URL). Every test installs whatever is there at the time, so a fix
+# Upload the result as a release asset at the URL in worker/worker.js
+# (DEFAULT_CARD_ZIP). Every test installs whatever is there at the time, so a fix
 # to the card reaches everybody's next tester with no redeploy.
 
 set -euo pipefail

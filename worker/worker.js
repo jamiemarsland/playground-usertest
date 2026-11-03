@@ -19,11 +19,11 @@
  *   POST /api/events            the card reports in
  *   GET  /api/results           results as JSON (x-test-password header)
  *
- * KV, one namespace:
- *   test:<id>                   the test itself (tasks, persona, blueprint, password hash)
- *   test:<id>:session:<sid>     one tester's events, newest last, capped
- *   test:<id>:index             one row per tester session, newest first
- *   ip:*                        rate counters
+ * One SQL database (env.DB, the space's own):
+ *   tests                       one row per test (tasks, persona, blueprint, password hash)
+ *   sessions                    one row per tester
+ *   events                      one row per thing a tester did
+ *   counters                    the rate caps
  *
  * Everything expires NINETY_DAYS after the last event, so an abandoned test
  * cleans itself up and the store never grows without bound.
@@ -136,10 +136,8 @@ function sameSecret(a, b) {
 }
 
 /* --------------------------------------------------------------------- store */
-// One SQL database behind a D1-shaped binding. That shape is what Spacefast's
-// Functions runtime hands a worker when it declares `"database": true`, and it
-// is also what Cloudflare D1 gives you — so the same code runs on either, and
-// moving hosts is a config change rather than a rewrite.
+// One SQL database: the binding Spacefast's Functions runtime hands a worker
+// when it declares `"database": true`.
 //
 // The SQL is deliberately plain: VARCHAR with lengths (MySQL will not index a
 // bare TEXT key), no AUTOINCREMENT, no ON CONFLICT, no CREATE INDEX. Every
@@ -222,7 +220,7 @@ function ensureSchema(env) {
   return pending;
 }
 
-// D1 and node:sqlite report a write's row count in different places.
+// The live database and node:sqlite report a write's row count in different places.
 function changed(res) {
   if (!res) return 0;
   if (res.meta && typeof res.meta.changes === 'number') return res.meta.changes;
@@ -1782,7 +1780,7 @@ async function buildDigest(env, id, test, only) {
 
   // Every event for the test in one query, then split by tester here. A query
   // per tester read the same rows and cost a round trip each, and it put the
-  // digest over D1's fifty-queries-per-invocation somewhere around the
+  // digest over the fifty-queries-per-invocation limit somewhere around the
   // forty-eighth tester — which is to say, exactly when a test went well.
   const wanted = new Set(rows.map((r) => r.id));
   const everything = await all(

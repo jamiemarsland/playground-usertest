@@ -35,8 +35,9 @@ No account. Nothing to host. No JSON to edit.
 
 ```
 worker/worker.js               the service: form, intro page, blueprint, events, results, MCP
-worker/wrangler.jsonc          Cloudflare config — worker.js deploys as it stands
 worker/test-worker.mjs         the whole thing against a real SQL engine
+worker/local-db.mjs            the space's database, on node:sqlite, for tests and dev
+worker/dev.mjs                 the service on localhost:8787
 skills/wordpress-tours/        a skill for assistants that write tours, with a map of WordPress
 
 spacefast/sf.jsonc             Spacefast config: Functions, with a database
@@ -48,7 +49,7 @@ plugin/build-zip.sh            builds the zip the blueprint route installs
 plugin/test-plugin.php         the plugin against WordPress stubs
 ```
 
-The two halves meet at one URL: `PLUGIN_ZIP_URL` in `worker/wrangler.jsonc`.
+The two halves meet at one URL: `DEFAULT_CARD_ZIP` in `worker/worker.js`.
 Every test's blueprint installs whatever is at that URL, so a fix to the card
 reaches everybody's next tester without redeploying the Worker.
 
@@ -123,10 +124,8 @@ ignore every word.
 
 ## Where it runs, and what it stores in
 
-One SQL database behind a D1-shaped binding — which is what Spacefast's
-Functions runtime hands a worker that declares `"database": true`, and what
-Cloudflare D1 gives you. The same `worker.js` runs on either; only the config
-differs.
+Spacefast, as Functions with a database: one SQL database, which the runtime
+hands the worker because `sf.jsonc` declares `"database": true`.
 
 ```
 tests     one row per test: tasks, persona, blueprint, password hash, expiry
@@ -136,7 +135,7 @@ counters  the rate caps
 ```
 
 The SQL is deliberately plain — VARCHAR with lengths, no AUTOINCREMENT, no
-`ON CONFLICT`, no `CREATE INDEX` — because "D1-shaped" describes the API, not
+`ON CONFLICT`, no `CREATE INDEX` — because the binding describes the API, not
 the engine underneath, and MySQL and SQLite disagree about all of those. Every
 lookup rides a primary key that already covers it. Tables are created on first
 use; there is no migration step.
@@ -240,7 +239,7 @@ Editor of the day, and will need its steps rewritten for each release anyway.
 ```bash
 cd worker
 npm test                    # the service against a real SQL engine — no network, no account
-npm run dev                 # wrangler dev on localhost:8787
+npm run dev                 # the service on localhost:8787, database in local.sqlite
 
 cd ../plugin
 php test-plugin.php         # the plugin against WordPress stubs
@@ -257,11 +256,6 @@ cd spacefast
 `build.sh` assembles the only two files Spacefast publishes — `sf.jsonc` and the
 worker. A declared runtime takes every request, so anything else published
 alongside would be uploaded and never served.
-
-**On Cloudflare**, from the same `worker.js`: create a database with
-`wrangler d1 create playground-usertest`, put its id in `wrangler.jsonc` over
-the `local-dev` placeholder, then `wrangler deploy`. Untested since the move —
-the SQL runs against D1's own API locally, but nobody has deployed it there.
 
 ## The card
 
@@ -293,9 +287,7 @@ unaffected, which includes the whole agent path.
 
 ## Cost
 
-Rows in a database are not rationed by the day, so the ceiling that used to
-bound this — Cloudflare KV's 1,000 free writes, about twenty-five testers —
-is gone. What is left is what the plan gives the space, and Spacefast does not
+Rows in a database are not rationed by the day. What bounds it is what the plan gives the space, and Spacefast does not
 publish a figure for function invocations or database size. Undocumented is not
 the same as unlimited; if this ever carries real volume, that is the question to
 ask rather than assume.

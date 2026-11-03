@@ -1,4 +1,5 @@
 node_modules/
+worker/local.sqlite*
 .wrangler/
 .DS_Store
 plugin/dist/
