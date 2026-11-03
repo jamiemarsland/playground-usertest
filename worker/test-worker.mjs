@@ -985,13 +985,13 @@ check(r.status === 200, 'a second, separate database is set up on its own');
 // mode, nothing stored, the blueprint carried in the link.
 {
   const eR = env();
-  let r = await call(eR, '/api/record', { method: 'POST', body: { subject: 'my plugin', lang: 'fr', blueprint: JSON.parse(GOOD.blueprintJson), tasks: [{ title: 'Open the editor', hint: 'It opens here.', check: { type: 'page', path: 'site-editor.php' } }, { title: 'Name it' }], theme: { accent: '#d8613c', card: 'light' } } });
+  let r = await call(eR, '/api/record', { method: 'POST', body: { subject: 'my plugin', lang: 'fr', blueprint: JSON.parse(GOOD.blueprintJson), tasks: [{ title: 'Open the editor', hint: 'It opens here.', check: { type: 'page', path: 'site-editor.php' } }, { title: 'Name it' }], theme: { accent: '#3b6ea5', card: 'light' } } });
   const d = await r.json();
   check(r.status === 200 && d.link.startsWith('https://playground.wordpress.net/#'), 'record: the draft comes back as a Playground link');
   const bp = JSON.parse(decodeURIComponent(escape(atob(d.link.split('#')[1]))));
   const cfg = JSON.parse(bp.steps.find((x) => x.step === 'setSiteOptions').options.playground_user_test);
   check(cfg.mode === 'record' && cfg.tasks.length === 2 && cfg.tasks[0].check.type === 'page', 'record: the card is told to record, with the steps as drafted');
-  check(cfg.lang === 'fr_FR' && cfg.theme.accent === '#d8613c' && bp.steps.some((x) => x.step === 'setSiteLanguage'), 'record: in the tour\u2019s language and colours');
+  check(cfg.lang === 'fr_FR' && cfg.theme.accent === '#3b6ea5' && bp.steps.some((x) => x.step === 'setSiteLanguage'), 'record: in the tour\u2019s language and colours');
   check(bp.steps.some((x) => x.step === 'installPlugin' && x.pluginData.url === 'https://example.com/card.zip'), 'record: on the usual card');
   r = await call(eR, '/api/record', { method: 'POST', body: { subject: 'x', blueprint: JSON.parse(GOOD.blueprintJson) } });
   const d2 = await r.json();
