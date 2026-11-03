@@ -1778,6 +1778,31 @@
     }, 1000);
   }
 
+  /* ---- the editors' welcome guides ------------------------------------ */
+  // A tour (and recording one) presses through the editors itself, and a
+  // welcome popup over the middle is in the way. The plugin turns the guides
+  // off in the saved preferences; editors that still open one get told again
+  // here, through their own preferences store, which closes it.
+  var GUIDES = [['core/edit-post', 'welcomeGuide'], ['core/edit-post', 'welcomeGuideTemplate'], ['core', 'welcomeGuide'],
+    ['core/edit-site', 'welcomeGuide'], ['core/edit-site', 'welcomeGuideStyles'], ['core/edit-site', 'welcomeGuidePage'],
+    ['core/edit-site', 'welcomeGuideTemplate'], ['core/edit-widgets', 'welcomeGuide'], ['core/customize-widgets', 'welcomeGuide']];
+  function quietGuides() {
+    try {
+      var data = window.wp && window.wp.data;
+      var prefs = data && data.dispatch && data.dispatch('core/preferences');
+      if (!prefs || !prefs.set) return;
+      var now = data.select('core/preferences');
+      GUIDES.forEach(function (g) {
+        try { if (now.get(g[0], g[1]) !== false) prefs.set(g[0], g[1], false); } catch (e) {}
+      });
+    } catch (e) { /* not an editor screen */ }
+  }
+  if (tour) {
+    quietGuides();
+    var guideTries = 0;
+    var guideTimer = setInterval(function () { quietGuides(); if (++guideTries > 30) clearInterval(guideTimer); }, 1000);
+  }
+
   /* ---- go -------------------------------------------------------------- */
   if (tour && playingElsewhere(state)) spectator = true;
   else if (tour && state.playing) { state.tab = tabId; state.beat = Date.now(); save(); }
