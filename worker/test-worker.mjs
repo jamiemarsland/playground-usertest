@@ -3,7 +3,7 @@
 // including the parts that keep one owner's test out of another's.
 // Run: node test-worker.mjs
 import { DatabaseSync } from 'node:sqlite';
-import worker, { TASK_SETS, TOUR_SETS, readTour, cleanActions, actionLines, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
+import worker, { TASK_SETS, TOUR_SETS, readTour, cleanTheme, contrast, cleanActions, actionLines, guessCheck, CHECKS, cleanEvent, cleanTasks, wrapBlueprint, checkBlueprintUrl, cleanBoot, blueprintFromBoot, starterPhp, lintTest, taskId } from './worker.js';
 
 // A real SQL engine rather than a mock. The worker talks to a D1-shaped
 // binding, which is what both Spacefast Functions and Cloudflare D1 hand it, so
@@ -750,6 +750,7 @@ const TOUR = {
   subject: 'Open Today',
   persona: 'For anyone who runs a shop.',
   button: { label: 'Get the plugin', url: 'https://wordpress.org/plugins/open-today/' },
+  theme: { accent: '#6b3fa0', card: 'light' },
   tasks: [
     { title: 'Add your opening hours', hint: 'Click + at the top left, then choose Opening hours.', point: '[aria-label="Add block"]', check: { type: 'block', block: 'open-today/hours' } },
     { title: 'Make Saturday a half day', hint: 'Click Saturday in the block and set it to 9:00 till 13:00.', check: { type: 'block_changed', block: 'open-today/hours' } },
@@ -776,6 +777,16 @@ check(cleanTasks([{ title: 'x', do: ['button "A"'] }])[0].do[0].click === 'butto
 check(cleanTasks([{ title: 'x', say: 'Hello there.', audio: 'https://cdn.example/one.mp3' }])[0].audio === 'https://cdn.example/one.mp3', 'a step keeps its spoken words and its recording');
 check(!cleanTasks([{ title: 'x', audio: 'http://localhost/one.mp3' }])[0].audio, 'a recording that is not a public https link is dropped');
 check(readTour({ mode: 'tour', endAudio: 'https://cdn.example/end.mp3' }).tour.endAudio === 'https://cdn.example/end.mp3', 'a tour keeps a recording of its closing words');
+const purple = cleanTheme({ accent: '#6B3FA0' });
+check(purple.theme.accent === '#6b3fa0' && purple.theme.card === 'dark' && purple.theme.ink === '#ffffff', 'a brand purple is kept, on a dark card, with white words on its buttons');
+check(contrast(purple.theme.text, '#16181c') >= 4.5, 'and the card’s words in it can be read: ' + purple.theme.text);
+const pale = cleanTheme({ accent: '#ffe066', card: 'light' });
+check(pale.theme.accent === '#ffe066' && pale.theme.ink === '#0e0f12' && pale.adjusted && contrast(pale.theme.text, '#ffffff') >= 4.5, 'a pale yellow on a light card keeps its buttons, and its words get a readable shade: ' + pale.theme.text);
+check(cleanTheme({ accent: '#abc' }).theme.accent === '#aabbcc', 'a three-figure hex colour is read');
+check(/hex colour/.test(cleanTheme({ accent: 'purple' }).error || ''), 'a colour that is not a hex colour is refused with the reason');
+check(cleanTheme({ card: 'light' }).theme.accent === '#7cf2b0', 'no accent means the usual mint');
+const themedLint = lintTest(Object.assign({}, TOUR, { theme: { accent: '#ffe066', card: 'light' } }));
+check(themedLint.notes.some((n) => /hard to read/.test(n)) && /Colours: #ffe066 on a light card/.test(themedLint.summary), 'the check says when an accent gets a readable shade, and reads the colours back');
 check(TOUR_SETS.every((set) => set.tasks.every((t) => cleanTasks([t])[0].do)), 'every step of the ready-made tours plays itself');
 
 let tl = lintTest(TOUR);
@@ -807,6 +818,7 @@ check(/A short tour of Open Today/.test(tourPage) && /Start the tour/.test(tourP
 
 r = await call(eTour, '/t/' + tour.id + '/blueprint.json');
 const tourOpt = JSON.parse((await r.json()).steps.slice(-1)[0].options.playground_user_test);
+check(tourOpt.theme && tourOpt.theme.accent === '#6b3fa0' && tourOpt.theme.card === 'light', 'the card is told the tour’s colours');
 check(tourOpt.mode === 'tour' && tourOpt.button.url === TOUR.button.url, 'the card is told it is a tour, and the button it ends with');
 check(tourOpt.tasks[0].point === '[aria-label="Add block"]' && tourOpt.tasks[0].check.block === 'open-today/hours', 'and each step’s pointer and block check');
 

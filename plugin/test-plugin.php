@@ -129,6 +129,7 @@ case_run(
 	'$GLOBALS["opts"] = array( "playground_user_test" => json_encode( array(
 		"test" => "abc123defg", "report" => "https://example.test/api/events", "mode" => "tour",
 		"button" => array( "label" => "Get the plugin", "url" => "https://wordpress.org/plugins/x/" ),
+		"theme" => array( "accent" => "#6B3FA0", "ink" => "#ffffff", "text" => "javascript:x", "card" => "light" ),
 		"tasks" => array(
 			array( "id" => "1-a", "title" => "Add the block", "hint" => "Click +", "point" => "[aria-label=\"Add block\"] <b>", "check" => array( "type" => "block", "block" => "Open-Today/hours" ) ),
 			array( "id" => "2-b", "title" => "Change it", "check" => array( "type" => "block_changed", "block" => "not a block name" ) ),
@@ -149,6 +150,7 @@ case_run(
 	ok( 6 === count( $do ) && "button \"Styles\"" === $do[0]["click"] && "styles" === $do[1]["type"] && "Escape" === $do[2]["key"], "a step keeps its clicks, typing and keys, and drops a key it does not know: " . count( $do ) );
 	ok( "/wp-admin/site-editor.php" === $do[3]["go"] && 10.0 === $do[4]["wait"] && ! empty( $do[5]["maybe"] ), "go only takes a path on this site, a wait is capped, maybe is kept" );
 	ok( false !== strpos( $loc["mark"], "pgut/v1/mark" ), "the card is told where to mark a step" );
+	ok( "#6b3fa0" === $loc["theme"]["accent"] && "light" === $loc["theme"]["card"] && ! isset( $loc["theme"]["text"] ), "a tour’s colours reach the card, and only hex colours: " . json_encode( $loc["theme"] ) );
 	$GLOBALS["umeta"]["wp_persisted_preferences"] = array( "core/edit-post" => array( "fixedToolbar" => true ) );
 	pgut_quiet_guides();
 	$p = $GLOBALS["umeta"]["wp_persisted_preferences"];

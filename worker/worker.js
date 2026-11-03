@@ -833,6 +833,57 @@ const TOUR_SETS = [
 ];
 const ALL_SETS = TASK_SETS.concat(TOUR_SETS);
 
+// A tour's colours. An accent (any hex colour: a brand purple, say) and a
+// dark or light card. The accent fills the card's buttons and colours its
+// edge, the ring and the pointer's halo; what goes on it (ink) and the shade
+// used for words on the card (text) are worked out here so both can be read.
+// An accent too pale or too dark for words on the card keeps its own colour
+// for buttons and gets a readable shade for words, and the check says so.
+const DEFAULT_ACCENT = '#7cf2b0';
+const CARD_BG = { dark: '#16181c', light: '#ffffff' };
+
+function hex6(v) {
+  const t = String(v || '').trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(t)) return t;
+  if (/^#[0-9a-f]{3}$/.test(t)) return '#' + t.slice(1).split('').map((c) => c + c).join('');
+  return '';
+}
+
+function luminance(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+}
+
+function contrast(a, b) {
+  const x = luminance(a), y = luminance(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+// The accent moved toward black or white, a step at a time, until it can be read.
+function readableOn(accent, bg, need) {
+  const toward = luminance(bg) > 0.5 ? 0 : 255;
+  const n = parseInt(accent.slice(1), 16);
+  let rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  let out = accent;
+  for (let i = 0; i < 20 && contrast(out, bg) < need; i++) {
+    rgb = rgb.map((c) => Math.round(c + (toward - c) * 0.12));
+    out = '#' + rgb.map((c) => c.toString(16).padStart(2, '0')).join('');
+  }
+  return out;
+}
+
+function cleanTheme(raw) {
+  if (!raw || typeof raw !== 'object') return { theme: null };
+  const given = raw.accent === undefined || raw.accent === '' ? DEFAULT_ACCENT : hex6(raw.accent);
+  if (!given) return { error: `The accent colour has to be a hex colour, like #6b3fa0; “${String(raw.accent).slice(0, 30)}” is not.` };
+  const card = raw.card === 'light' ? 'light' : 'dark';
+  const bg = CARD_BG[card];
+  const ink = contrast(given, '#0e0f12') >= contrast(given, '#ffffff') ? '#0e0f12' : '#ffffff';
+  const text = readableOn(given, bg, 4.5);
+  return { theme: { accent: given, card, ink, text }, adjusted: text !== given };
+}
+
 // Whether a draft is a tour, and the button it ends with. A tour made from a
 // ready-made tour set is a tour without saying so; its button fills in too.
 function readTour(body, set) {
@@ -842,7 +893,9 @@ function readTour(body, set) {
   // a recording of the closing words, if the tour has its own voice
   const endRaw = trim((body && body.endAudio) || (set && set.endAudio), 600);
   const endAudio = endRaw && !checkPublicUrl(endRaw, 'recording').error ? checkPublicUrl(endRaw, 'recording').url : '';
-  const withEnd = (tour) => (endAudio ? Object.assign(tour, { endAudio }) : tour);
+  const themed = cleanTheme((body && body.theme) || (set && set.theme));
+  if (themed.error) return { error: themed.error };
+  const withEnd = (tour) => Object.assign(tour, endAudio ? { endAudio } : {}, themed.theme ? { theme: themed.theme } : {});
   if (!raw || (!trim(raw.label, 100) && !trim(raw.url, 600))) return { tour: withEnd({ button: null }) };
   const label = trim(raw.label, LIMITS.buttonLabel);
   if (!label) return { error: 'The button at the end needs some words, like “Get the plugin”.' };
@@ -943,10 +996,12 @@ function lintTour(input, subject, tasks, tour, problems, notes) {
   if (tasks.length > 6) notes.push(`${tasks.length} steps is a long tour. Most people stop somewhere around five.`);
   if (tasks.length && tasks.every((t) => !t.do)) notes.push('No step does anything by itself, so the tour only talks. Give steps their clicks (do) and it presses through them while people watch.');
   if (tasks.some((t) => t.do && !t.check)) notes.push('A step that presses things but has no check carries on whether it worked or not. Where the site or the editor can show it (the colours, a page, your block), give it a check.');
+  if (tour.theme && tour.theme.text !== tour.theme.accent) notes.push(`The accent ${tour.theme.accent} is hard to read as words on a ${tour.theme.card} card, so the card’s words use ${tour.theme.text} instead. Buttons, the ring and the pointer keep ${tour.theme.accent}.`);
   if (!tour.button) notes.push('There is no button at the end. Say what they should do once they have seen it: “Get the plugin”, “Read the release post”.');
   const summary = tasks.length
     ? `A tour of ${subject || 'something'} in ${tasks.length} step(s):\n` + tasks.map((t, i) => `  ${i + 1}. ${t.title}${t.do ? `  [presses ${t.do.length} thing(s) by itself]` : '  [only talks]'}${t.check ? `  [checked: ${checkLabel(t.check).toLowerCase()}]` : ''}${t.point ? '  [points at ' + t.point + ']' : ''}`).join('\n') +
-      (tour.button ? `\n  Ends with a button: ${tour.button.label} → ${tour.button.url}` : '')
+      (tour.button ? `\n  Ends with a button: ${tour.button.label} → ${tour.button.url}` : '') +
+      (tour.theme ? `\n  Colours: ${tour.theme.accent} on a ${tour.theme.card} card` : '')
     : '';
   return { ok: problems.length === 0, problems, notes, summary, mode: 'tour' };
 }
@@ -1327,6 +1382,7 @@ async function makeTest(env, req, body) {
     checks: tasks.map((t) => ({ title: t.title, check: checkLabel(t.check) })),
     mode: tour ? 'tour' : 'test',
     button: tour && tour.button ? tour.button : undefined,
+    theme: tour && tour.theme ? tour.theme : undefined,
     webhook: webhook ? hookKind(webhook) : '',
     versions: versions ? versions.map((v) => ({ key: v.key, label: v.label })) : undefined,
   }, 200, CORS);
@@ -1371,6 +1427,7 @@ function wrapBlueprint(base, test, origin, pluginZipUrl, version) {
         mode: test.tour ? 'tour' : undefined,
         button: test.tour && test.tour.button ? test.tour.button : undefined,
         endAudio: test.tour && test.tour.endAudio ? test.tour.endAudio : undefined,
+        theme: test.tour && test.tour.theme ? test.tour.theme : undefined,
       }),
     },
   });
@@ -1919,8 +1976,13 @@ async function updateTest(env, test, body) {
 
   // a tour's button can change; a test cannot become a tour, nor the other way
   let tour = test.tour;
-  if (tour && has('button')) {
-    const toured = readTour({ mode: 'tour', button: body.button || {} });
+  if (tour && (has('button') || has('theme'))) {
+    const toured = readTour({
+      mode: 'tour',
+      button: has('button') ? body.button || {} : tour.button || {},
+      theme: has('theme') ? body.theme : tour.theme,
+      endAudio: tour.endAudio,
+    });
     if (toured.error) return { status: 400, body: { error: toured.error } };
     tour = toured.tour;
   }
@@ -1937,6 +1999,7 @@ async function updateTest(env, test, body) {
       subject, tasks: tasks.map((t) => ({ title: t.title, hint: t.hint || '' })),
       mode: tour ? 'tour' : 'test',
       button: tour ? tour.button || null : undefined,
+      theme: tour ? tour.theme || null : undefined,
       intro: (wording && wording.intro) || '',
       questions: Object.assign({}, DEFAULT_QUESTIONS, (wording && wording.questions) || {}),
     },
@@ -1988,6 +2051,7 @@ async function readResults(env, req, url) {
       tasks: test.tasks.map((t) => (t.check ? Object.assign({}, t, { checkLabel: checkLabel(t.check) }) : t)),
       mode: test.tour ? 'tour' : 'test',
       button: test.tour ? test.tour.button || null : undefined,
+      theme: test.tour ? test.tour.theme || null : undefined,
       sessions: await sessionIndex(env, id),
       versions: test.versions ? await compareDigest(env, id, test) : undefined,
     },
@@ -2074,6 +2138,7 @@ const WORDING_SCHEMA = {
 // on by itself, and it ends with a button instead of questions.
 const TOUR_SCHEMA = {
   mode: { type: 'string', enum: ['test', 'tour'], description: 'test (the default) watches people try things on their own. tour shows people around and plays itself: each step says what it shows (its hint), presses through its own actions (do) while a ring shows where, waits for its check to confirm it, and the tour ends with a button instead of the closing questions. Nobody has to do anything; they can pause and try. For a tour, persona is optional: one line on who it is for.' },
+  theme: { type: 'object', description: 'Tours only, optional: the tour’s colours, { accent, card }. accent is a hex colour (#6b3fa0) for the card’s buttons, its edge, the ring round the next thing to press and the pointer’s halo; turn a brand colour the person names into hex. card is "dark" (the default) or "light". The service checks the accent can be read and uses a readable shade of it for words if not.', properties: { accent: { type: 'string' }, card: { type: 'string', enum: ['dark', 'light'] } } },
   button: { type: 'object', description: `Tours only: the button at the end, { label, url }. The label at most ${LIMITS.buttonLabel} characters, the url https. E.g. { "label": "Get the plugin", "url": "https://wordpress.org/plugins/…" }.`, properties: { label: { type: 'string', maxLength: LIMITS.buttonLabel }, url: { type: 'string' } } },
 };
 
@@ -2098,6 +2163,7 @@ const TOOLS = [
         questions: WORDING_SCHEMA.questions,
         mode: TOUR_SCHEMA.mode,
         button: TOUR_SCHEMA.button,
+        theme: TOUR_SCHEMA.theme,
       },
       required: ['subject'],
     },
@@ -2117,6 +2183,7 @@ const TOOLS = [
         questions: WORDING_SCHEMA.questions,
         mode: TOUR_SCHEMA.mode,
         button: TOUR_SCHEMA.button,
+        theme: TOUR_SCHEMA.theme,
         end_audio: { type: 'string', description: 'Tours only, optional: an https link to a recording of the closing words, to go with the steps’ own recordings.' },
         blueprint_url: { type: 'string', description: 'An https URL to an existing Playground blueprint. Re-read each time a tester starts, so it can keep changing.' },
         blueprint_json: { type: 'string', description: 'A Playground blueprint as a JSON string, kept as-is.' },
@@ -2145,6 +2212,7 @@ const TOOLS = [
         intro: WORDING_SCHEMA.intro,
         questions: WORDING_SCHEMA.questions,
         button: TOUR_SCHEMA.button,
+        theme: TOUR_SCHEMA.theme,
       },
       required: ['test', 'password'],
     },
@@ -2211,6 +2279,7 @@ async function mcpCall(env, req, name, args) {
       questions: args && args.questions,
       mode: args && args.mode,
       button: args && args.button,
+      theme: args && args.theme,
       endAudio: args && args.end_audio,
       boot: args && args.boot,
       blueprintUrl: args && args.blueprint_url,
@@ -2242,7 +2311,7 @@ async function mcpCall(env, req, name, args) {
     const test = await openTest(env, id, (args && args.password) || '');
     if (!test) return mcpText('That test id and password do not go together.', { isError: true });
     const changes = {};
-    ['subject', 'persona', 'tasks', 'intro', 'questions', 'button'].forEach((k) => { if (args && args[k] !== undefined) changes[k] = args[k]; });
+    ['subject', 'persona', 'tasks', 'intro', 'questions', 'button', 'theme'].forEach((k) => { if (args && args[k] !== undefined) changes[k] = args[k]; });
     if (!Object.keys(changes).length) return mcpText('Nothing to change: send the fields that should be different.', { isError: true });
     const r = await updateTest(env, test, changes);
     if (r.status !== 200) return mcpText(r.body.error, { isError: true, structuredContent: r.body });
@@ -2497,6 +2566,7 @@ try it themselves, or skip. It ends with a button instead of the questions.
 
   { mode: "tour", subject: "Open Today", persona: "For anyone who runs a shop.",
     button: { label: "Get the plugin", url: "https://…" },
+    theme: { accent: "#6b3fa0", card: "light" },
     tasks: [{ title: "Your opening hours",
               hint: "One block shows your hours and whether you are open now.",
               do: ["[aria-label=\\"Block Inserter\\"]", "type \\"hours\\" into [placeholder=\\"Search\\"]",
@@ -2517,6 +2587,10 @@ try it themselves, or skip. It ends with a button instead of the questions.
   heard: a sentence or three, words not symbols ("Command K", not "⌘K").
   Left out, the voice reads the hint.
   point (optional): where the ring sits when the tour is paused.
+  theme (optional): { accent: "#hex", card: "dark" | "light" }. The accent
+  colours the card's buttons and edge, the ring and the pointer's halo; turn
+  a brand colour the person names ("my brand purple") into hex. The service
+  checks it can be read and uses a readable shade for words if not.
   Pin the WordPress version in the blueprint: a release can move what a
   selector finds, and a step that cannot find its button pauses with a word.
   Checks: block / block_changed read the editor before anything is saved;
@@ -2821,6 +2895,7 @@ const HOME = `<!doctype html>
   .mode span { font-size:14px; color:var(--soft); }
   .mode:has(input:checked) { border-color:var(--ink); box-shadow:0 0 0 1px var(--ink); background:#f7fbf8; }
   #f[data-mode="test"] .t-point { display:none; }
+  .panel input[type=color] { width:100%; height:44px; padding:4px; border:1px solid var(--line); border-radius:10px; background:#fff; cursor:pointer; }
   .panel .go { background:var(--ink); color:#fff; }
   .panel .go:hover { background:#2a2c33; }
   .out { margin:26px 0 0; padding:20px 22px; border:1px solid var(--line); border-radius:16px; background:#fff; }
@@ -2852,6 +2927,7 @@ const HOME = `<!doctype html>
     </div>
   </div>
   <p class="or">Rather type it yourself? <a href="#start">Fill in the form</a>. It takes about half a minute.</p>
+  <p class="or">Want to show it rather than test it? Give your assistant this instead: <span class="addr" id="tourPrompt"></span> <button type="button" class="ghost" id="copyTour" style="margin:0 0 0 6px;padding:6px 14px;font-size:14px">Copy</button></p>
   <p class="taken" id="taken" hidden aria-live="polite"><i aria-hidden="true"></i><span><b id="takenN">0</b> tests taken so far</span></p>
 </div>
 
@@ -3009,6 +3085,12 @@ const HOME = `<!doctype html>
 </fieldset>
 
 <fieldset data-only="tour" hidden>
+  <label for="accent">Colours <span class="soft">(optional)</span></label>
+  <p class="hint">An accent for the card’s buttons, the ring and the pointer, and a dark or light card. Your brand colour works; it is kept readable.</p>
+  <div class="names"><input type="color" id="accent" value="#7cf2b0" aria-label="Accent colour"><select id="cardTone" class="setpick" aria-label="Card"><option value="dark">Dark card</option><option value="light">Light card</option></select></div>
+</fieldset>
+
+<fieldset data-only="tour" hidden>
   <label for="btnLabel">End with a button <span class="soft">(optional)</span></label>
   <p class="hint">Instead of the four questions. What should they do once they have seen it?</p>
   <div class="names"><input type="text" id="btnLabel" maxlength="40" placeholder="Get the plugin"><input type="url" id="btnUrl" maxlength="600" placeholder="https://wordpress.org/plugins/…"></div>
@@ -3067,6 +3149,14 @@ const HOME = `<!doctype html>
     'Fetch ' + origin + '/llms.txt and set up a user test for my plugin. ' +
     'Draft the persona and tasks with me, check them, then give me both links and the password.';
   document.getElementById('mcpAddr').textContent = origin + '/mcp';
+  var tourText = 'Fetch ' + origin + '/llms.txt and make a guided tour of my plugin that plays itself. ' +
+    'Use my brand colour, write the steps and the voice script with me, check it, then give me both links and the password.';
+  document.getElementById('tourPrompt').textContent = tourText;
+  document.getElementById('copyTour').addEventListener('click', function () {
+    var btn = this;
+    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(tourText).then(done, function () {});
+  });
 
   // Tests taken, counted up when the page opens and again whenever someone
   // else finishes a task while it is open. It looks every half minute.
@@ -3290,6 +3380,7 @@ const HOME = `<!doctype html>
           webhook: document.getElementById('webhook').value.trim(),
           mode: touring ? 'tour' : undefined,
           button: button,
+          theme: touring ? { accent: document.getElementById('accent').value, card: document.getElementById('cardTone').value } : undefined,
         }),
       });
     }).then(function (r) {
@@ -3693,6 +3784,8 @@ const RESULTS = `<!doctype html>
           '<textarea class="eDo" placeholder="What it presses, one per line" aria-label="What step ' + (i + 1) + ' presses">' + esc(lines(t.do)) + '</textarea>' +
           '<input type="text" class="ePoint" maxlength="200" value="' + esc(t.point || '') + '" placeholder="Ring when paused: a CSS selector (optional)" aria-label="What step ' + (i + 1) + ' points at"></div>';
       }).join('') +
+      '<label for="eAccent">Colours</label><input type="color" id="eAccent" value="' + esc((d.theme && d.theme.accent) || '#7cf2b0') + '"> ' +
+      '<select id="eCard"><option value="dark"' + (d.theme && d.theme.card === 'light' ? '' : ' selected') + '>Dark card</option><option value="light"' + (d.theme && d.theme.card === 'light' ? ' selected' : '') + '>Light card</option></select>' +
       field('The button at the end <span>\u2014 its words</span>', 'eBtnLabel', b.label || '', 40) +
       field('<span>and where it goes</span>', 'eBtnUrl', b.url || '', 600) +
       '<div class="row"><button type="button" class="primary" id="eSave">Save</button><button type="button" id="eCancel">Cancel</button><span id="eMsg"></span></div>';
@@ -3706,6 +3799,7 @@ const RESULTS = `<!doctype html>
         subject: val('eSubject'), persona: val('ePersona'),
         tasks: (d.tasks || []).map(function (t, i) { return { title: titlesIn[i].value, hint: hintsIn[i].value, say: saysIn[i].value, point: pointsIn[i].value, do: doesIn[i].value, check: t.check || 'none' }; }),
         button: { label: val('eBtnLabel'), url: val('eBtnUrl') },
+        theme: { accent: val('eAccent'), card: val('eCard') },
       };
       var m = document.getElementById('eMsg');
       m.className = 'soft'; m.textContent = 'Saving\u2026';
@@ -3957,4 +4051,4 @@ const NOT_FOUND = `<!doctype html>
 </div></body></html>`;
 
 // exported for the tests
-export { TASK_SETS, TOUR_SETS, readTour, cleanActions, actionLines, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };
+export { TASK_SETS, TOUR_SETS, readTour, cleanTheme, contrast, cleanActions, actionLines, guessCheck, CHECKS, lintTest, cleanEvent, cleanTasks, ensureSchema, wrapBlueprint, checkBlueprintUrl, checkPublicUrl, cleanBoot, blueprintFromBoot, starterPhp, hashPassword, sameSecret, taskId, makeId, TEST_PATH };

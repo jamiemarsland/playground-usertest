@@ -93,6 +93,63 @@
   // the browser's own rule for the hidden attribute. Without it the bring-back
   // pill shows as an empty black lozenge from the first paint, and "Show a hint"
   // stays on screen after the hint it opened.
+  // A tour's colours: one accent for the card's buttons, its edges, the ring
+  // and the pointer's halo, and a dark or light card. The service checks the
+  // accent can be read and works out what goes on it (ink) and the shade used
+  // for words on the card (text); these are only defaults if it did not.
+  function hexOk(v, fallback) { return /^#[0-9a-f]{6}$/i.test(String(v || '')) ? v : fallback; }
+  function alpha(hex, a) {
+    var n = parseInt(hex.slice(1), 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+  var theme = (function (t) {
+    t = t && typeof t === 'object' ? t : {};
+    var light = t.card === 'light';
+    var acc = hexOk(t.accent, '#7cf2b0');
+    return { acc: acc, ink: hexOk(t.ink, '#0e0f12'), text: hexOk(t.text, acc), light: light };
+  })(cfg.theme);
+
+  function tourCss(th) {
+    var A = th.acc;
+    var bg = th.light ? '#ffffff' : '#16181c';
+    var fg = th.light ? '#16181c' : '#f2f2f0';
+    var dim = function (a) { return th.light ? 'rgba(22,24,28,' + a + ')' : 'rgba(242,242,240,' + a + ')'; };
+    var soft = th.light ? 'rgba(22,24,28,.05)' : 'rgba(255,255,255,.07)';
+    return '' +
+      // the card: never part of the site underneath, light or dark
+      '.pgut.is-tour{background:' + bg + ';color:' + fg + ';border:1px solid ' + alpha(A, 0.6) + ';box-shadow:0 0 0 4px ' + alpha(A, 0.18) + ',0 18px 50px rgba(0,0,0,.35)}' +
+      '.pgut.is-tour .pgut-head{border-bottom-color:' + dim(0.1) + '}' +
+      '.pgut.is-tour .pgut-lab{color:' + th.text + '}' +
+      '.pgut.is-tour .pgut-hide,.pgut.is-tour .pgut-again{color:' + dim(0.65) + '}.pgut.is-tour .pgut-hide:hover{background:' + soft + ';color:' + fg + '}' +
+      '.pgut.is-tour .pgut-hide+.pgut-hide{margin-left:4px}' +
+      '.pgut.is-tour .pgut-p,.pgut.is-tour .pgut-wait{color:' + dim(0.7) + '}' +
+      '.pgut.is-tour .pgut-wait i{background:' + A + '}' +
+      '.pgut.is-tour .pgut-tell{background:' + soft + ';color:' + fg + '}' +
+      '.pgut.is-tour .pgut-btn{border-color:' + dim(0.25) + ';color:' + fg + '}' +
+      '.pgut.is-tour .pgut-btn.is-primary{background:' + A + ';color:' + th.ink + ';border-color:' + A + '}' +
+      '.pgut.is-tour .pgut-btn:focus-visible,.pgut.is-tour .pgut-hide:focus-visible,.pgut.is-tour .pgut-again:focus-visible{outline-color:' + th.text + '}' +
+      '.pgut.is-tour .pgut-nice{background:' + alpha(A, 0.15) + ';color:' + th.text + '}' +
+      '.pgut.is-tour .pgut-foot{color:' + dim(0.5) + '}' +
+      '.pgut.is-tour .pgut-dots i{background:' + dim(0.2) + '}.pgut.is-tour .pgut-dots i.is-done{background:' + alpha(A, 0.55) + '}.pgut.is-tour .pgut-dots i.is-now{background:' + A + '}' +
+      '.pgut-pill.is-tour{background:' + bg + ';color:' + th.text + ';box-shadow:0 0 0 1px ' + alpha(A, 0.6) + ',0 8px 24px rgba(0,0,0,.35)}' +
+      // the ring round the thing to press: a white line inside the accent, so
+      // it shows on any site
+      '.pgut-ring{position:fixed;z-index:2147482999;pointer-events:none;border:3px solid ' + A + ';border-radius:10px;box-shadow:0 0 0 2px #fff,0 0 0 6px ' + alpha(A, 0.45) + ';animation:pgutRing 1.6s ease-out infinite;transition:left .3s,top .3s,width .3s,height .3s}' +
+      '.pgut-ring span{position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);white-space:nowrap;font:600 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:' + th.ink + ';background:' + A + ';padding:6px 9px;border-radius:6px;box-shadow:0 0 0 2px #fff}' +
+      '.pgut-ring.is-below span{bottom:auto;top:calc(100% + 10px)}' +
+      '@keyframes pgutRing{0%{box-shadow:0 0 0 2px #fff,0 0 0 2px ' + alpha(A, 0.7) + '}70%{box-shadow:0 0 0 2px #fff,0 0 0 16px ' + alpha(A, 0) + '}100%{box-shadow:0 0 0 2px #fff,0 0 0 2px ' + alpha(A, 0) + '}}' +
+      // the pointer: large, white with a dark edge so it shows on anything,
+      // with a soft halo of the accent round its tip
+      '.pgut-cursor{position:fixed;left:0;top:0;z-index:2147483001;pointer-events:none;filter:drop-shadow(0 3px 4px rgba(0,0,0,.4));transition:transform .75s cubic-bezier(.3,.7,.2,1)}' +
+      '.pgut-cursor svg{position:relative;display:block;transition:transform .12s;transform-origin:3px 3px}.pgut-cursor.is-down svg{transform:scale(.86)}' +
+      '.pgut-halo{position:absolute;left:-25px;top:-25px;width:56px;height:56px;border-radius:50%;background:radial-gradient(circle,' + alpha(A, 0.85) + ' 0,' + alpha(A, 0.45) + ' 40%,' + alpha(A, 0) + ' 70%);animation:pgutHalo 1.4s ease-in-out infinite}' +
+      '@keyframes pgutHalo{0%,100%{transform:scale(.8)}50%{transform:scale(1.15)}}' +
+      '.pgut-tap{position:fixed;z-index:2147483000;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;border:3px solid ' + A + ';background:' + alpha(A, 0.3) + ';box-shadow:0 0 0 2px #fff;pointer-events:none;animation:pgutTap .6s ease-out forwards}' +
+      '@keyframes pgutTap{from{transform:scale(.3);opacity:1}to{transform:scale(1.5);opacity:0}}' +
+      '.pgut-cursor[hidden]{display:none}' +
+      '@media (prefers-reduced-motion:reduce){.pgut-ring,.pgut-halo,.pgut-wait i{animation:none;transition:none}.pgut-cursor{transition:none}.pgut-tap{animation:none;opacity:0}}';
+  }
+
   var css = '' +
     '.pgut{position:fixed;width:320px;max-width:calc(100vw - 32px);z-index:2147483000;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:#16181c;background:rgba(255,255,255,.98);border:1px solid rgba(22,24,28,.12);border-radius:14px;box-shadow:0 12px 40px rgba(22,24,28,.18);box-sizing:border-box}' +
     '.pgut *{box-sizing:border-box}' +
@@ -119,44 +176,15 @@
     // a tour's step: what to do, shown straight away, and how it will move on
     '.pgut-tell{margin:0 0 10px;padding:9px 11px;border-radius:8px;background:rgba(22,24,28,.05);font-size:14px}' +
     '.pgut-wait{display:flex;align-items:center;gap:8px;margin:0;font-size:12px;color:rgba(22,24,28,.55)}' +
-    '.pgut-wait i{width:8px;height:8px;border-radius:50%;background:#7cf2b0;animation:pgutWait 1.8s infinite}' +
+    '.pgut-wait i{width:8px;height:8px;border-radius:50%;animation:pgutWait 1.8s infinite}' +
     '@keyframes pgutWait{0%{box-shadow:0 0 0 0 rgba(47,143,91,.45)}70%{box-shadow:0 0 0 7px rgba(47,143,91,0)}100%{box-shadow:0 0 0 0 rgba(47,143,91,0)}}' +
     '.pgut-nice{margin:0;padding:9px 11px;border-radius:8px;background:#e8f6ee;color:#145a37;font-weight:600}' +
     '.pgut-dots{display:flex;gap:5px;align-items:center}.pgut-dots i{width:7px;height:7px;border-radius:50%;background:rgba(22,24,28,.16)}' +
     '.pgut-dots i.is-done{background:#2f8f5b}.pgut-dots i.is-skip{background:#e8a33d}.pgut-dots i.is-now{background:#16181c;width:18px;border-radius:99px}' +
     'a.pgut-cta{display:block;box-sizing:border-box;text-decoration:none}' +
-    '.pgut-ring{position:fixed;z-index:2147482999;pointer-events:none;border:2px solid #1f7a4d;border-radius:8px;box-shadow:0 0 0 4px rgba(124,242,176,.55);animation:pgutRing 1.6s ease-out infinite;transition:left .3s,top .3s,width .3s,height .3s}' +
-    '.pgut-ring span{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);white-space:nowrap;font:600 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:#fff;background:#145a37;padding:6px 9px;border-radius:6px}' +
-    '.pgut-ring.is-below span{bottom:auto;top:calc(100% + 8px)}' +
-    '@keyframes pgutRing{0%{box-shadow:0 0 0 2px rgba(124,242,176,.7)}70%{box-shadow:0 0 0 12px rgba(124,242,176,0)}100%{box-shadow:0 0 0 2px rgba(124,242,176,0)}}' +
-    '@media (prefers-reduced-motion:reduce){.pgut-ring,.pgut-wait i{animation:none;transition:none}}' +
-    // a tour's card is dark, in the service's own colours, so it never reads
-    // as part of the site underneath, light or dark
-    '.pgut.is-tour{background:#16181c;color:#f2f2f0;border:1px solid rgba(124,242,176,.45);box-shadow:0 0 0 4px rgba(124,242,176,.14),0 18px 50px rgba(0,0,0,.4)}' +
-    '.pgut.is-tour .pgut-head{border-bottom-color:rgba(255,255,255,.1)}' +
-    '.pgut.is-tour .pgut-lab{color:#7cf2b0}' +
-    '.pgut.is-tour .pgut-hide{color:rgba(242,242,240,.65)}.pgut.is-tour .pgut-hide:hover{background:rgba(255,255,255,.08);color:#f2f2f0}' +
-    '.pgut.is-tour .pgut-hide+.pgut-hide{margin-left:4px}' +
-    '.pgut.is-tour .pgut-p,.pgut.is-tour .pgut-wait{color:rgba(242,242,240,.7)}' +
-    '.pgut.is-tour .pgut-tell{background:rgba(255,255,255,.07);color:#f2f2f0}' +
-    '.pgut.is-tour .pgut-btn{border-color:rgba(255,255,255,.25);color:#f2f2f0}' +
-    '.pgut.is-tour .pgut-btn.is-primary{background:#7cf2b0;color:#0e0f12;border-color:#7cf2b0}' +
-    '.pgut.is-tour .pgut-btn:focus-visible,.pgut.is-tour .pgut-hide:focus-visible{outline-color:#7cf2b0}' +
-    '.pgut.is-tour .pgut-nice{background:rgba(124,242,176,.15);color:#b5f8d3}' +
-    '.pgut.is-tour .pgut-foot{color:rgba(242,242,240,.5)}' +
-    '.pgut.is-tour .pgut-dots i{background:rgba(255,255,255,.2)}.pgut.is-tour .pgut-dots i.is-done{background:#2f8f5b}.pgut.is-tour .pgut-dots i.is-now{background:#7cf2b0}' +
-    // the pointer a tour moves to each thing it presses, and the ripple of the press
-    '.pgut-cursor{position:fixed;left:0;top:0;z-index:2147483001;pointer-events:none;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));transition:transform .75s cubic-bezier(.3,.7,.2,1)}' +
-    '.pgut-cursor svg{display:block;transition:transform .12s}.pgut-cursor.is-down svg{transform:scale(.86)}' +
-    '.pgut-tap{position:fixed;z-index:2147483000;width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;border:3px solid #7cf2b0;background:rgba(124,242,176,.25);pointer-events:none;animation:pgutTap .55s ease-out forwards}' +
-    '@keyframes pgutTap{from{transform:scale(.3);opacity:1}to{transform:scale(1.5);opacity:0}}' +
-    '.pgut-cursor[hidden]{display:none}' +
-    '@media (prefers-reduced-motion:reduce){.pgut-cursor{transition:none}.pgut-tap{animation:none;opacity:0}}' +
-    '.pgut.is-tour .pgut-again{color:rgba(242,242,240,.65)}' +
-    '.pgut-pill.is-tour{background:#16181c;color:#7cf2b0;box-shadow:0 0 0 1px rgba(124,242,176,.45),0 8px 24px rgba(0,0,0,.35)}' +
     '@media (max-width:700px){.pgut,.pgut-pill{top:auto!important;bottom:12px!important;left:12px!important;right:12px!important;width:auto}}';
   var style = document.createElement('style');
-  style.textContent = css;
+  style.textContent = css + (tour ? tourCss(theme) : '');
   document.head.appendChild(style);
 
   var card = document.createElement('div');
@@ -180,7 +208,7 @@
   pointer.className = 'pgut-cursor';
   pointer.hidden = true;
   pointer.setAttribute('aria-hidden', 'true');
-  pointer.innerHTML = '<svg width="24" height="28" viewBox="0 0 22 26"><path d="M2 2 L2 20 L7 15.5 L10.5 23 L13.6 21.6 L10.1 14.3 L17 14.3 Z" fill="#fff" stroke="#16181c" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  pointer.innerHTML = '<span class="pgut-halo"></span><svg width="34" height="40" viewBox="0 0 22 26"><path d="M2 2 L2 20 L7 15.5 L10.5 23 L13.6 21.6 L10.1 14.3 L17 14.3 Z" fill="#fff" stroke="#16181c" stroke-width="1.5" stroke-linejoin="round"/></svg>';
   if (tour) document.body.appendChild(pointer);
 
   /* ---- where it sits --------------------------------------------------- */

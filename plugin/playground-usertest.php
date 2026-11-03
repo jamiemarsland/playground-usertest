@@ -212,6 +212,7 @@ function pgut_enqueue() {
 			'questions' => pgut_questions( $test ),
 			'mode'    => pgut_is_tour( $test ) ? 'tour' : 'test',
 			'button'  => pgut_button( $test ),
+			'theme'   => pgut_theme( $test ),
 			'endAudio' => isset( $test['endAudio'] ) && is_string( $test['endAudio'] ) && preg_match( '#^https?://#', $test['endAudio'] ) ? esc_url_raw( $test['endAudio'] ) : '',
 		)
 	);
@@ -225,6 +226,25 @@ function pgut_enqueue() {
  */
 function pgut_is_tour( $test ) {
 	return isset( $test['mode'] ) && 'tour' === $test['mode'];
+}
+
+/**
+ * A tour's colours, cleaned: hex colours only, and a dark or light card.
+ *
+ * @param array $test The test option.
+ * @return array|null
+ */
+function pgut_theme( $test ) {
+	if ( empty( $test['theme'] ) || ! is_array( $test['theme'] ) ) {
+		return null;
+	}
+	$out = array( 'card' => ( isset( $test['theme']['card'] ) && 'light' === $test['theme']['card'] ) ? 'light' : 'dark' );
+	foreach ( array( 'accent', 'ink', 'text' ) as $key ) {
+		if ( isset( $test['theme'][ $key ] ) && preg_match( '/^#[0-9a-f]{6}$/i', (string) $test['theme'][ $key ] ) ) {
+			$out[ $key ] = strtolower( (string) $test['theme'][ $key ] );
+		}
+	}
+	return $out;
 }
 
 /**
