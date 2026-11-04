@@ -3140,6 +3140,10 @@ const MOVES_TEXT = KNOWN_MOVES.map(([what, acts]) => `${what}: "do": ${JSON.stri
 
 const SITE_LINE = 'For the site, ask me what it is: a plugin goes in "plugin" and a theme in "theme", each as its WordPress.org slug (the end of its wordpress.org/plugins/ or /themes/ address) or a public link to its zip; for WordPress itself put "site":"wordpress" instead. If a step picks a picture (a featured image, say), add "images": [links to a few public pictures], which go in the Media Library first, because uploading from my computer cannot be played back. Only if I already have a Playground blueprint, put its link in "blueprint_url" instead of those. The service sets the site up from them.';
 
+// The prompt goes into someone's own assistant, which may remember them. What it
+// makes should come from this chat, not from their brand or their last project.
+const ONLY_THIS_CHAT = 'Work only from what I say in this chat. Do not use anything you remember about me or from other chats, such as my business, my brand, its colours or my plugins.';
+
 function plainPrompt(mode) {
   const checks = Object.keys(CHECKS).filter((k) => !['text', 'page', 'block', 'block_changed'].includes(k)).join(', ');
   const lang = 'lang is a WordPress locale such as fr_FR or es_ES if it should be in another language, and then everything you write goes in that language. Leave it out for English.';
@@ -3151,15 +3155,17 @@ function plainPrompt(mode) {
   if (mode === 'tour') {
     return [
       'Help me make a guided tour with Playground user testing ({ORIGIN}), of a WordPress plugin, a theme, or WordPress itself (to teach someone how it works). The tour plays itself in a real WordPress in the visitor\u2019s browser: each step presses through its own actions while a pointer shows where, and a voice can read a script. Everything you need is in this message, so do not go looking for instructions.',
+      ONLY_THIS_CHAT,
       'The JSON looks like this:',
       '{"mode":"tour","subject":"…","persona":"…","plugin":"…","button":{"label":"Get the plugin","url":"https://…"},"theme":{"accent":"#6b3fa0","card":"dark"},"tasks":[{"title":"…","hint":"…","say":"…","do":["#some-id","button \\"Label\\"","type \\"words\\" into input.search","press Escape","go /wp-admin/options-general.php","wait 2"],"check":"none"}]}',
-      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. ${SITE_LINE} Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. You cannot see the site, so do not invent what a step presses. For WordPress's own screens, use these moves, which are known to work (copy them exactly, putting my words where it says …):\n${MOVES_TEXT}\nFor anything else (a plugin's or theme's own screens), leave do out: once the tour is in the form I will press Record the clicks in Playground, do those steps myself, and the card fills in exactly what to press. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: my brand colour as a hex accent, and a dark or light card.`,
+      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. ${SITE_LINE} Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. You cannot see the site, so do not invent what a step presses. For WordPress's own screens, use these moves, which are known to work (copy them exactly, putting my words where it says …):\n${MOVES_TEXT}\nFor anything else (a plugin's or theme's own screens), leave do out: once the tour is in the form I will press Record the clicks in Playground, do those steps myself, and the card fills in exactly what to press. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: a hex accent and a dark or light card. Leave it out unless I give you a colour in this chat.`,
       lang,
       end,
     ].join('\n\n');
   }
   return [
     'Help me set up a user test with Playground user testing ({ORIGIN}), of a WordPress plugin, a theme, or WordPress itself. Testers open a link, get a real WordPress in their browser, already set up, and work through a card of tasks while it records what happens. Everything you need is in this message, so do not go looking for instructions.',
+    ONLY_THIS_CHAT,
     'The JSON looks like this:',
     '{"mode":"test","subject":"…","persona":"…","plugin":"…","tasks":[{"title":"…","hint":"…","check":"site_name"}]}',
     `subject is what is being tested (the tester reads "Thank you for helping make X better"), up to ${LIMITS.subject} characters. persona is a paragraph in the second person that gives the tester a reason to want the site; do not name them after the demo site. ${SITE_LINE} Five to seven tasks. Each title says what they want to end up with, never which button to press: the button goes in the hint, so the results show who needed it. check is optional: one of ${checks}, or {"type":"text","text":"words on the home page"}, or {"type":"page","path":"part of the address"}, or none.`,
@@ -3721,7 +3727,7 @@ const HOME = `<!doctype html>
   var origin = location.origin;
   document.getElementById('mcpAddr').textContent = origin + '/mcp';
   var testText = document.getElementById('promptText').textContent;
-  var tourText = 'Help me make a guided tour of a WordPress plugin, theme or WordPress itself that plays itself. Write the steps and the voice script with me, in my colours, then make it, or give me the block to paste.';
+  var tourText = 'Help me make a guided tour of a WordPress plugin, theme or WordPress itself that plays itself. Write the steps and the voice script with me, then make it, or give me the block to paste.';
   var PLAIN = ${JSON.stringify({ test: plainPrompt('test'), tour: plainPrompt('tour') })};
   function fullPrompt() {
     var on = document.querySelector('.ask button[aria-checked="true"]');

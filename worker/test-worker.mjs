@@ -971,6 +971,7 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   check(/"mode":"test"/.test(plain.test) && /never which button/.test(plain.test) && /"mode":"tour"/.test(plain.tour) && /type "words" into/.test(plain.tour), 'one prompt: it carries the whole format for a test and for a tour');
   check([plain.test, plain.tour].every((x) => x.includes('{ORIGIN}/api/tests') && x.includes('{ORIGIN}/#draft=') && x.includes('Paste from your assistant') && /do not keep trying/.test(x)), 'one prompt: create it if you can reach the service, otherwise hand back a link, with the block as a backup');
   check(![plain.test, plain.tour].some((x) => /llms\.txt|\bFetch\b/.test(x)), 'one prompt: nothing depends on opening a page first');
+  check([plain.test, plain.tour].every((x) => /Do not use anything you remember about me/.test(x)) && !/my brand colour|in my colours/.test(plain.tour), 'one prompt: it works from this chat, not from what the assistant remembers');
   check(home.includes('id="pasted"') && home.includes('custom connector') && !home.includes('copyPlain'), 'home: one Copy prompt, the paste box and the connector');
 
   // what the prompt tells an assistant to send is what the service takes
@@ -1044,6 +1045,7 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   scripts.forEach((code, i) => { try { new Function(code); } catch (e) { bad = 'script ' + i + ': ' + e.message; } });
   check(scripts.length > 0 && !bad, 'home: its scripts parse' + (bad ? ' — ' + bad : ''));
   check(!/getUserMedia|MediaRecorder|in your voice/i.test(home), 'home: nobody is asked to record their voice');
+  check(!/pootle|d8613c|visual html/i.test(home), 'home: nobody\u2019s own brand is in it');
 }
 
 // A tour step that presses nothing only talks: the check says which.

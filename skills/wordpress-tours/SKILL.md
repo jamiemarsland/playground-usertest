@@ -59,7 +59,9 @@ conversation:
    in plain words before making anything.
 3. Turn colours into hex yourself: "my brand purple" means asking for the
    hex if you do not know it, or proposing one and saying so. Light or dark
-   card: pick from their site's look, or ask.
+   card: pick from their site's look, or ask. Colours come from this chat:
+   if they name none, leave `theme` out rather than reach for a brand you
+   remember from elsewhere.
 4. `usertest_check`, fix what it names, `usertest_create`, hand over both
    links and the password, and suggest they watch it once with sound on.
 
