@@ -93,15 +93,6 @@ For several languages, make one tour per language: same steps, translated
 words. Check each with `usertest_check`, which points out steps that press
 buttons by their words.
 
-## Your own voice
-
-On the form, once the steps are right, the person can read each step in
-their own voice: **Record this step in your voice** sits under every step's
-words, and one more records the closing words. The recordings go with the
-tour when it is made and play instead of the browser's voice. You cannot
-record for them, so tell them it is there; it is the last thing to do,
-after the clicks are recorded.
-
 ## Moves that work
 
 These moves through WordPress's own screens were each played end to end in

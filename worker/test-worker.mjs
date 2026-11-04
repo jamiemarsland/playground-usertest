@@ -1043,6 +1043,7 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   let bad = '';
   scripts.forEach((code, i) => { try { new Function(code); } catch (e) { bad = 'script ' + i + ': ' + e.message; } });
   check(scripts.length > 0 && !bad, 'home: its scripts parse' + (bad ? ' — ' + bad : ''));
+  check(!/getUserMedia|MediaRecorder|in your voice/i.test(home), 'home: nobody is asked to record their voice');
 }
 
 // A tour step that presses nothing only talks: the check says which.
@@ -1070,7 +1071,7 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   check(r.status === 200 && Buffer.from(packed, 'base64').toString().includes('photo-1501785888041'), 'first post: picking the set brings WordPress itself and its pictures');
 }
 
-// A tour in the maker's own voice: clips sent with the results password,
+// A tour's recorded voice: clips sent with the results password,
 // kept with the tour, served to it, and gone with it.
 {
   const eV = env();

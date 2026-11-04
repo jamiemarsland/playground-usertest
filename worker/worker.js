@@ -192,7 +192,7 @@ const SCHEMA = [
      n       INT          NOT NULL,
      expires BIGINT       NOT NULL
    )`,
-  // a tour's voice: the maker reading each step, recorded on the form
+  // a tour's voice: a recording of each step, played instead of the browser's
   `CREATE TABLE IF NOT EXISTS clips (
      test_id VARCHAR(16)  NOT NULL,
      task    VARCHAR(40)  NOT NULL,
@@ -1751,11 +1751,10 @@ async function recordLink(env, req) {
   return json({ link: 'https://playground.wordpress.net/#' + btoa(unescape(encodeURIComponent(JSON.stringify(bp)))) }, 200, CORS);
 }
 
-// A tour in the maker's own voice. The form records each step as they read it
-// (in the browser, on this page, where the microphone is theirs to allow) and
-// sends the clips once the tour is made, with its results password. They live
-// in the space's own database, one row per step, and are served from here to
-// the tour; a tour that is deleted takes its clips with it.
+// A tour's recorded voice, sent with its results password. Nothing on the form
+// sends these: nobody should have to read their own tour out loud. They live in
+// the space's own database, one row per step, and are served from here to the
+// tour; a tour that is deleted takes its clips with it.
 const CLIP_MIME_RE = /^audio\/(webm|mp4|mpeg|ogg|wav|x-m4a)(;[ \w=.,-]*)?$/;
 
 async function saveClip(env, req, url) {
@@ -3405,9 +3404,6 @@ const HOME = `<!doctype html>
   .mode span { font-size:14px; color:var(--soft); }
   .mode:has(input:checked) { border-color:var(--ink); box-shadow:0 0 0 1px var(--ink); background:#f7fbf8; }
   #f[data-mode="test"] .t-point { display:none; }
-  .t-voice { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:14px; color:var(--soft); }
-  .t-voice audio { height:34px; max-width:100%; }
-  .t-voice .vmsg:empty { display:none; }
   .panel input[type=color] { width:100%; height:44px; padding:4px; border:1px solid var(--line); border-radius:10px; background:#fff; cursor:pointer; }
   .panel .go { background:var(--ink); color:#fff; }
   .panel .go:hover { background:#2a2c33; }
@@ -3541,7 +3537,7 @@ const HOME = `<!doctype html>
       <ul class="points">
         <li><b>A pointer you can’t miss</b>, with a halo in your colour.</li>
         <li><b>Out of the way when they want it.</b> Hide the card and it tucks into a pill; the tour carries on.</li>
-        <li><b>Your colours, your voice.</b> Add a recording to each step, or let the browser read it.</li>
+        <li><b>Your colours.</b> A voice reads each step, and sound is off until they turn it on.</li>
         <li><b>Made by chatting.</b> Tell your assistant what to show; it writes the steps and the script.</li>
         <li><b>Ends on your button:</b> “Get the plugin”, “Read the release post”.</li>
       </ul>
@@ -3667,9 +3663,6 @@ const HOME = `<!doctype html>
 </fieldset>
 
 <fieldset data-only="tour" hidden>
-  <label>Your voice <span class="soft">(optional)</span></label>
-  <p class="hint">Each step above can be read in your own voice: press Record under its words, read them, press Stop. Do this last, once the steps are right. The closing words go here: “That’s the tour. The site is yours to keep exploring until you close this tab.”</p>
-  <div class="chk t-voice" id="endVoice" style="margin:0 0 18px"><button type="button" class="add vbtn">Record the closing words in your voice</button><audio controls hidden></audio><button type="button" class="add vdrop" hidden>Remove</button><span class="vmsg"></span></div>
   <label for="btnLabel">End with a button <span class="soft">(optional)</span></label>
   <p class="hint">Instead of the four questions. What should they do once they have seen it?</p>
   <div class="names"><input type="text" id="btnLabel" maxlength="40" placeholder="Get the plugin"><input type="url" id="btnUrl" maxlength="600" placeholder="https://wordpress.org/plugins/…"></div>
@@ -3736,7 +3729,7 @@ const HOME = `<!doctype html>
   }
   var subs = {
     test: document.getElementById('askSub').textContent,
-    tour: 'Show people round your plugin, your theme or WordPress itself, in a real WordPress, in your colours and your voice. Copy this into ChatGPT, Claude or any assistant: it writes the tour with you, then makes it or hands it to you to paste.'
+    tour: 'Show people round your plugin, your theme or WordPress itself, in a real WordPress, in your colours. Copy this into ChatGPT, Claude or any assistant: it writes the tour with you, then makes it or hands it to you to paste.'
   };
   Array.prototype.forEach.call(document.querySelectorAll('.ask button'), function (b) {
     b.addEventListener('click', function () {
@@ -3835,85 +3828,6 @@ const HOME = `<!doctype html>
     d.querySelector('.t-none').textContent = w.none;
     d.querySelector('.t-know').textContent = w.know;
   }
-  // Recording a voice: the microphone is asked for once, each recording is
-  // kept in the page until the tour is made, then sent with its password.
-  var micStream = null;
-  function getMic() {
-    return micStream ? Promise.resolve(micStream) : navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) { micStream = st; return st; });
-  }
-  function voiceBox(box) {
-    if (!box) return;
-    var btn = box.querySelector('.vbtn'), au = box.querySelector('audio'), drop = box.querySelector('.vdrop'), note = box.querySelector('.vmsg');
-    var first = btn.textContent, rec = null, chunks = [], started = 0, tick = null, asking = false;
-    btn.addEventListener('click', function () {
-      if (rec && rec.state === 'recording') { rec.stop(); return; }
-      // the first press waits for the browser to hand over the microphone;
-      // pressing again meanwhile must not start a second recording
-      if (asking) return;
-      if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { note.textContent = 'This browser can\u2019t record. Try Chrome, Edge or Firefox.'; return; }
-      asking = true;
-      note.textContent = 'Waiting for the microphone\u2026';
-      getMic().then(function (stream) {
-        asking = false;
-        chunks = [];
-        var type = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].filter(function (x) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(x); })[0];
-        rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 32000 } : { audioBitsPerSecond: 32000 });
-        rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
-        rec.onstop = function () {
-          clearInterval(tick);
-          var blob = new Blob(chunks, { type: rec.mimeType || type || 'audio/webm' });
-          box._clip = blob.size ? blob : null;
-          if (blob.size) { au.src = URL.createObjectURL(blob); au.hidden = false; drop.hidden = false; }
-          btn.textContent = blob.size ? 'Record again' : first;
-          note.textContent = '';
-        };
-        rec.start();
-        started = Date.now();
-        btn.textContent = 'Stop';
-        note.textContent = 'Recording\u2026';
-        tick = setInterval(function () {
-          var secs = Math.round((Date.now() - started) / 1000);
-          note.textContent = 'Recording\u2026 ' + secs + 's';
-          if (secs >= 140 && rec.state === 'recording') rec.stop();
-        }, 250);
-      }, function () { asking = false; note.textContent = 'The microphone wasn\u2019t allowed. Allow it from the browser\u2019s address bar, then press Record again.'; });
-    });
-    drop.addEventListener('click', function () {
-      box._clip = null;
-      au.hidden = true;
-      au.removeAttribute('src');
-      drop.hidden = true;
-      btn.textContent = first;
-    });
-  }
-  function blobData(blob) {
-    return new Promise(function (ok, no) {
-      var fr = new FileReader();
-      fr.onload = function () { ok(String(fr.result).replace(/^data:[^,]*,/, '')); };
-      fr.onerror = no;
-      fr.readAsDataURL(blob);
-    });
-  }
-  // once the tour is made: each recording to its step, one at a time
-  function sendVoices(id, pw, clips, endClip) {
-    var jobs = [];
-    clips.forEach(function (c, i) { if (c) jobs.push({ step: i, blob: c }); });
-    if (endClip) jobs.push({ step: 'end', blob: endClip });
-    var n = 0;
-    return jobs.reduce(function (p, job) {
-      return p.then(function () {
-        msg.textContent = 'Saving your voice\u2026 ' + (++n) + ' of ' + jobs.length;
-        return blobData(job.blob).then(function (data) {
-          return fetch('/api/voice?test=' + encodeURIComponent(id), {
-            method: 'POST',
-            headers: { 'content-type': 'application/json', 'x-test-password': pw },
-            body: JSON.stringify({ step: job.step, mime: job.blob.type || 'audio/webm', data: data }),
-          }).then(function (r) { if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'a recording did not save.'); }); });
-        });
-      });
-    }, Promise.resolve()).then(function () { msg.textContent = ''; return jobs.length; });
-  }
-
   function addTask(title, hint, check, point, does, said) {
     var d = document.createElement('div');
     d.className = 'task';
@@ -3930,8 +3844,6 @@ const HOME = `<!doctype html>
         '<input type="text" class="t-path" maxlength="120" placeholder="Part of its address, e.g. site-editor.php" hidden></label>' +
       // a tour step can point at the thing to click
       '<label class="chk t-point">The voice says <textarea class="t-words t-say" rows="2" maxlength="600" placeholder="Optional. Written to be heard, e.g. Styles is where the look of the whole site comes together."></textarea></label>' +
-      // the maker reading those words: played instead of the computer's voice
-      '<div class="chk t-point t-voice"><button type="button" class="add vbtn">Record this step in your voice</button><audio controls hidden></audio><button type="button" class="add vdrop" hidden>Remove</button><span class="vmsg"></span></div>' +
       '<label class="chk t-point">It presses <textarea class="t-words t-do" rows="3" placeholder="One per line, e.g.&#10;button &quot;Styles&quot;&#10;button &quot;Browse styles&quot;"></textarea></label>' +
       '<label class="chk t-point">Ring when paused <input type="text" class="t-words t-sel" maxlength="200" placeholder="A CSS selector, or button &quot;Styles&quot; (optional)"></label>';
     var drop = document.createElement('button');
@@ -3960,7 +3872,6 @@ const HOME = `<!doctype html>
     } else if (check) sel.value = check;
     sel.addEventListener('change', shape);
     shape();
-    voiceBox(d.querySelector('.t-voice'));
     wordsFor(d);
     tasksEl.appendChild(d);
   }
@@ -4167,15 +4078,10 @@ const HOME = `<!doctype html>
   }
 
   var msg = document.getElementById('msg'), submit = document.getElementById('submit'), idleOk = false;
-  voiceBox(document.getElementById('endVoice'));
   document.getElementById('f').addEventListener('submit', function (ev) {
     ev.preventDefault();
     msg.textContent = '';
     var touring = form.dataset.mode === 'tour';
-    // the recordings, in the order the steps are sent (untitled ones dropped)
-    var clipsNow = touring ? [].slice.call(tasksEl.querySelectorAll('.task')).filter(function (d) { return d.querySelector('.t-title').value.trim(); }).map(function (d) { return (d.querySelector('.t-voice') || {})._clip || null; }) : [];
-    var endClipNow = touring ? (document.getElementById('endVoice') || {})._clip || null : null;
-    var pwNow = document.getElementById('password').value;
     var tasks = [].slice.call(tasksEl.querySelectorAll('.task')).map(function (d) {
       var c = d.querySelector('.t-check').value;
       var check = c === 'text' ? { type: 'text', text: d.querySelector('.t-words').value }
@@ -4267,12 +4173,6 @@ const HOME = `<!doctype html>
         submit.disabled = false;
         submit.textContent = submit.getAttribute('data-' + form.dataset.mode);
         if (!res.ok) { msg.textContent = res.d.error || 'That did not work.'; return; }
-        var voiced = (clipsNow.some(Boolean) || endClipNow) && res.d.mode === 'tour';
-        submit.disabled = true;
-        return (voiced ? sendVoices(res.d.id, pwNow, clipsNow, endClipNow).then(function (n) {
-          return n + ' recording' + (n === 1 ? '' : 's') + ' saved: the tour plays in your voice.';
-        }, function (e) { return 'The tour is made, but ' + e.message + ' The steps without a recording are read by the computer\u2019s voice.'; }) : Promise.resolve('')).then(function (voiceNote) {
-        submit.disabled = false;
         var tour = res.d.mode === 'tour';
         document.getElementById('f').hidden = true;
         document.getElementById('out').innerHTML =
@@ -4283,10 +4183,8 @@ const HOME = `<!doctype html>
             res.d.checks.map(function (c) { return '<li>' + esc(c.title) + ' \u2014 ' + esc(c.check || (tour ? 'they press Next' : 'not checked: only their word for it')) + '</li>'; }).join('') + '</ul>' : '') +
           (res.d.versions ? '<p class="soft">One link for both: testers are shared out between ' + res.d.versions.map(function (v) { return '<strong>' + esc(v.label) + '</strong>'; }).join(' and ') + ', and the results come back side by side.</p>' : '') +
           (res.d.webhook ? '<p class="soft">Each tester who finishes will be posted to your ' + (res.d.webhook === 'json' ? 'webhook' : res.d.webhook.charAt(0).toUpperCase() + res.d.webhook.slice(1) + ' channel') + '.</p>' : '') +
-          (voiceNote ? '<p class="soft">' + esc(voiceNote) + '</p>' : '') +
           '<p class="soft" style="margin:0">Keep both. Neither can be looked up again, and the test keeps itself for ninety days after the last tester.</p></div>';
         window.scrollTo(0, document.body.scrollHeight);
-        });
       })
       .catch(function () {
         submit.disabled = false;
