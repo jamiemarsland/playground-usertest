@@ -1080,6 +1080,13 @@ function cleanTheme(raw) {
 
 // Whether a draft is a tour, and the button it ends with. A tour made from a
 // ready-made tour set is a tour without saying so; its button fills in too.
+// A tour's card colours. "theme" on its own means the WordPress theme to install,
+// so colours have their own name; an object under "theme" is the older way.
+function tourColours(body) {
+  if (!body) return null;
+  return body.colours || body.colors || (body.theme && typeof body.theme === 'object' ? body.theme : null);
+}
+
 function readTour(body, set) {
   const isTour = (body && body.mode === 'tour') || (!(body && body.mode) && set && set.mode === 'tour');
   if (!isTour) return { tour: null };
@@ -1087,7 +1094,7 @@ function readTour(body, set) {
   // a recording of the closing words, if the tour has its own voice
   const endRaw = trim((body && body.endAudio) || (set && set.endAudio), 600);
   const endAudio = endRaw && !checkPublicUrl(endRaw, 'recording').error ? checkPublicUrl(endRaw, 'recording').url : '';
-  const themed = cleanTheme((body && body.theme) || (set && set.theme));
+  const themed = cleanTheme(tourColours(body) || (set && set.theme));
   if (themed.error) return { error: themed.error };
   const withEnd = (tour) => Object.assign(tour, endAudio ? { endAudio } : {}, themed.theme ? { theme: themed.theme } : {});
   if (!raw || (!trim(raw.label, 100) && !trim(raw.url, 600))) return { tour: withEnd({ button: null }) };
@@ -2342,11 +2349,12 @@ async function updateTest(env, test, body) {
 
   // a tour's button can change; a test cannot become a tour, nor the other way
   let tour = test.tour;
-  if (tour && (has('button') || has('theme'))) {
+  const coloursSent = has('colours') || has('colors') || (has('theme') && typeof body.theme !== 'string');
+  if (tour && (has('button') || coloursSent)) {
     const toured = readTour({
       mode: 'tour',
       button: has('button') ? body.button || {} : tour.button || {},
-      theme: has('theme') ? body.theme : tour.theme,
+      theme: coloursSent ? tourColours(body) : tour.theme,
       endAudio: tour.endAudio,
     });
     if (toured.error) return { status: 400, body: { error: toured.error } };
@@ -2505,7 +2513,7 @@ const WORDING_SCHEMA = {
 // on by itself, and it ends with a button instead of questions.
 const TOUR_SCHEMA = {
   mode: { type: 'string', enum: ['test', 'tour'], description: 'test (the default) watches people try things on their own. tour shows people around and plays itself: each step says what it shows (its hint), presses through its own actions (do) while a ring shows where, waits for its check to confirm it, and the tour ends with a button instead of the closing questions. Nobody has to do anything; they can pause and try. For a tour, persona is optional: one line on who it is for.' },
-  theme: { type: 'object', description: 'Tours only, optional: the tour’s colours, { accent, card }. accent is a hex colour (#6b3fa0) for the card’s buttons, its edge, the ring round the next thing to press and the pointer’s halo; turn a brand colour the person names into hex. card is "dark" (the default) or "light". The service checks the accent can be read and uses a readable shade of it for words if not.', properties: { accent: { type: 'string' }, card: { type: 'string', enum: ['dark', 'light'] } } },
+  colours: { type: 'object', description: 'Tours only, optional: the card’s colours, { accent, card }. Only use a colour the person gives you. accent is a hex colour (#6b3fa0) for the card’s buttons, its edge, the ring round the next thing to press and the pointer’s halo; card is "dark" (the default) or "light". The service checks the accent can be read and uses a readable shade of it for words if not.', properties: { accent: { type: 'string' }, card: { type: 'string', enum: ['dark', 'light'] } } },
   button: { type: 'object', description: `Tours only: the button at the end, { label, url }. The label at most ${LIMITS.buttonLabel} characters, the url https. E.g. { "label": "Get the plugin", "url": "https://wordpress.org/plugins/…" }.`, properties: { label: { type: 'string', maxLength: LIMITS.buttonLabel }, url: { type: 'string' } } },
 };
 
@@ -2534,7 +2542,7 @@ const TOOLS = [
         lang: WORDING_SCHEMA.lang,
         mode: TOUR_SCHEMA.mode,
         button: TOUR_SCHEMA.button,
-        theme: TOUR_SCHEMA.theme,
+        colours: TOUR_SCHEMA.colours,
       },
       required: ['subject'],
     },
@@ -2558,7 +2566,7 @@ const TOOLS = [
         lang: WORDING_SCHEMA.lang,
         mode: TOUR_SCHEMA.mode,
         button: TOUR_SCHEMA.button,
-        theme: TOUR_SCHEMA.theme,
+        colours: TOUR_SCHEMA.colours,
         end_audio: { type: 'string', description: 'Tours only, optional: an https link to a recording of the closing words, to go with the steps’ own recordings.' },
         blueprint_url: { type: 'string', description: 'An https URL to an existing Playground blueprint. Re-read each time a tester starts, so it can keep changing.' },
         blueprint_json: { type: 'string', description: 'A Playground blueprint as a JSON string, kept as-is.' },
@@ -2588,7 +2596,7 @@ const TOOLS = [
         questions: WORDING_SCHEMA.questions,
         lang: WORDING_SCHEMA.lang,
         button: TOUR_SCHEMA.button,
-        theme: TOUR_SCHEMA.theme,
+        colours: TOUR_SCHEMA.colours,
       },
       required: ['test', 'password'],
     },
@@ -2659,7 +2667,7 @@ async function mcpCall(env, req, name, args) {
       lang: args && args.lang,
       mode: args && args.mode,
       button: args && args.button,
-      theme: args && args.theme,
+      colours: args && (args.colours || args.colors),
       endAudio: args && args.end_audio,
       boot: args && args.boot,
       blueprintUrl: args && args.blueprint_url,
@@ -2691,7 +2699,7 @@ async function mcpCall(env, req, name, args) {
     const test = await openTest(env, id, (args && args.password) || '');
     if (!test) return mcpText('That test id and password do not go together.', { isError: true });
     const changes = {};
-    ['subject', 'persona', 'tasks', 'intro', 'questions', 'lang', 'button', 'theme'].forEach((k) => { if (args && args[k] !== undefined) changes[k] = args[k]; });
+    ['subject', 'persona', 'tasks', 'intro', 'questions', 'lang', 'button', 'colours', 'colors', 'theme'].forEach((k) => { if (args && args[k] !== undefined) changes[k] = args[k]; });
     if (!Object.keys(changes).length) return mcpText('Nothing to change: send the fields that should be different.', { isError: true });
     const r = await updateTest(env, test, changes);
     if (r.status !== 200) return mcpText(r.body.error, { isError: true, structuredContent: r.body });
@@ -2963,7 +2971,7 @@ try it themselves, or skip. It ends with a button instead of the questions.
 
   { mode: "tour", subject: "Open Today", persona: "For anyone who runs a shop.",
     button: { label: "Get the plugin", url: "https://…" },
-    theme: { accent: "#6b3fa0", card: "light" },
+    colours: { accent: "#6b3fa0", card: "light" },
     tasks: [{ title: "Your opening hours",
               hint: "One block shows your hours and whether you are open now.",
               do: ["[aria-label=\\"Block Inserter\\"]", "type \\"hours\\" into [placeholder=\\"Search\\"]",
@@ -3149,16 +3157,16 @@ function plainPrompt(mode) {
   const lang = 'lang is a WordPress locale such as fr_FR or es_ES if it should be in another language, and then everything you write goes in that language. Leave it out for English.';
   const end = [
     'Draft it with me first and ask for anything you need. When I say it is ready, finish it one of two ways:',
-    '- If you can make web requests (Claude Code, Cursor, or this service added as a connector): create it yourself. POST the JSON, plus a "password" you make up, to {ORIGIN}/api/tests, or call usertest_create on {ORIGIN}/mcp. Then give me the tester link, the results link and the password, which cannot be looked up again.',
-    `- If you cannot reach that address, do not keep trying. Give me two things. First, a link: {ORIGIN}/#draft= followed by the finished JSON, URL-encoded the way encodeURIComponent does it, written as [Open my ${mode === 'tour' ? 'tour' : 'test'} in Playground user testing](that link). Clicking it opens the site with everything filled in. Second, below it, the same JSON in one code block, with this line above the block: "If the link does not open with everything filled in, copy this block, open {ORIGIN} and paste it into the box called Paste from your assistant."`,
+    '- If you have a tool that can really send a POST request (Claude Code, Cursor, or this service added as a connector): create it yourself. POST the JSON, plus a "password" you make up, to {ORIGIN}/api/tests, or call usertest_create on {ORIGIN}/mcp. Then give me the tester link, the results link and the password, which cannot be looked up again. A browsing tool that only opens pages, as in ChatGPT, cannot do this, so do not try it.',
+    `- Otherwise, or if that fails, go straight to this, without mentioning the attempt or any error. Give me two things. First, a link: {ORIGIN}/#draft= followed by the finished JSON, URL-encoded the way encodeURIComponent does it, written as [Open my ${mode === 'tour' ? 'tour' : 'test'} in Playground user testing](that link). Clicking it opens the site with everything filled in. Second, below it, the same JSON in one code block, with this line above the block: "If the link does not open with everything filled in, copy this block, open {ORIGIN} and paste it into the box called Paste from your assistant."`,
   ].join('\n');
   if (mode === 'tour') {
     return [
       'Help me make a guided tour with Playground user testing ({ORIGIN}), of a WordPress plugin, a theme, or WordPress itself (to teach someone how it works). The tour plays itself in a real WordPress in the visitor\u2019s browser: each step presses through its own actions while a pointer shows where, and a voice can read a script. Everything you need is in this message, so do not go looking for instructions.',
       ONLY_THIS_CHAT,
       'The JSON looks like this:',
-      '{"mode":"tour","subject":"…","persona":"…","plugin":"…","button":{"label":"Get the plugin","url":"https://…"},"theme":{"accent":"#6b3fa0","card":"dark"},"tasks":[{"title":"…","hint":"…","say":"…","do":["#some-id","button \\"Label\\"","type \\"words\\" into input.search","press Escape","go /wp-admin/options-general.php","wait 2"],"check":"none"}]}',
-      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. ${SITE_LINE} Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. You cannot see the site, so do not invent what a step presses. For WordPress's own screens, use these moves, which are known to work (copy them exactly, putting my words where it says …):\n${MOVES_TEXT}\nFor anything else (a plugin's or theme's own screens), leave do out: once the tour is in the form I will press Record the clicks in Playground, do those steps myself, and the card fills in exactly what to press. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. theme is optional: a hex accent and a dark or light card. Leave it out unless I give you a colour in this chat.`,
+      '{"mode":"tour","subject":"…","persona":"…","plugin":"…","button":{"label":"Get the plugin","url":"https://…"},"colours":{"accent":"#6b3fa0","card":"dark"},"tasks":[{"title":"…","hint":"…","say":"…","do":["#some-id","button \\"Label\\"","type \\"words\\" into input.search","press Escape","go /wp-admin/options-general.php","wait 2"],"check":"none"}]}',
+      `subject is what it shows (it heads the welcome page: "A short tour of X"), up to ${LIMITS.subject} characters. persona is optional, one line on who it is for. ${SITE_LINE} Three to six steps. title is short; hint is what the card says while the step plays; say is the voice script, written to be heard, with words not symbols. do lists what the step presses, in order: a CSS selector, button "Label" for a button by its words, type "words" into <selector>, press <Key>, go <address in the site>, wait <seconds>; put maybe in front of one that might not be there. You cannot see the site, so do not invent what a step presses. For WordPress's own screens, use these moves, which are known to work (copy them exactly, putting my words where it says …):\n${MOVES_TEXT}\nFor anything else (a plugin's or theme's own screens), leave do out: once the tour is in the form I will press Record the clicks in Playground, do those steps myself, and the card fills in exactly what to press. check is optional: none, or {"type":"page","path":"part of the address"}, or one of ${checks}. button is where it ends. colours is optional: a hex accent and a dark or light card for the tour\u2019s card. Leave it out unless I give you a colour in this chat. theme only ever means the WordPress theme.`,
       lang,
       end,
     ].join('\n\n');
@@ -3949,17 +3957,19 @@ const HOME = `<!doctype html>
     tasksEl.innerHTML = '';
     tasks.forEach(function (t) { if (t && t.title) addTask(t.title, t.hint, t.check, t.point, t['do'], t.say); });
     if (d.button) { put('btnLabel', d.button.label); put('btnUrl', d.button.url); }
-    if (d.theme) {
-      if (/^#[0-9a-f]{6}$/i.test(String(d.theme.accent || ''))) document.getElementById('accent').value = d.theme.accent.toLowerCase();
-      if (d.theme.card === 'light' || d.theme.card === 'dark') document.getElementById('cardTone').value = d.theme.card;
+    var wpTheme = typeof d.theme === 'string' ? d.theme : '';
+    var colours = d.colours || d.colors || (d.theme && typeof d.theme === 'object' ? d.theme : null);
+    if (colours) {
+      if (/^#[0-9a-f]{6}$/i.test(String(colours.accent || ''))) document.getElementById('accent').value = colours.accent.toLowerCase();
+      if (colours.card === 'light' || colours.card === 'dark') document.getElementById('cardTone').value = colours.card;
     }
     var bpUrl = d.blueprint_url || d.blueprintUrl;
     var bpJson = d.blueprint_json || d.blueprintJson || d.blueprint;
     var plug = [].concat(d.plugin || [], d.plugins || [])[0];
-    if (!bpJson && !bpUrl && (plug || d.theme)) {
+    if (!bpJson && !bpUrl && (plug || wpTheme)) {
       document.querySelector('[data-bp="boot"]').click();
       put('sitePlugin', plug);
-      put('siteTheme', typeof d.theme === 'string' ? d.theme : '');
+      put('siteTheme', wpTheme);
     } else if (!bpJson && !bpUrl && d.site === 'wordpress') {
       document.querySelector('[data-bp="wp"]').click();
     } else if (bpJson) {
@@ -3969,7 +3979,7 @@ const HOME = `<!doctype html>
       document.querySelector('[data-bp="url"]').click();
       put('bpurl', bpUrl);
     }
-    var missing = bpJson || bpUrl || plug || d.theme || d.site === 'wordpress' ? '' : ' It didn’t say which plugin, theme or WordPress to use, so choose below.';
+    var missing = bpJson || bpUrl || plug || wpTheme || d.site === 'wordpress' ? '' : ' It didn’t say which plugin, theme or WordPress to use, so choose below.';
     pasteMsg.textContent = 'Filled in: ' + tasks.length + (d.mode === 'tour' ? ' step' : ' task') + (tasks.length === 1 ? '.' : 's.') + missing + ' Check it, choose a results password, then press the button at the bottom.';
     document.getElementById('f').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
@@ -4055,7 +4065,7 @@ const HOME = `<!doctype html>
           blueprintJson: boot ? undefined : (bp || undefined),
           blueprintUrl: boot || bp ? undefined : url,
           button: (document.getElementById('btnLabel').value.trim() && document.getElementById('btnUrl').value.trim()) ? { label: document.getElementById('btnLabel').value.trim(), url: document.getElementById('btnUrl').value.trim() } : undefined,
-          theme: { accent: document.getElementById('accent').value, card: document.getElementById('cardTone').value },
+          colours: { accent: document.getElementById('accent').value, card: document.getElementById('cardTone').value },
         }),
       });
     }).then(function (r) { return r.json(); }).then(function (d) {
@@ -4156,7 +4166,7 @@ const HOME = `<!doctype html>
           lang: document.getElementById('lang').value || undefined,
           mode: touring ? 'tour' : undefined,
           button: button,
-          theme: touring ? { accent: document.getElementById('accent').value, card: document.getElementById('cardTone').value } : undefined,
+          colours: touring ? { accent: document.getElementById('accent').value, card: document.getElementById('cardTone').value } : undefined,
         }),
       });
     }).then(function (r) {
@@ -4575,7 +4585,7 @@ const RESULTS = `<!doctype html>
         subject: val('eSubject'), persona: val('ePersona'),
         tasks: (d.tasks || []).map(function (t, i) { return { title: titlesIn[i].value, hint: hintsIn[i].value, say: saysIn[i].value, point: pointsIn[i].value, do: doesIn[i].value, check: t.check || 'none' }; }),
         button: { label: val('eBtnLabel'), url: val('eBtnUrl') },
-        theme: { accent: val('eAccent'), card: val('eCard') },
+        colours: { accent: val('eAccent'), card: val('eCard') },
       };
       var m = document.getElementById('eMsg');
       m.className = 'soft'; m.textContent = 'Saving\u2026';

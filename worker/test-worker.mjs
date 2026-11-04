@@ -969,8 +969,9 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   const i = home.indexOf('var PLAIN = '), j = home.indexOf(';\n', i);
   const plain = JSON.parse(home.slice(i + 12, j));
   check(/"mode":"test"/.test(plain.test) && /never which button/.test(plain.test) && /"mode":"tour"/.test(plain.tour) && /type "words" into/.test(plain.tour), 'one prompt: it carries the whole format for a test and for a tour');
-  check([plain.test, plain.tour].every((x) => x.includes('{ORIGIN}/api/tests') && x.includes('{ORIGIN}/#draft=') && x.includes('Paste from your assistant') && /do not keep trying/.test(x)), 'one prompt: create it if you can reach the service, otherwise hand back a link, with the block as a backup');
+  check([plain.test, plain.tour].every((x) => x.includes('{ORIGIN}/api/tests') && x.includes('{ORIGIN}/#draft=') && x.includes('Paste from your assistant') && /without mentioning the attempt or any error/.test(x) && /only opens pages/.test(x)), 'one prompt: create it if you can reach the service, otherwise hand back a link, with the block as a backup');
   check(![plain.test, plain.tour].some((x) => /llms\.txt|\bFetch\b/.test(x)), 'one prompt: nothing depends on opening a page first');
+  check(/"colours":\{"accent"/.test(plain.tour) && !/"theme":\{/.test(plain.tour), 'one prompt: card colours and the WordPress theme have separate names');
   check([plain.test, plain.tour].every((x) => /Do not use anything you remember about me/.test(x)) && !/my brand colour|in my colours/.test(plain.tour), 'one prompt: it works from this chat, not from what the assistant remembers');
   check(home.includes('id="pasted"') && home.includes('custom connector') && !home.includes('copyPlain'), 'home: one Copy prompt, the paste box and the connector');
 
@@ -1071,6 +1072,19 @@ check(r.status === 200, 'a second, separate database is set up on its own');
   const bp = await (await call(eF, '/t/' + made.id + '/blueprint.json')).json();
   const packed = (JSON.stringify(bp).match(/base64_decode\( '([A-Za-z0-9+\/=]+)'/) || [])[1] || '';
   check(r.status === 200 && Buffer.from(packed, 'base64').toString().includes('photo-1501785888041'), 'first post: picking the set brings WordPress itself and its pictures');
+}
+
+// A tour of a theme can have card colours too: "theme" is what gets installed.
+{
+  const eC = env();
+  const made = await (await call(eC, '/api/tests', { method: 'POST', body: { mode: 'tour', subject: 'a theme', theme: 'ollie', colours: { accent: '#6b3fa0', card: 'light' }, password: GOOD.password, tasks: [{ title: 'One', hint: 'First.' }] } })).json();
+  const bpC = await (await call(eC, '/t/' + made.id + '/blueprint.json')).text();
+  check(/"slug":\s*"ollie"/.test(bpC) && /#6b3fa0/i.test(bpC), 'colours: a tour gets both the theme and its card colours');
+  const old = await (await call(eC, '/api/tests', { method: 'POST', body: { mode: 'tour', subject: 'older', site: 'wordpress', theme: { accent: '#6b3fa0', card: 'light' }, password: GOOD.password, tasks: [{ title: 'One', hint: 'First.' }] } })).json();
+  check(/#6b3fa0/i.test(await (await call(eC, '/t/' + old.id + '/blueprint.json')).text()), 'colours: an object under theme still works');
+  const tools = (await (await call(eC, '/mcp', { method: 'POST', body: { jsonrpc: '2.0', id: 1, method: 'tools/list' } })).json()).result.tools;
+  const made2 = tools.find((t) => t.name === 'usertest_create').inputSchema.properties;
+  check(made2.theme.type === 'string' && made2.colours.type === 'object', 'colours: the connector keeps them apart too');
 }
 
 // A tour's recorded voice: clips sent with the results password,

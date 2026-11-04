@@ -26,7 +26,7 @@ first, then `usertest_create`, both with `mode: "tour"`:
   "subject": "Open Today",
   "persona": "For anyone who runs a shop.",
   "button": { "label": "Get the plugin", "url": "https://wordpress.org/plugins/open-today/" },
-  "theme": { "accent": "#6b3fa0", "card": "light" },
+  "colours": { "accent": "#6b3fa0", "card": "light" },
   "boot": { "title": "Crumb & Co", "plugins": ["open-today"] },
   "tasks": [
     {
@@ -60,19 +60,19 @@ conversation:
 3. Turn colours into hex yourself: "my brand purple" means asking for the
    hex if you do not know it, or proposing one and saying so. Light or dark
    card: pick from their site's look, or ask. Colours come from this chat:
-   if they name none, leave `theme` out rather than reach for a brand you
+   if they name none, leave `colours` out rather than reach for a brand you
    remember from elsewhere.
 4. `usertest_check`, fix what it names, `usertest_create`, hand over both
    links and the password, and suggest they watch it once with sound on.
 
 ## Colours
 
-`theme: { accent, card }`. The accent (a hex colour) fills the card's
+`colours: { accent, card }`. (`theme` is only the WordPress theme to install.) The accent (a hex colour) fills the card's
 buttons and colours its edge, the ring round the next thing to press and
 the pointer's halo. `card` is `"dark"` (the default) or `"light"`. The
 service works out what reads on the accent and, if the accent is too pale
 or too dark to read as words on the card, uses a readable shade for the
-words and says so in the check. Leave `theme` out for the service's mint on
+words and says so in the check. Leave `colours` out for the service's mint on
 a dark card.
 
 ## Languages
@@ -160,7 +160,7 @@ Keep your titles, hints and `say` lines; the recording fills `do` and
 | `point` | Optional: where the ring sits while the tour is paused. |
 | `audio` | Optional: an https link to a recording of `say` in a real voice. |
 
-The tour itself also takes `button` (where it ends), `theme` (its colours,
+The tour itself also takes `button` (where it ends), `colours` (its colours,
 below) and `endAudio` (a recording of the closing words).
 
 ### `do`: the actions
